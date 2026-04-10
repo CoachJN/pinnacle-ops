@@ -1,0 +1,20 @@
+Task: Implement [feature].
+
+Constraints:
+- Follow existing app patterns.
+- Preserve RBAC and server-side authorization.
+- Keep change surface minimal.
+- Update tests for changed business logic.
+
+Required process:
+1. Inspect related files first.
+2. Identify the smallest correct implementation.
+3. Implement.
+4. Run lint, typecheck, and relevant tests.
+5. Summarize files changed, risks, and follow-up items.
+
+Done when:
+- feature works
+- types pass
+- lint passes
+- relevant tests pass

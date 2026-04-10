@@ -1,0 +1,11 @@
+model = "gpt-5.4"
+
+[project]
+name = "work-order-platform"
+
+[tools]
+terminal = true
+git = true
+
+[preferences]
+approval_policy = "on-request"
