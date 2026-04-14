@@ -1,0 +1,90 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { ContractorShell } from "@/components/contractor-portal/contractor-shell";
+import { ContractorWorkOrderList } from "@/components/contractor-portal/contractor-work-order-list";
+import {
+  getContractorWorkOrderList,
+  type ContractorWorkOrderFilter,
+} from "@/lib/contractors/projections";
+import { getMockContractorCurrentUser } from "@/lib/permissions/contractor-session";
+
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+export default async function ContractorWorkOrdersPage({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}) {
+  const params = await searchParams;
+  const currentUser = await getMockContractorCurrentUser(
+    readParam(params.contractorId),
+  );
+  if (!currentUser) {
+    notFound();
+  }
+
+  const filter = parseFilter(readParam(params.filter));
+  const items = await getContractorWorkOrderList(
+    currentUser.contractorId,
+    filter,
+  );
+  const baseQuery = `contractorId=${currentUser.contractorId}`;
+
+  return (
+    <ContractorShell currentUser={currentUser}>
+      <div className="flex flex-col gap-6">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-normal text-neutral-500">
+            Assigned work orders
+          </p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">
+            Work queue
+          </h1>
+        </div>
+
+        <nav className="flex flex-wrap gap-2" aria-label="Contractor work order filters">
+          <FilterLink label="All assigned" href={`/contractor/work-orders?${baseQuery}`} active={filter === "all"} />
+          <FilterLink label="Quote requested" href={`/contractor/work-orders?filter=quote_requested&${baseQuery}`} active={filter === "quote_requested"} />
+          <FilterLink label="Approved to proceed" href={`/contractor/work-orders?filter=approved_to_proceed&${baseQuery}`} active={filter === "approved_to_proceed"} />
+          <FilterLink label="In progress" href={`/contractor/work-orders?filter=in_progress&${baseQuery}`} active={filter === "in_progress"} />
+          <FilterLink label="Completed" href={`/contractor/work-orders?filter=completed&${baseQuery}`} active={filter === "completed"} />
+        </nav>
+
+        <ContractorWorkOrderList items={items} contractorId={currentUser.contractorId} />
+      </div>
+    </ContractorShell>
+  );
+}
+
+function FilterLink({
+  label,
+  href,
+  active,
+}: {
+  label: string;
+  href: string;
+  active: boolean;
+}) {
+  return (
+    <Link href={href} className={active ? "rounded-md bg-neutral-950 px-3 py-2 text-sm font-semibold text-white" : "rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-semibold text-neutral-700 hover:border-neutral-500"}>
+      {label}
+    </Link>
+  );
+}
+
+function parseFilter(value: string | undefined): ContractorWorkOrderFilter {
+  if (
+    value === "quote_requested" ||
+    value === "approved_to_proceed" ||
+    value === "in_progress" ||
+    value === "completed"
+  ) {
+    return value;
+  }
+
+  return "all";
+}
+
+function readParam(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}

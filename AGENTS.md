@@ -1,33 +1,23 @@
-# Agent Working Agreement
+# AGENTS.md
 
-## Goal
-Build a production-grade work order management platform with strong operational reliability, clear role boundaries, maintainable architecture, and safe workflow automation.
+## Architecture rules
+- Use service/repository pattern
+- Keep route handlers thin
+- No business logic in UI components
+- Enforce permissions server-side
+- Validate all inputs at the boundary
+- Prefer explicit types over implicit inference for domain objects
 
-## Core principles
-- Preserve security and RBAC correctness.
-- Keep changes minimal, cohesive, and reviewable.
-- Validate all external input at system boundaries.
-- Prefer server-enforced authorization over client assumptions.
-- Extend existing patterns before introducing new abstractions.
-- Separate UI, domain logic, validation, and data access.
+## Working agreements
+- Do not refactor unrelated files
+- Do not modify files outside assigned ownership
+- Run the smallest relevant test set first
+- Report files changed, assumptions, blockers, and checks run
+- Avoid adding new dependencies unless required
 
-## Working process
-1. Inspect the relevant code paths first.
-2. Identify the smallest correct implementation.
-3. Implement with clear file boundaries.
-4. Run lint, typecheck, and relevant tests.
-5. Summarize changed files, risks, and follow-up work.
-
-## Non-negotiables
-- Do not expose secrets to the client.
-- Do not weaken auth, permissions, or auditability.
-- Do not leave placeholder TODO logic unless explicitly requested.
-- Do not create duplicate schemas or conflicting state models.
-- Update tests when meaningful business logic changes.
-
-## Definition of done
-- Feature works end to end
-- Types pass
-- Lint passes
-- Relevant tests are added or updated
-- No obvious regression to auth, permissions, or workflow lifecycle
+## Response format
+1. Files changed
+2. Summary of implementation
+3. Assumptions made
+4. Risks/blockers
+5. Checks/tests run

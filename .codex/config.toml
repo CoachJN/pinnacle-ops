@@ -1,4 +1,5 @@
 model = "gpt-5.4"
+approval_policy = "on-request"
 
 [project]
 name = "work-order-platform"
@@ -6,6 +7,3 @@ name = "work-order-platform"
 [tools]
 terminal = true
 git = true
-
-[preferences]
-approval_policy = "on-request"
