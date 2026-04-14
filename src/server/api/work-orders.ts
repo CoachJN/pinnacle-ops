@@ -25,6 +25,10 @@ import {
   createAccessDeniedError,
 } from "@/server/authorization";
 import {
+  authorizeFinanceQueueRead,
+  listScopeForActor,
+} from "@/server/api/work-order-access";
+import {
   AuthenticationRequiredError,
   requireAuthenticatedUser,
 } from "@/server/auth";
@@ -648,6 +652,8 @@ export async function authorizeQuoteCreate(
   ) {
     throw createAccessDeniedError();
   }
+
+  await assertContractorQuoteAssignmentScope(context, workOrder);
 }
 
 export async function authorizeQuoteRead(
@@ -674,6 +680,8 @@ export async function authorizeQuoteDraftEdit(
   ) {
     throw createAccessDeniedError();
   }
+
+  await assertContractorQuoteAssignmentScope(context, workOrder);
 }
 
 export async function authorizeQuoteTransition(
@@ -693,6 +701,10 @@ export async function authorizeQuoteTransition(
     )
   ) {
     throw createAccessDeniedError();
+  }
+
+  if (context.actor.actorType === "contractor") {
+    await assertContractorQuoteAssignmentScope(context, workOrder);
   }
 }
 
@@ -774,53 +786,7 @@ export async function authorizeInvoiceTransition(
   );
 }
 
-export function authorizeFinanceQueueRead(
-  context: WorkOrderApiContext,
-): void {
-  if (
-    context.actor.actorType !== "internal" ||
-    (context.actor.role !== USER_ROLES.Manager &&
-      context.actor.role !== USER_ROLES.FinanceAdmin &&
-      context.actor.role !== USER_ROLES.Owner)
-  ) {
-    throw createAccessDeniedError();
-  }
-}
-
-export function listScopeForActor(
-  actor: AccessActor,
-  limit: number,
-) {
-  if (actor.actorType === "internal") {
-    return {
-      scope: "organization" as const,
-      organizationId: actor.scope.organizationId,
-      limit,
-    };
-  }
-
-  if (actor.actorType === "client") {
-    if (actor.scope.locationAccess.kind === "selected_client_locations") {
-      return {
-        scope: "locations" as const,
-        locationIds: actor.scope.locationAccess.locationIds,
-        limit,
-      };
-    }
-
-    return {
-      scope: "clientOrganization" as const,
-      clientOrganizationId: actor.scope.clientOrganizationId,
-      limit,
-    };
-  }
-
-  return {
-    scope: "contractorOrganization" as const,
-    contractorOrganizationId: actor.scope.contractorOrganizationId,
-    limit,
-  };
-}
+export { authorizeFinanceQueueRead, listScopeForActor };
 
 export function safeWorkOrderSummary(workOrder: WorkOrder) {
   return {
@@ -1033,6 +999,26 @@ function isAssignedContractorActorForWorkOrder(
     workOrder.assignedContractorOrganizationId ===
       actor.scope.contractorOrganizationId
   );
+}
+
+async function assertContractorQuoteAssignmentScope(
+  context: WorkOrderApiContext,
+  workOrder: WorkOrder,
+): Promise<void> {
+  if (context.actor.actorType !== "contractor") {
+    return;
+  }
+
+  const assignment = await context.repositories.assignments.getActiveByWorkOrderId(
+    workOrder.id,
+  );
+  if (
+    !assignment ||
+    assignment.contractorOrganizationId !==
+      context.actor.scope.contractorOrganizationId
+  ) {
+    throw createAccessDeniedError();
+  }
 }
 
 function canActorEditDraftQuote(

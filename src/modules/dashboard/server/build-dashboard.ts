@@ -15,12 +15,13 @@ import type { DashboardQueueSection } from "../domain/types.ts";
 import { getDashboardVisibilityForRole } from "./role-visibility.ts";
 import type {
   Assignment,
+  Invoice,
   WorkOrder,
 } from "../../../server/repositories/index.ts";
 import type { InternalUserRole } from "../../../types/permissions.ts";
-import type { AssignmentStatus } from "../../../types/work-order.ts";
+import type { AssignmentStatus, WorkOrderStatus } from "../../../types/work-order.ts";
 
-const TERMINAL_WORK_ORDER_STATUSES = new Set([
+const TERMINAL_WORK_ORDER_STATUSES = new Set<WorkOrderStatus>([
   "closed",
   "cancelled",
 ] as const);
@@ -76,7 +77,7 @@ export interface DashboardContext {
       listFinanceQueue(input: {
         limit: number;
       }): Promise<
-        | { ok: true; value: InvoiceLike[] }
+        | { ok: true; value: InvoiceListItem[] }
         | { ok: false; error: Error }
       >;
     };
@@ -88,19 +89,20 @@ export interface DashboardContext {
   };
 }
 
-interface InvoiceLike {
-  id: string;
-  workOrderId: string;
-  invoiceNumber: string;
-  status: "draft" | "sent" | "viewed" | "paid" | "overdue" | "void";
-  dueDate: string;
-  totalAmount: number;
-  currency: "CAD" | "USD";
-  sentAt: string | null;
-  viewedAt: string | null;
-  paidAt: string | null;
-  updatedAt: string;
-}
+type InvoiceListItem = Pick<
+  Invoice,
+  | "id"
+  | "workOrderId"
+  | "invoiceNumber"
+  | "status"
+  | "dueDate"
+  | "totalAmount"
+  | "currency"
+  | "sentAt"
+  | "viewedAt"
+  | "paidAt"
+  | "updatedAt"
+>;
 
 export async function buildInternalDashboard(
   input: BuildInternalDashboardParams,

@@ -2,7 +2,7 @@ import type { AccessActor } from "../../types/auth.ts";
 import {
   createLocationService,
   type LocationService,
-} from "../../lib/services/location.service.ts";
+} from "../../server/services/location-admin-service.ts";
 import type {
   ClientOrganizationRepository,
 } from "../../lib/repositories/client-organization.repository.ts";
@@ -12,11 +12,11 @@ import type {
 } from "../../lib/repositories/location.repository.ts";
 import { USER_ROLES } from "../../types/permissions.ts";
 import type {
-  ClientOrganization,
+  ClientOrganization as FirestoreClientOrganization,
   ContractorOrganization,
   FirestoreRepositories,
   Invoice,
-  Location,
+  Location as FirestoreLocation,
   Quote,
   RepositoryListOptions,
   RepositoryListResult,
@@ -37,6 +37,8 @@ import type {
 import type { ServiceAuditContext } from "../../server/services/types.ts";
 import { serviceOk } from "../../server/services/types.ts";
 import type { EntityId } from "../../types/entity.ts";
+import type { ClientOrganization as DomainClientOrganization } from "../../types/client-organization.ts";
+import type { Location as DomainLocation } from "../../types/location.ts";
 
 const DEFAULT_NOW = "2026-04-13T12:00:00.000Z";
 
@@ -60,6 +62,61 @@ export interface LocationDomainServiceHarness {
   repositories: {
     clientOrganizations: ClientOrganizationRepository;
     locations: LocationRepository;
+  };
+}
+
+function toDomainClientOrganization(
+  entity: FirestoreClientOrganization,
+): DomainClientOrganization {
+  return {
+    id: entity.id,
+    organizationId: entity.organizationId,
+    recordStatus: entity.recordStatus,
+    isDeleted: entity.isDeleted,
+    createdAt: entity.createdAt,
+    updatedAt: entity.updatedAt,
+    createdByUserId: entity.createdByUserId,
+    updatedByUserId: entity.updatedByUserId,
+    deletedAt: entity.deletedAt ?? undefined,
+    deletedByUserId: entity.deletedByUserId ?? undefined,
+    name: entity.name,
+    displayName: entity.displayName ?? undefined,
+    status: entity.status,
+    primaryContactName: entity.primaryContactName ?? undefined,
+    primaryContactEmail: entity.primaryContactEmail ?? undefined,
+    primaryContactPhone: entity.primaryContactPhone ?? undefined,
+    billingEmail: entity.billingEmail ?? undefined,
+    notes: entity.notes ?? undefined,
+  };
+}
+
+function toDomainLocation(entity: FirestoreLocation): DomainLocation {
+  return {
+    id: entity.id,
+    organizationId: entity.organizationId,
+    recordStatus: entity.recordStatus,
+    isDeleted: entity.isDeleted,
+    createdAt: entity.createdAt,
+    updatedAt: entity.updatedAt,
+    createdByUserId: entity.createdByUserId,
+    updatedByUserId: entity.updatedByUserId,
+    deletedAt: entity.deletedAt ?? undefined,
+    deletedByUserId: entity.deletedByUserId ?? undefined,
+    clientOrganizationId: entity.clientOrganizationId,
+    name: entity.name,
+    code: entity.code ?? undefined,
+    status: entity.status,
+    addressLine1: entity.addressLine1 ?? undefined,
+    addressLine2: entity.addressLine2 ?? undefined,
+    city: entity.city ?? undefined,
+    region: entity.region ?? undefined,
+    postalCode: entity.postalCode ?? undefined,
+    countryCode: entity.countryCode ?? undefined,
+    locationContactName: entity.locationContactName ?? undefined,
+    locationContactEmail: entity.locationContactEmail ?? undefined,
+    locationContactPhone: entity.locationContactPhone ?? undefined,
+    accessNotes: entity.accessNotes ?? undefined,
+    notes: entity.notes ?? undefined,
   };
 }
 
@@ -135,8 +192,8 @@ export function makeAuditContext(
 }
 
 export function makeClientOrganization(
-  overrides: Partial<ClientOrganization> = {},
-): ClientOrganization {
+  overrides: Partial<FirestoreClientOrganization> = {},
+): FirestoreClientOrganization {
   return {
     id: "client-1",
     organizationId: "org-1",
@@ -160,7 +217,9 @@ export function makeClientOrganization(
   };
 }
 
-export function makeLocation(overrides: Partial<Location> = {}): Location {
+export function makeLocation(
+  overrides: Partial<FirestoreLocation> = {},
+): FirestoreLocation {
   const clientOrganizationId = overrides.clientOrganizationId ?? "client-1";
   return {
     id: "loc-1",
@@ -242,14 +301,14 @@ export function makeWorkOrder(overrides: Partial<WorkOrder> = {}): WorkOrder {
 }
 
 export function createPhaseTwoServiceHarness(input: {
-  clients?: ClientOrganization[];
-  locations?: Location[];
+  clients?: FirestoreClientOrganization[];
+  locations?: FirestoreLocation[];
   workOrders?: WorkOrder[];
 } = {}): PhaseTwoServiceHarness {
-  const clientStore = new Map<EntityId, ClientOrganization>(
+  const clientStore = new Map<EntityId, FirestoreClientOrganization>(
     (input.clients ?? []).map((client) => [client.id, client]),
   );
-  const locationStore = new Map<EntityId, Location>(
+  const locationStore = new Map<EntityId, FirestoreLocation>(
     (input.locations ?? []).map((location) => [location.id, location]),
   );
   const workOrderStore = new Map<EntityId, WorkOrder>(
@@ -430,14 +489,17 @@ export function createPhaseTwoServiceHarness(input: {
 }
 
 export function createLocationDomainServiceHarness(input: {
-  clients?: ClientOrganization[];
-  locations?: Location[];
+  clients?: readonly FirestoreClientOrganization[];
+  locations?: readonly FirestoreLocation[];
 } = {}): LocationDomainServiceHarness {
-  const clientStore = new Map<EntityId, ClientOrganization>(
-    (input.clients ?? []).map((client) => [client.id, client]),
+  const clientStore = new Map<EntityId, DomainClientOrganization>(
+    (input.clients ?? []).map((client) => [
+      client.id,
+      toDomainClientOrganization(client),
+    ]),
   );
-  const locationStore = new Map<EntityId, Location>(
-    (input.locations ?? []).map((location) => [location.id, location]),
+  const locationStore = new Map<EntityId, DomainLocation>(
+    (input.locations ?? []).map((location) => [location.id, toDomainLocation(location)]),
   );
 
   const clientOrganizations: ClientOrganizationRepository = {
@@ -501,7 +563,7 @@ export function createLocationDomainServiceHarness(input: {
   const locations: LocationRepository = {
     async create(inputCreate) {
       const timestamp = inputCreate.now ?? DEFAULT_NOW;
-      const location: Location = {
+      const location: DomainLocation = {
         id: `loc-${locationStore.size + 1}`,
         organizationId: inputCreate.organizationId,
         recordStatus: "active",
@@ -513,12 +575,6 @@ export function createLocationDomainServiceHarness(input: {
         deletedAt: undefined,
         deletedByUserId: undefined,
         clientOrganizationId: inputCreate.clientOrganization.id,
-        clientSnapshot: {
-          id: inputCreate.clientOrganization.id,
-          name:
-            inputCreate.clientOrganization.displayName ??
-            inputCreate.clientOrganization.name,
-        },
         name: inputCreate.data.name,
         code: inputCreate.data.code,
         status: inputCreate.data.status ?? "active",
@@ -544,23 +600,17 @@ export function createLocationDomainServiceHarness(input: {
         return null;
       }
 
-      const updated: Location = {
+      const updated: DomainLocation = {
         ...existing,
         updatedAt: inputUpdate.now ?? DEFAULT_NOW,
         updatedByUserId: inputUpdate.actorUserId,
         clientOrganizationId:
           inputUpdate.clientOrganization?.id ?? existing.clientOrganizationId,
-        clientSnapshot: inputUpdate.clientOrganization
-          ? {
-              id: inputUpdate.clientOrganization.id,
-              name:
-                inputUpdate.clientOrganization.displayName ??
-                inputUpdate.clientOrganization.name,
-            }
-          : existing.clientSnapshot,
         name: inputUpdate.data.name ?? existing.name,
         code:
-          inputUpdate.data.code === undefined ? existing.code : inputUpdate.data.code,
+          inputUpdate.data.code === undefined
+            ? existing.code
+            : inputUpdate.data.code ?? undefined,
         status: inputUpdate.data.status ?? existing.status,
         addressLine1:
           inputUpdate.data.addressLine1 === undefined
@@ -629,7 +679,7 @@ export function createLocationDomainServiceHarness(input: {
         return null;
       }
 
-      const updated: Location = {
+      const updated: DomainLocation = {
         ...existing,
         status: inputSetState.isActive ? "active" : "inactive",
         updatedAt: inputSetState.now ?? DEFAULT_NOW,
@@ -762,9 +812,9 @@ function createEmptyContractorOrganizationRepository(): FirestoreRepositories["c
 }
 
 function applyLocationRepositoryFilters(
-  locations: Location[],
+  locations: DomainLocation[],
   filters: LocationListFilters,
-): Location[] {
+): DomainLocation[] {
   const normalizedSearch = filters.search?.trim().toLowerCase();
 
   return locations

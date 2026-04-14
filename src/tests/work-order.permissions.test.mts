@@ -232,11 +232,12 @@ describe("work-order permissions", () => {
     const openTarget = makePhaseThreeTarget({ status: "OPEN" });
     const completedTarget = makePhaseThreeTarget({ status: "COMPLETED" });
 
-    assert.equal(canUpdateWorkOrderStatus(coordinator, openTarget, "IN_PROGRESS"), true);
+    assert.equal(canUpdateWorkOrderStatus(coordinator, openTarget, "IN_PROGRESS"), false);
     assert.equal(canUpdateWorkOrderStatus(manager, completedTarget, "CLOSED"), false);
     assert.equal(canUpdateWorkOrderStatus(finance, completedTarget, "CLOSED"), true);
     assert.equal(canUpdateWorkOrderStatus(owner, completedTarget, "CLOSED"), true);
     assert.deepEqual(getAllowedWorkOrderStatusTransitions(finance, completedTarget), [
+      "READY_FOR_INVOICING",
       "CLOSED",
     ]);
   });

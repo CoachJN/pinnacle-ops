@@ -1,14 +1,11 @@
 import Link from "next/link";
-import type { ContractorWorkOrderListItem } from "@/lib/contractors/projections";
-import { StatusBadge } from "@/components/work-orders/badges";
+import type { ContractorPortalWorkOrderListItem } from "@/modules/work-orders/contractor-portal";
 import { formatDate, formatDateTime } from "@/components/work-orders/formatting";
 
 export function ContractorWorkOrderList({
   items,
-  contractorId,
 }: {
-  items: ContractorWorkOrderListItem[];
-  contractorId: string;
+  items: ContractorPortalWorkOrderListItem[];
 }) {
   if (items.length === 0) {
     return (
@@ -28,7 +25,9 @@ export function ContractorWorkOrderList({
               <th className="px-4 py-3">Title</th>
               <th className="px-4 py-3">Client</th>
               <th className="px-4 py-3">Location</th>
-              <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Assignment</th>
+              <th className="px-4 py-3">Work order</th>
+              <th className="px-4 py-3">Quote</th>
               <th className="px-4 py-3">Requested</th>
               <th className="px-4 py-3">Updated</th>
             </tr>
@@ -37,12 +36,12 @@ export function ContractorWorkOrderList({
             {items.map((item) => (
               <tr key={item.id} className="hover:bg-zinc-50">
                 <td className="px-4 py-3 font-semibold">
-                  <Link className="underline-offset-4 hover:underline" href={`/contractor/work-orders/${item.id}?contractorId=${contractorId}`}>
+                  <Link className="underline-offset-4 hover:underline" href={`/contractor/work-orders/${item.id}`}>
                     {item.workOrderNumber}
                   </Link>
                 </td>
                 <td className="max-w-xs px-4 py-3 text-neutral-900">
-                  <Link className="line-clamp-2 underline-offset-4 hover:underline" href={`/contractor/work-orders/${item.id}?contractorId=${contractorId}`}>
+                  <Link className="line-clamp-2 underline-offset-4 hover:underline" href={`/contractor/work-orders/${item.id}`}>
                     {item.title}
                   </Link>
                   {item.quoteActionNeeded ? (
@@ -56,7 +55,13 @@ export function ContractorWorkOrderList({
                   <span className="block font-medium">{item.locationName}</span>
                   <span className="block text-xs text-neutral-500">{item.serviceAddress}</span>
                 </td>
-                <td className="px-4 py-3"><StatusBadge status={item.status} /></td>
+                <td className="px-4 py-3 text-neutral-700">{item.assignment.status}</td>
+                <td className="px-4 py-3">
+                  <span className="rounded-full border border-slate-300 bg-slate-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-700">
+                    {formatStatusLabel(item.status)}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-neutral-700">{item.quoteStatus ?? "None"}</td>
                 <td className="px-4 py-3 text-neutral-700">{formatDate(item.requestedServiceDate)}</td>
                 <td className="px-4 py-3 text-neutral-700">{formatDateTime(item.updatedAt)}</td>
               </tr>
@@ -66,4 +71,8 @@ export function ContractorWorkOrderList({
       </div>
     </div>
   );
+}
+
+function formatStatusLabel(value: string): string {
+  return value.replaceAll("_", " ");
 }

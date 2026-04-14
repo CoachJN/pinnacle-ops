@@ -285,13 +285,10 @@ function makeAlert(
     entityType: "quote",
     entityId: "quote-1",
     workOrderId: "wo-1",
-    invoiceId: null,
-    quoteId: "quote-1",
-    assignmentId: null,
+    recipientRole: "manager",
     targetPath: "/dashboard/work-orders/wo-1",
     dueAt: null,
     createdAt: "2026-04-14T00:00:00.000Z",
-    updatedAt: "2026-04-14T00:00:00.000Z",
     ...overrides,
   };
 }

@@ -8,9 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test src/tests/*.test.mts",
-    "verify:workflow": "node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types src/lib/workflows/verification/cli.mts",
-    "verify:workflow:verbose": "node --conditions=react-server --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types src/lib/workflows/verification/cli.mts --verbose"
+    "test": "node --conditions=react-server --import tsx --test src/tests/*.test.mts",
+    "verify:workflow": "node --conditions=react-server --import tsx src/lib/workflows/verification/cli.mts",
+    "verify:workflow:verbose": "node --conditions=react-server --import tsx src/lib/workflows/verification/cli.mts --verbose"
   },
   "dependencies": {
     "clsx": "^2.1.1",
@@ -31,6 +31,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.3",
     "tailwindcss": "^4",
+    "tsx": "^4.20.6",
     "typescript": "^5"
   }
 }

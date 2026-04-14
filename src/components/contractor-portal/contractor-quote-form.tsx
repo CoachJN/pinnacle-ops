@@ -1,23 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useMemo, useState } from "react";
-import type { ContractorWorkOrderDetailView } from "@/lib/contractors/projections";
+import { useActionState, useState } from "react";
+import type { ContractorPortalWorkOrderDetail } from "@/modules/work-orders/contractor-portal";
 import {
   submitContractorQuoteAction,
-  type ContractorQuoteFormState,
-} from "@/lib/contractors/contractor-actions";
+  type ContractorPortalFormState,
+} from "@/modules/contractors/server/contractor-portal-actions";
 import { calculateQuoteTotal, formatCurrency } from "@/lib/quotes/money";
 import { FormSubmitButton } from "@/components/work-orders/form-submit-button";
 
-const emptyState: ContractorQuoteFormState = { ok: false };
+const emptyState: ContractorPortalFormState = { ok: false };
 
 export function ContractorQuoteForm({
   workOrder,
-  contractorId,
 }: {
-  workOrder: ContractorWorkOrderDetailView;
-  contractorId: string;
+  workOrder: ContractorPortalWorkOrderDetail;
 }) {
   const [state, formAction] = useActionState(
     submitContractorQuoteAction,
@@ -32,22 +30,15 @@ export function ContractorQuoteForm({
   const [otherAmount, setOtherAmount] = useState(
     String(workOrder.quote?.otherAmount ?? "0"),
   );
-  const totalAmount = useMemo(
-    () =>
-      calculateQuoteTotal(
-        readAmount(laborAmount),
-        readAmount(materialAmount),
-        readAmount(otherAmount),
-      ),
-    [laborAmount, materialAmount, otherAmount],
+  const totalAmount = calculateQuoteTotal(
+    readAmount(laborAmount),
+    readAmount(materialAmount),
+    readAmount(otherAmount),
   );
 
   return (
     <form action={formAction} className="space-y-6 rounded-lg border border-neutral-200 bg-white p-5">
-      <input type="hidden" name="contractorId" value={contractorId} />
       <input type="hidden" name="workOrderId" value={workOrder.id} />
-      <input type="hidden" name="contractorName" value={workOrder.assignedContractorName ?? ""} />
-      <input type="hidden" name="assignedContractorId" value={contractorId} />
       {state.message ? (
         <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
           {state.message}
@@ -64,10 +55,10 @@ export function ContractorQuoteForm({
         </div>
         <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-4">
           <p className="text-xs font-medium uppercase tracking-normal text-neutral-500">
-            Contractor
+            Assignment
           </p>
           <p className="mt-2 text-sm font-semibold text-neutral-950">
-            {workOrder.assignedContractorName}
+            {workOrder.assignment.status}
           </p>
         </div>
         <MoneyField label="Labor amount" name="laborAmount" value={laborAmount} onChange={setLaborAmount} error={state.errors?.laborAmount} />
@@ -80,7 +71,7 @@ export function ContractorQuoteForm({
         <FormSubmitButton pendingLabel="Submitting...">
           Submit quote
         </FormSubmitButton>
-        <Link href={`/contractor/work-orders/${workOrder.id}?contractorId=${contractorId}`} className="rounded-md border border-neutral-300 bg-white px-4 py-2 text-sm font-semibold text-neutral-700 hover:border-neutral-500">
+        <Link href={`/contractor/work-orders/${workOrder.id}`} className="rounded-md border border-neutral-300 bg-white px-4 py-2 text-sm font-semibold text-neutral-700 hover:border-neutral-500">
           Cancel
         </Link>
       </div>

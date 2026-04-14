@@ -963,7 +963,7 @@ function applyStatusMutation(
 
 function validateInvoiceTransitionPrerequisites(
   workOrder: {
-    status: string;
+    status: WorkOrderStatus;
     currentInvoiceId: EntityId | null;
   },
   invoice: Invoice,

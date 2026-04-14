@@ -1,6 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { AccessActor } from "../types/auth.ts";
+import type { ActivityLog } from "../server/repositories/index.ts";
+import type { RecordActivityLogInput } from "../server/services/activity-log-service.ts";
+import type { ServiceAuditContext } from "../server/services/types.ts";
+import type {
+  Assignment as ModuleAssignment,
+  WorkOrder as ModuleWorkOrder,
+  WorkOrderStatus,
+} from "../modules/work-orders/index.ts";
+import type {
+  Assignment as RepositoryAssignment,
+  AssignmentRepository,
+  UserProfile,
+} from "../server/repositories/index.ts";
 import {
   acceptAssignment,
   completeAssignment,
@@ -9,7 +23,8 @@ import {
   getAllowedWorkOrderActions,
   reassignAssignment,
   transitionWorkOrderStatusWithAssignmentChecks,
-} from "../lib/services/work-orders/assignment-workflow.service.ts";
+  type AssignmentWorkflowDependencies,
+} from "../server/services/work-order-service.ts";
 import { USER_ROLES } from "../types/permissions.ts";
 
 test("valid assignment creation persists an active assignment", async () => {
@@ -260,13 +275,20 @@ test("completed work orders must move through ready for invoicing before close",
   assert.equal(actions.availableStatusTransitions.includes("CLOSED"), false);
 });
 
-function createHarness(input: { workOrderStatus?: "NEW" | "ASSIGNED" | "IN_PROGRESS" } = {}) {
-  const workOrder = {
+function createHarness(
+  input: { workOrderStatus?: Extract<WorkOrderStatus, "NEW" | "ASSIGNED" | "IN_PROGRESS"> } = {},
+): {
+  workOrder: ModuleWorkOrder;
+  assignmentStore: Map<string, RepositoryAssignment>;
+  activityEvents: RecordActivityLogInput[];
+  dependencies: AssignmentWorkflowDependencies;
+} {
+  const workOrder: ModuleWorkOrder = {
     ...baseModuleWorkOrder(),
     status: input.workOrderStatus ?? "NEW",
   };
-  const assignmentStore = new Map();
-  const userProfiles = new Map([
+  const assignmentStore = new Map<string, RepositoryAssignment>();
+  const userProfiles = new Map<string, UserProfile>([
     ["user-manager", makeUserProfile("user-manager", USER_ROLES.Manager)],
     ["user-coordinator", makeUserProfile("user-coordinator", USER_ROLES.Coordinator)],
     [
@@ -277,7 +299,7 @@ function createHarness(input: { workOrderStatus?: "NEW" | "ASSIGNED" | "IN_PROGR
     ],
     ["user-client", makeUserProfile("user-client", USER_ROLES.ClientUser)],
   ]);
-  const activityEvents = [];
+  const activityEvents: RecordActivityLogInput[] = [];
 
   return {
     workOrder,
@@ -286,24 +308,24 @@ function createHarness(input: { workOrderStatus?: "NEW" | "ASSIGNED" | "IN_PROGR
     dependencies: {
       assignments: {
         newId: () => `assignment-${assignmentStore.size + 1}`,
-        async getById(id) {
+        async getById(id: string) {
           return assignmentStore.get(id) ?? null;
         },
-        async create(entity) {
+        async create(entity: RepositoryAssignment) {
           assignmentStore.set(entity.id, entity);
           return { id: entity.id, item: entity };
         },
-        async save(entity) {
+        async save(entity: RepositoryAssignment) {
           assignmentStore.set(entity.id, entity);
           return { id: entity.id, item: entity };
         },
-        async listByWorkOrderId(workOrderId) {
+        async listByWorkOrderId(workOrderId: string) {
           const items = [...assignmentStore.values()].filter(
             (assignment) => assignment.workOrderId === workOrderId,
           );
           return { items, count: items.length };
         },
-        async getActiveByWorkOrderId(workOrderId) {
+        async getActiveByWorkOrderId(workOrderId: string) {
           return (
             [...assignmentStore.values()].find(
               (assignment) =>
@@ -312,12 +334,32 @@ function createHarness(input: { workOrderStatus?: "NEW" | "ASSIGNED" | "IN_PROGR
             ) ?? null
           );
         },
-      },
+        async listByContractorOrganizationId(contractorOrganizationId: string) {
+          const items = [...assignmentStore.values()].filter(
+            (assignment) =>
+              assignment.contractorOrganizationId === contractorOrganizationId,
+          );
+          return { items, count: items.length };
+        },
+      } satisfies AssignmentRepository,
       workOrders: {
-        async getById(id) {
+        async create(inputCreate) {
+          workOrder.status = inputCreate.status ?? workOrder.status;
+          workOrder.updatedAt = inputCreate.now ?? workOrder.updatedAt;
+          return workOrder;
+        },
+        async getById(id: string) {
           return id === workOrder.id ? workOrder : null;
         },
-        async updateStatus(inputUpdate) {
+        async update() {
+          return workOrder;
+        },
+        async updateStatus(inputUpdate: {
+          workOrderId: string;
+          status: WorkOrderStatus;
+          closedAt?: string | null;
+          now?: string;
+        }) {
           if (inputUpdate.workOrderId !== workOrder.id) {
             return null;
           }
@@ -328,24 +370,146 @@ function createHarness(input: { workOrderStatus?: "NEW" | "ASSIGNED" | "IN_PROGR
             inputUpdate.closedAt === undefined ? workOrder.closedAt : inputUpdate.closedAt;
           return workOrder;
         },
+        async list() {
+          return [workOrder];
+        },
+        async assertLocationBelongsToClient() {
+          return true;
+        },
       },
       userProfiles: {
-        async getById(id) {
+        newId() {
+          return `user-${userProfiles.size + 1}`;
+        },
+        async getById(id: string) {
           return userProfiles.get(id) ?? null;
+        },
+        async create(entity: UserProfile) {
+          userProfiles.set(entity.id, entity);
+          return { id: entity.id, item: entity };
+        },
+        async save(entity: UserProfile) {
+          userProfiles.set(entity.id, entity);
+          return { id: entity.id, item: entity };
+        },
+        async getByEmail(email: string) {
+          return (
+            [...userProfiles.values()].find((profile) => profile.email === email) ?? null
+          );
+        },
+        async listByOrganizationId() {
+          const items = [...userProfiles.values()];
+          return { items, count: items.length };
+        },
+        async listByContractorOrganizationId(contractorOrganizationId: string) {
+          const items = [...userProfiles.values()].filter(
+            (profile) => profile.contractorOrganizationId === contractorOrganizationId,
+          );
+          return { items, count: items.length };
         },
       },
       activityLogs: {
-        async record(entry) {
+        async record(entry: RecordActivityLogInput) {
           activityEvents.push(entry);
-          return { ok: true, value: entry };
+          const activityLog: ActivityLog = {
+            id: `activity-${activityEvents.length}`,
+            organizationId: entry.organizationId,
+            recordStatus: "active",
+            isDeleted: false,
+            createdAt: entry.now ?? "2026-04-14T00:00:00.000Z",
+            updatedAt: entry.now ?? "2026-04-14T00:00:00.000Z",
+            createdByUserId: entry.actor.userId,
+            updatedByUserId: entry.actor.userId,
+            deletedAt: null,
+            deletedByUserId: null,
+            workOrderId: entry.workOrderId,
+            action: entry.action,
+            eventType: entry.eventType,
+            message: entry.message,
+            actorType: "user",
+            actorUserId: entry.actor.userId,
+            actorRole: entry.actor.role,
+            actor: {
+              type: "user",
+              userId: entry.actor.userId,
+              role: entry.actor.role,
+            },
+            resourceType: entry.entityType,
+            resourceId: entry.entityId,
+            resourceLabel: entry.entityLabel ?? null,
+            resource: {
+              type: entry.entityType,
+              id: entry.entityId,
+              label: entry.entityLabel ?? null,
+              workOrderId: entry.workOrderId,
+            },
+            entityType: entry.entityType,
+            entityId: entry.entityId,
+            occurredAt: entry.now ?? "2026-04-14T00:00:00.000Z",
+            requestId: entry.requestId ?? null,
+            visibility: entry.visibility ?? "internal",
+            changes: entry.changes ?? [],
+            metadata: entry.metadata ?? {},
+          };
+          return { ok: true, value: activityLog };
+        },
+        async listForWorkOrder(workOrderId: string) {
+          const items = activityEvents
+            .filter((event) => event.workOrderId === workOrderId)
+            .map(
+              (event, index): ActivityLog => ({
+                id: `activity-${index + 1}`,
+                organizationId: event.organizationId,
+                recordStatus: "active",
+                isDeleted: false,
+                createdAt: event.now ?? "2026-04-14T00:00:00.000Z",
+                updatedAt: event.now ?? "2026-04-14T00:00:00.000Z",
+                createdByUserId: event.actor.userId,
+                updatedByUserId: event.actor.userId,
+                deletedAt: null,
+                deletedByUserId: null,
+                workOrderId: event.workOrderId,
+                action: event.action,
+                eventType: event.eventType,
+                message: event.message,
+                actorType: "user",
+                actorUserId: event.actor.userId,
+                actorRole: event.actor.role,
+                actor: {
+                  type: "user",
+                  userId: event.actor.userId,
+                  role: event.actor.role,
+                },
+                resourceType: event.entityType,
+                resourceId: event.entityId,
+                resourceLabel: event.entityLabel ?? null,
+                resource: {
+                  type: event.entityType,
+                  id: event.entityId,
+                  label: event.entityLabel ?? null,
+                  workOrderId: event.workOrderId,
+                },
+                entityType: event.entityType,
+                entityId: event.entityId,
+                occurredAt: event.now ?? "2026-04-14T00:00:00.000Z",
+                requestId: event.requestId ?? null,
+                visibility: event.visibility ?? "internal",
+                changes: event.changes ?? [],
+                metadata: event.metadata ?? {},
+              }),
+            );
+          return { ok: true, value: items };
         },
       },
     },
   };
 }
 
-function makeAcceptedAssignment(harness, assigneeUserId) {
-  const assignment = {
+function makeAcceptedAssignment(
+  harness: ReturnType<typeof createHarness>,
+  assigneeUserId: string,
+): RepositoryAssignment {
+  const assignment: RepositoryAssignment = {
     id: "assignment-accepted",
     organizationId: "org-1",
     recordStatus: "active",
@@ -382,7 +546,7 @@ function makeAcceptedAssignment(harness, assigneeUserId) {
   return assignment;
 }
 
-function baseModuleWorkOrder() {
+function baseModuleWorkOrder(): ModuleWorkOrder {
   return {
     id: "wo-1",
     workOrderNumber: "WO-1001",
@@ -409,7 +573,7 @@ function baseModuleWorkOrder() {
   };
 }
 
-function baseModuleAssignment() {
+function baseModuleAssignment(): ModuleAssignment {
   return {
     id: "assignment-1",
     workOrderId: "wo-1",
@@ -431,7 +595,11 @@ function baseModuleAssignment() {
   };
 }
 
-function makeUserProfile(id, role, overrides = {}) {
+function makeUserProfile(
+  id: string,
+  role: UserProfile["role"],
+  overrides: Partial<UserProfile> = {},
+): UserProfile {
   return {
     id,
     organizationId: "org-1",
@@ -453,7 +621,10 @@ function makeUserProfile(id, role, overrides = {}) {
   };
 }
 
-function auditContext(role, userId) {
+function auditContext(
+  role: UserProfile["role"],
+  userId: string,
+): ServiceAuditContext {
   return {
     organizationId: "org-1",
     actor: {
@@ -463,7 +634,10 @@ function auditContext(role, userId) {
   };
 }
 
-function actor(role, userId) {
+function actor(
+  role: UserProfile["role"],
+  userId: string,
+): AccessActor {
   if (role === USER_ROLES.ContractorUser) {
     return {
       actorType: "contractor",
@@ -493,5 +667,5 @@ function actor(role, userId) {
             kind: "internal",
             organizationId: "org-1",
           },
-  };
+  } as AccessActor;
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { safeLocationDetailForActor } from "../server/api/business-entities.ts";
+import { safeLocationDetailForActor } from "../server/api/business-entity-projections.ts";
 import { canViewWorkOrder } from "../server/authorization/work-order.permissions.ts";
 import { toClientPortalLocationDetail } from "../modules/locations/client-portal.ts";
 import { toClientPortalWorkOrderDetail } from "../modules/work-orders/client-portal.ts";
@@ -10,7 +10,7 @@ import type {
   Location,
   WorkOrder,
 } from "../server/repositories/index.ts";
-import type { WorkOrderDetailDto } from "../lib/services/work-orders/index.ts";
+import type { WorkOrderDetailDto } from "../server/services/work-order-service.ts";
 import type { ClientAccessActor } from "../types/auth.ts";
 import { USER_ROLES } from "../types/permissions.ts";
 

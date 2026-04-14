@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { ClientQuote, WorkOrder } from "@/server/repositories";
-import type { WorkOrderDetailDto } from "@/lib/services/work-orders";
+import type { WorkOrderDetailDto } from "@/server/services/work-order-service";
 import type {
   ClientPortalWorkOrderDetail,
   ClientPortalWorkOrderSummary,

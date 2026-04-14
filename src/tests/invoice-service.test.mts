@@ -152,7 +152,7 @@ test("finance queue returns overdue items first and supports status filtering", 
 
   assert.deepEqual(
     queue.value.map((invoice) => invoice.id),
-    ["inv-overdue", "inv-sent", "inv-draft"],
+    ["inv-overdue", "inv-draft", "inv-sent"],
   );
 
   const filtered = await harness.service.listFinanceQueue({

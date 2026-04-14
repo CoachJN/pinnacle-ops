@@ -115,7 +115,7 @@ const invoiceDraftPayloadSchema = z
 
 export const createInvoiceFromWorkOrderSchema = invoiceDraftPayloadSchema;
 
-export const updateInvoiceDraftSchema = invoiceDraftPayloadSchema.extend({
+export const updateInvoiceDraftSchema = invoiceDraftPayloadSchema.safeExtend({
   invoiceId: entityIdSchema,
 });
 
@@ -216,13 +216,9 @@ export function canInvoiceStatusTransition(
   from: InvoiceStatus,
   to: InvoiceStatus,
 ): boolean {
-  if (from === "issued") {
-    return invoiceStatusTransitions.issued.includes(to);
-  }
-
-  return invoiceStatusTransitions[from as Exclude<InvoiceStatus, "issued">].includes(
-    to,
-  );
+  return (
+    invoiceStatusTransitions[from] as readonly InvoiceStatus[]
+  ).includes(to);
 }
 
 function validateInvoiceTotalsConsistency(

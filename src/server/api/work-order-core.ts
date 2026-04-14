@@ -23,11 +23,11 @@ import {
   createWorkOrderServiceDependencies,
   type WorkOrderDetailDto,
   type WorkOrderListItemDto,
-} from "@/lib/services/work-orders";
+} from "@/server/services/work-order-service";
 import {
   getAllowedWorkOrderActions,
   transitionWorkOrderStatusWithAssignmentChecks,
-} from "@/lib/services/work-orders/assignment-workflow.service";
+} from "@/server/services/work-order-service";
 import { workOrderPolicy } from "@/lib/access-policy";
 import { createAccessDeniedError } from "@/server/authorization";
 import {

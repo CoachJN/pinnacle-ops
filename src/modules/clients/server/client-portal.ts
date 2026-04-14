@@ -1,8 +1,11 @@
 import "server-only";
 
 import { createAccessDeniedError } from "@/server/authorization";
-import { getWorkOrderApiContext } from "@/server/api/work-orders";
-import { createGetWorkOrderDetailService } from "@/lib/services/work-orders";
+import {
+  getWorkOrderApiContext,
+  listScopeForActor,
+} from "@/server/api/work-orders";
+import { createGetWorkOrderDetailService } from "@/server/services/work-order-service";
 import { toClientPortalLocationDetail, toClientPortalLocationSummary } from "@/modules/locations/client-portal";
 import { toClientPortalQuoteDetail } from "@/modules/quotes/client-portal";
 import {
@@ -121,20 +124,21 @@ export async function listClientPortalWorkOrders(
   if (filters.locationId && !isLocationVisibleToClient(context.actor, filters.locationId)) {
     throw createAccessDeniedError("You do not have access to that location.");
   }
-  const scopedLocationId =
-    filters.locationId ?? undefined;
-  const result = scopedLocationId
-    ? await context.repositories.workOrders.listByLocationId(scopedLocationId, {
-        limit: 100,
-      })
-    : await context.repositories.workOrders.listByClientOrganizationId(
-        context.actor.scope.clientOrganizationId,
-        { limit: 100 },
-      );
+  const result = await context.services.workOrders.list(
+    listScopeForActor(context.actor, 100),
+  );
+
+  if (!result.ok) {
+    throw result.error;
+  }
 
   const normalizedSearch = filters.search?.trim().toLowerCase();
-  const visibleItems = result.items.filter((workOrder) => {
+  const visibleItems = result.value.filter((workOrder) => {
     if (!isLocationVisibleToClient(context.actor, workOrder.locationId)) {
+      return false;
+    }
+
+    if (filters.locationId && workOrder.locationId !== filters.locationId) {
       return false;
     }
 

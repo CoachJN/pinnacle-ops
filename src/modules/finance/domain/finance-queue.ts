@@ -61,63 +61,60 @@ export function buildFinanceQueue(input: {
     input.invoices.map((invoice) => [invoice.id, invoice] as const),
   );
 
-  const items: FinanceQueueItem[] = input.workOrders.flatMap((workOrder) => {
-      const currentInvoice = workOrder.currentInvoiceId
-        ? invoiceById.get(workOrder.currentInvoiceId) ?? null
-        : null;
-      const eligibility = buildInvoiceCreationEligibility({
-        workOrderStatus: workOrder.status,
-        hasActiveInvoice: currentInvoice !== null && currentInvoice.status !== "void",
-      });
+  const items: FinanceQueueItem[] = [];
 
-      if (eligibility.eligible) {
-        return [
-          {
-            id: `finance-ready-${workOrder.id}`,
-            state: "ready_for_invoicing" as const,
-            requiresAttention: true,
-            workOrder,
-            invoice: null,
-            sortDate: workOrder.completedAt ?? workOrder.updatedAt,
-          },
-        ];
-      }
-
-      if (!currentInvoice) {
-        return [];
-      }
-
-      const state = getFinanceQueueStateForInvoiceStatus(currentInvoice.status);
-      if (!state) {
-        return [];
-      }
-
-      return [
-        {
-          id: `finance-${state}-${currentInvoice.id}`,
-          state,
-          requiresAttention:
-            state === "ready_for_invoicing" ||
-            state === "draft" ||
-            state === "overdue",
-          workOrder,
-          invoice: currentInvoice,
-          sortDate:
-            state === "paid"
-              ? currentInvoice.paidAt ?? currentInvoice.updatedAt
-              : currentInvoice.dueDate,
-        },
-      ];
+  for (const workOrder of input.workOrders) {
+    const currentInvoice = workOrder.currentInvoiceId
+      ? invoiceById.get(workOrder.currentInvoiceId) ?? null
+      : null;
+    const eligibility = buildInvoiceCreationEligibility({
+      workOrderStatus: workOrder.status,
+      hasActiveInvoice: currentInvoice !== null && currentInvoice.status !== "void",
     });
+
+    if (eligibility.eligible) {
+      items.push({
+        id: `finance-ready-${workOrder.id}`,
+        state: "ready_for_invoicing",
+        requiresAttention: true,
+        workOrder,
+        invoice: null,
+        sortDate: workOrder.completedAt ?? workOrder.updatedAt,
+      });
+      continue;
+    }
+
+    if (!currentInvoice) {
+      continue;
+    }
+
+    const state = getFinanceQueueStateForInvoiceStatus(currentInvoice.status);
+    if (!state) {
+      continue;
+    }
+
+    items.push({
+      id: `finance-${state}-${currentInvoice.id}`,
+      state,
+      requiresAttention: state === "draft" || state === "overdue",
+      workOrder,
+      invoice: currentInvoice,
+      sortDate:
+        state === "paid"
+          ? currentInvoice.paidAt ?? currentInvoice.updatedAt
+          : currentInvoice.dueDate,
+    });
+  }
 
   return items.sort((left, right) => {
-      const byPriority = financeQueuePriority(left.state) - financeQueuePriority(right.state);
-      if (byPriority !== 0) {
-        return byPriority;
-      }
+    const byPriority =
+      financeQueuePriority(left.state) - financeQueuePriority(right.state);
+    if (byPriority !== 0) {
+      return byPriority;
+    }
 
-      return Date.parse(left.sortDate) - Date.parse(right.sortDate);
-    });
+    return Date.parse(left.sortDate) - Date.parse(right.sortDate);
+  });
 }
 
 export function filterFinanceQueueItems(

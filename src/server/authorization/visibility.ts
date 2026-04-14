@@ -1,5 +1,7 @@
 import "server-only";
 
+// Keep `src/server/authorization` as the runtime entry point while projection
+// ownership finishes moving out of transitional `lib/` helpers.
 export {
   canReadClientSellPrice,
   canReadContractorRawPricing,

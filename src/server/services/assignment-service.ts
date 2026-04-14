@@ -409,7 +409,7 @@ class FirestoreAssignmentService implements AssignmentService {
       entityType: "assignment",
       entityId: assignment.id,
       entityLabel: assignment.contractorSnapshot?.name ?? assignment.assigneeUserId,
-      visibility: "internal",
+      visibility: input.actor.role === "contractor_user" ? "contractor" : "internal",
       changes: [{ field: "status", from: assignment.status, to: input.status }],
       metadata: {
         fromStatus: assignment.status,
@@ -534,7 +534,13 @@ class FirestoreAssignmentService implements AssignmentService {
       (input.actor.role === "contractor_user" &&
         assignment.contractorOrganizationId !== null)
     ) {
-      return serviceOk(true);
+      const profile = await this.repositories.userProfiles.getById(input.actor.userId);
+      if (
+        input.actor.role !== "contractor_user" ||
+        profile?.contractorOrganizationId === assignment.contractorOrganizationId
+      ) {
+        return serviceOk(true);
+      }
     }
 
     return serviceFail(validationError("You are not allowed to update this assignment."));

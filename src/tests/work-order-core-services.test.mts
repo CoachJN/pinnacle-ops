@@ -11,7 +11,7 @@ import {
   generateWorkOrderNumber,
   normalizeWorkOrderSearchText,
   type WorkOrderServiceDependencies,
-} from "../lib/services/work-orders/index.ts";
+} from "../server/services/work-order-service.ts";
 import type {
   CreateWorkOrderAttachmentMetadataDto,
   CreateWorkOrderDto,
@@ -63,7 +63,7 @@ test("createWorkOrder validates relationships, generates identifiers, and return
   assert.equal(result.value.id, "wo-created-1234");
   assert.equal(result.value.workOrderNumber, "WO-WO-CREAT");
   assert.equal(result.value.status, "NEW");
-  assert.deepEqual(result.value.allowedNextStatuses, ["OPEN", "CANCELLED"]);
+  assert.deepEqual(result.value.allowedNextStatuses, ["OPEN", "ASSIGNED", "CANCELLED"]);
   assert.deepEqual(result.value.notes, []);
   assert.deepEqual(result.value.attachments, []);
 
@@ -111,7 +111,7 @@ test("createWorkOrder allows an explicitly controlled valid initial status", asy
   }
 
   assert.equal(result.value.status, "OPEN");
-  assert.deepEqual(result.value.allowedNextStatuses, ["IN_PROGRESS", "CANCELLED"]);
+  assert.deepEqual(result.value.allowedNextStatuses, ["ASSIGNED", "CANCELLED"]);
 });
 
 test("createWorkOrder rejects invalid initial status overrides", async () => {

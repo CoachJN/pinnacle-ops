@@ -127,9 +127,10 @@ describe("phase 3 work order domain foundation", () => {
   test("enforces the allowed status transition map", () => {
     assert.deepEqual(getAllowedNextWorkOrderStatuses("NEW"), [
       "OPEN",
+      "ASSIGNED",
       "CANCELLED",
     ]);
-    assert.equal(isWorkOrderStatusTransitionAllowed("OPEN", "IN_PROGRESS"), true);
+    assert.equal(isWorkOrderStatusTransitionAllowed("OPEN", "ASSIGNED"), true);
     assert.equal(isWorkOrderStatusTransitionAllowed("NEW", "IN_PROGRESS"), false);
     assert.equal(isWorkOrderStatusTransitionAllowed("COMPLETED", "CANCELLED"), false);
     assert.equal(isWorkOrderStatusTransitionAllowed("CANCELLED", "OPEN"), false);

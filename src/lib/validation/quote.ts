@@ -179,7 +179,7 @@ const quoteBaseSchema = z
     validateQuoteTotalsConsistency(value.lineItems, value, context);
   });
 
-export const saveContractorQuoteDraftSchema = quoteBaseSchema.extend({
+export const saveContractorQuoteDraftSchema = quoteBaseSchema.safeExtend({
   contractorQuoteId: entityIdSchema.optional(),
   contractorUserId: entityIdSchema.nullable().optional(),
   contractorOrganizationId: entityIdSchema.nullable().optional(),
@@ -217,7 +217,7 @@ export const reviewContractorQuoteSchema = z
     }
   });
 
-export const createClientQuoteSchema = quoteBaseSchema.extend({
+export const createClientQuoteSchema = quoteBaseSchema.safeExtend({
   sourceContractorQuoteId: entityIdSchema.nullable().optional(),
 });
 

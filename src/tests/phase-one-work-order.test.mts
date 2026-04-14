@@ -85,7 +85,7 @@ describe("phase one work order action permissions", () => {
   test("finance/admin controls invoice and paid closeout transitions", () => {
     assert.equal(
       canTransitionWorkOrder(USER_ROLES.FinanceAdmin, "completed", "invoiced", {
-        currentInvoice: makeInvoice({ status: "issued" }),
+        currentInvoice: makeInvoice({ status: "sent" }),
       }),
       true,
     );
@@ -119,8 +119,16 @@ function makeInvoice(overrides: Partial<Invoice> = {}): Invoice {
   return {
     id: "inv-1",
     workOrderId: "wo-1",
+    clientOrganizationId: "client-1",
+    locationId: "loc-1",
     invoiceNumber: "INV-1",
     status: "draft",
+    issuedDate: null,
+    sentAt: null,
+    viewedAt: null,
+    paidAt: null,
+    voidedAt: null,
+    subtotal: 100,
     issueDate: null,
     dueDate: "2026-04-30",
     paidDate: null,
@@ -139,6 +147,11 @@ function makeInvoice(overrides: Partial<Invoice> = {}): Invoice {
     ],
     internalFinanceNotes: null,
     paymentReference: null,
+    notes: null,
+    createdByUserId: "user-1",
+    updatedByUserId: "user-1",
+    qboInvoiceId: null,
+    qboSyncStatus: null,
     createdAt: "2026-04-01T00:00:00.000Z",
     updatedAt: "2026-04-01T00:00:00.000Z",
     createdBy: "Finley Finance",

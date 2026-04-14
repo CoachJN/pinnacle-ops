@@ -37,7 +37,7 @@ import type {
   AssignmentRepository,
   UserProfileRepository,
 } from "../../../server/repositories/index.ts";
-import type { WorkOrderRepository as PhaseThreeWorkOrderRepository } from "../../repositories/work-order.repository.ts";
+import type { WorkOrderRepository as PhaseThreeWorkOrderRepository } from "@/lib/repositories/work-order.repository";
 
 const ASSIGNMENT_OPERATIONS_ROLES = new Set<InternalUserRole>([
   USER_ROLES.Coordinator,

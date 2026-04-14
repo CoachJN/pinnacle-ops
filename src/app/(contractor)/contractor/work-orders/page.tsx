@@ -1,12 +1,11 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
-import { ContractorShell } from "@/components/contractor-portal/contractor-shell";
 import { ContractorWorkOrderList } from "@/components/contractor-portal/contractor-work-order-list";
 import {
-  getContractorWorkOrderList,
+  listContractorPortalWorkOrders,
+} from "@/modules/contractors/server/contractor-portal";
+import {
   type ContractorWorkOrderFilter,
-} from "@/lib/contractors/projections";
-import { getMockContractorCurrentUser } from "@/lib/permissions/contractor-session";
+} from "@/modules/work-orders/contractor-portal";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -16,43 +15,30 @@ export default async function ContractorWorkOrdersPage({
   searchParams: SearchParams;
 }) {
   const params = await searchParams;
-  const currentUser = await getMockContractorCurrentUser(
-    readParam(params.contractorId),
-  );
-  if (!currentUser) {
-    notFound();
-  }
-
   const filter = parseFilter(readParam(params.filter));
-  const items = await getContractorWorkOrderList(
-    currentUser.contractorId,
-    filter,
-  );
-  const baseQuery = `contractorId=${currentUser.contractorId}`;
+  const items = await listContractorPortalWorkOrders(filter);
 
   return (
-    <ContractorShell currentUser={currentUser}>
-      <div className="flex flex-col gap-6">
-        <div>
-          <p className="text-sm font-semibold uppercase tracking-normal text-neutral-500">
-            Assigned work orders
-          </p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">
-            Work queue
-          </h1>
-        </div>
-
-        <nav className="flex flex-wrap gap-2" aria-label="Contractor work order filters">
-          <FilterLink label="All assigned" href={`/contractor/work-orders?${baseQuery}`} active={filter === "all"} />
-          <FilterLink label="Quote requested" href={`/contractor/work-orders?filter=quote_requested&${baseQuery}`} active={filter === "quote_requested"} />
-          <FilterLink label="Approved to proceed" href={`/contractor/work-orders?filter=approved_to_proceed&${baseQuery}`} active={filter === "approved_to_proceed"} />
-          <FilterLink label="In progress" href={`/contractor/work-orders?filter=in_progress&${baseQuery}`} active={filter === "in_progress"} />
-          <FilterLink label="Completed" href={`/contractor/work-orders?filter=completed&${baseQuery}`} active={filter === "completed"} />
-        </nav>
-
-        <ContractorWorkOrderList items={items} contractorId={currentUser.contractorId} />
+    <div className="flex flex-col gap-6">
+      <div>
+        <p className="text-sm font-semibold uppercase tracking-normal text-neutral-500">
+          Assigned work orders
+        </p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">
+          Work queue
+        </h1>
       </div>
-    </ContractorShell>
+
+      <nav className="flex flex-wrap gap-2" aria-label="Contractor work order filters">
+        <FilterLink label="All assigned" href="/contractor/work-orders" active={filter === "all"} />
+        <FilterLink label="Quote requested" href="/contractor/work-orders?filter=quote_requested" active={filter === "quote_requested"} />
+        <FilterLink label="Approved to proceed" href="/contractor/work-orders?filter=approved_to_proceed" active={filter === "approved_to_proceed"} />
+        <FilterLink label="In progress" href="/contractor/work-orders?filter=in_progress" active={filter === "in_progress"} />
+        <FilterLink label="Completed" href="/contractor/work-orders?filter=completed" active={filter === "completed"} />
+      </nav>
+
+      <ContractorWorkOrderList items={items} />
+    </div>
   );
 }
 

@@ -93,7 +93,7 @@ const assignmentSchedulingSchema = z
 
 export const createAssignmentSchema: z.ZodType<CreateAssignmentDto> =
   assignmentSchedulingSchema
-    .extend({
+    .safeExtend({
       workOrderId: entityIdSchema,
       assigneeType: assignmentAssigneeTypeSchema,
       assigneeUserId: entityIdSchema,
@@ -103,7 +103,7 @@ export const createAssignmentSchema: z.ZodType<CreateAssignmentDto> =
 
 export const reassignAssignmentSchema: z.ZodType<ReassignAssignmentDto> =
   assignmentSchedulingSchema
-    .extend({
+    .safeExtend({
       currentAssignmentId: entityIdSchema,
       workOrderId: entityIdSchema,
       assigneeType: assignmentAssigneeTypeSchema,
@@ -114,7 +114,7 @@ export const reassignAssignmentSchema: z.ZodType<ReassignAssignmentDto> =
 
 export const createContractorAssignmentSchema: z.ZodType<CreateContractorAssignmentDto> =
   assignmentSchedulingSchema
-    .extend({
+    .safeExtend({
       contractorOrganizationId: entityIdSchema,
       notes: z.string().trim().max(2000).nullish(),
     })
@@ -122,7 +122,7 @@ export const createContractorAssignmentSchema: z.ZodType<CreateContractorAssignm
 
 export const reassignContractorAssignmentSchema: z.ZodType<ReassignContractorAssignmentDto> =
   assignmentSchedulingSchema
-    .extend({
+    .safeExtend({
       currentAssignmentId: entityIdSchema,
       contractorOrganizationId: entityIdSchema,
       notes: z.string().trim().max(2000).nullish(),

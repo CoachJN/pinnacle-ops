@@ -240,6 +240,7 @@ export function normalizeWorkOrderSearchText(input: {
         .replace(/[^\p{L}\p{N}\s-]+/gu, " ")
         .replace(/\s+/g, " "),
     )
+    .map((value) => value.trim())
     .filter(Boolean)
     .join(" ")
     .trim();

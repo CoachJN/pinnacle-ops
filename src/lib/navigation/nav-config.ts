@@ -2,7 +2,6 @@ import type { NavigationItem } from "@/types/navigation";
 import {
   APP_ROLE_VALUES,
   APP_ROLES,
-  INTERNAL_APP_ROLES,
   type AppRole,
 } from "@/lib/rbac/roles";
 import { APP_PATHS } from "@/lib/utils/constants";
@@ -16,8 +15,6 @@ const FINANCE_NAV_ROLES: readonly AppRole[] = [
   APP_ROLES.Owner,
 ] as const;
 
-const SETTINGS_NAV_ROLES: readonly AppRole[] = [APP_ROLES.Owner] as const;
-
 export const APP_PRIMARY_NAV_ITEMS: readonly NavigationItem[] = [
   {
     id: "dashboard",
@@ -27,31 +24,17 @@ export const APP_PRIMARY_NAV_ITEMS: readonly NavigationItem[] = [
     match: "exact",
   },
   {
-    id: "work-orders",
-    label: "Work Orders",
-    href: APP_PATHS.workOrders,
-    allowedRoles: WORK_ORDER_NAV_ROLES,
-    match: "prefix",
-  },
-  {
-    id: "clients",
-    label: "Clients",
-    href: APP_PATHS.clientOrganizations,
-    allowedRoles: INTERNAL_APP_ROLES,
-    match: "prefix",
-  },
-  {
     id: "locations",
     label: "Locations",
     href: APP_PATHS.locations,
-    allowedRoles: INTERNAL_APP_ROLES,
+    allowedRoles: WORK_ORDER_NAV_ROLES,
     match: "prefix",
   },
   {
     id: "contractors",
     label: "Contractors",
     href: APP_PATHS.contractors,
-    allowedRoles: INTERNAL_APP_ROLES,
+    allowedRoles: WORK_ORDER_NAV_ROLES,
     match: "prefix",
   },
   {
@@ -62,11 +45,17 @@ export const APP_PRIMARY_NAV_ITEMS: readonly NavigationItem[] = [
     match: "prefix",
   },
   {
-    id: "settings",
-    label: "Settings",
-    href: APP_PATHS.settings,
-    allowedRoles: SETTINGS_NAV_ROLES,
+    id: "client-portal",
+    label: "Client Portal",
+    href: "/portal",
+    allowedRoles: ALL_APP_ROLES,
     match: "prefix",
-    disabled: true,
+  },
+  {
+    id: "contractor-portal",
+    label: "Contractor Portal",
+    href: "/contractor/dashboard",
+    allowedRoles: ALL_APP_ROLES,
+    match: "prefix",
   },
 ] as const;

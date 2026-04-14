@@ -59,10 +59,9 @@ describe("server authorization foundation", () => {
     );
   });
 
-  test("external roles cannot mutate supporting business entity catalogs", () => {
+  test("external roles cannot mutate client organizations or contractor catalogs", () => {
     for (const entity of [
       PERMISSION_ENTITIES.ClientOrganizations,
-      PERMISSION_ENTITIES.Locations,
       PERMISSION_ENTITIES.Contractors,
     ]) {
       assert.equal(
@@ -90,6 +89,39 @@ describe("server authorization foundation", () => {
         false,
       );
     }
+
+    assert.equal(
+      roleCanAccessEntity(
+        USER_ROLES.ClientUser,
+        PERMISSION_ENTITIES.Locations,
+        AUTHORITY_CATEGORIES.Create,
+      ),
+      true,
+    );
+    assert.equal(
+      roleCanAccessEntity(
+        USER_ROLES.ClientUser,
+        PERMISSION_ENTITIES.Locations,
+        AUTHORITY_CATEGORIES.Edit,
+      ),
+      true,
+    );
+    assert.equal(
+      roleCanAccessEntity(
+        USER_ROLES.ContractorUser,
+        PERMISSION_ENTITIES.Locations,
+        AUTHORITY_CATEGORIES.Create,
+      ),
+      false,
+    );
+    assert.equal(
+      roleCanAccessEntity(
+        USER_ROLES.ContractorUser,
+        PERMISSION_ENTITIES.Locations,
+        AUTHORITY_CATEGORIES.Edit,
+      ),
+      false,
+    );
   });
 
   test("manager cannot mark an invoice paid", () => {
