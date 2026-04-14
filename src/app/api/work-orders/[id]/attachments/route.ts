@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import {
-  addPhaseThreeWorkOrderNote,
-  listPhaseThreeWorkOrderNotes,
+  addPhaseThreeWorkOrderAttachment,
+  listPhaseThreeWorkOrderAttachments,
   withPhaseThreeWorkOrderRoute,
 } from "@/server/api/work-order-core";
 
@@ -12,10 +12,10 @@ interface RouteContext {
 export async function GET(request: NextRequest, { params }: RouteContext) {
   return withPhaseThreeWorkOrderRoute(
     request,
-    "/api/work-orders/[id]/notes",
+    "/api/work-orders/[id]/attachments",
     async (context) => {
       const { id } = await params;
-      return listPhaseThreeWorkOrderNotes(context, id);
+      return listPhaseThreeWorkOrderAttachments(context, id);
     },
   );
 }
@@ -23,10 +23,10 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
 export async function POST(request: NextRequest, { params }: RouteContext) {
   return withPhaseThreeWorkOrderRoute(
     request,
-    "/api/work-orders/[id]/notes",
+    "/api/work-orders/[id]/attachments",
     async (context) => {
       const { id } = await params;
-      return addPhaseThreeWorkOrderNote(context, request, id);
+      return addPhaseThreeWorkOrderAttachment(context, request, id);
     },
   );
 }

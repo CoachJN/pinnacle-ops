@@ -1,8 +1,11 @@
 import { NextRequest } from "next/server";
 import {
+  getPhaseThreeWorkOrderDetail,
+  withPhaseThreeWorkOrderRoute,
+} from "@/server/api/work-order-core";
+import {
   authorizeWorkOrderEdit,
   authorizeWorkOrderLocationUpdate,
-  authorizeWorkOrderRead,
   getWorkOrderApiContext,
   jsonOk,
   parseJsonObject,
@@ -17,19 +20,14 @@ interface RouteContext {
 }
 
 export async function GET(_request: NextRequest, { params }: RouteContext) {
-  return withApiRoute(_request, "/api/work-orders/[id]", async (requestContext) => {
-    const { id } = await params;
-    const context = await getWorkOrderApiContext(requestContext);
-    const result = await context.services.workOrders.getById(id);
-
-    if (!result.ok) {
-      throw result.error;
-    }
-
-    await authorizeWorkOrderRead(context, result.value);
-
-    return jsonOk({ workOrder: safeWorkOrderDetail(result.value) });
-  });
+  return withPhaseThreeWorkOrderRoute(
+    _request,
+    "/api/work-orders/[id]",
+    async (context) => {
+      const { id } = await params;
+      return getPhaseThreeWorkOrderDetail(context, id);
+    },
+  );
 }
 
 export async function PATCH(request: NextRequest, { params }: RouteContext) {

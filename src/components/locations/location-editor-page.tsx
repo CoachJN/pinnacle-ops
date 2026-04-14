@@ -21,6 +21,7 @@ interface LocationEditorPageProps {
   mode: "create" | "edit";
   locationId?: string;
   defaultClientOrganizationId?: string;
+  portalMode?: boolean;
 }
 
 interface ClientOrganizationsResponse {
@@ -59,6 +60,7 @@ export function LocationEditorPage({
   mode,
   locationId,
   defaultClientOrganizationId,
+  portalMode = false,
 }: LocationEditorPageProps) {
   const router = useRouter();
   const [clientOrganizations, setClientOrganizations] = useState<
@@ -82,36 +84,46 @@ export function LocationEditorPage({
       setErrorMessage(null);
 
       try {
-        const requests: Promise<Response>[] = [
-          fetch("/api/client-organizations?limit=100", { cache: "no-store" }),
-        ];
+        const requests: Promise<Response>[] = [];
+
+        if (!portalMode) {
+          requests.push(fetch("/api/client-organizations?limit=100", { cache: "no-store" }));
+        }
 
         if (mode === "edit" && locationId) {
           requests.push(fetch(`/api/locations/${locationId}`, { cache: "no-store" }));
         }
 
         const responses = await Promise.all(requests);
-        const organizationsPayload = (await responses[0].json()) as
-          | ClientOrganizationsResponse
-          | ApiErrorResponse;
+        let organizationsSuccessPayload: ClientOrganizationsResponse | null = null;
 
-        if (!responses[0].ok) {
-          const errorPayload = organizationsPayload as ApiErrorResponse;
-          throw new Error(
-            getApiErrorMessage(
-              errorPayload,
-              "Unable to load client organizations.",
-            ),
-          );
+        if (!portalMode) {
+          const organizationsPayload = (await responses[0].json()) as
+            | ClientOrganizationsResponse
+            | ApiErrorResponse;
+
+          if (!responses[0]?.ok) {
+            const errorPayload = organizationsPayload as ApiErrorResponse;
+            throw new Error(
+              getApiErrorMessage(
+                errorPayload,
+                "Unable to load client organizations.",
+              ),
+            );
+          }
+
+          organizationsSuccessPayload =
+            organizationsPayload as ClientOrganizationsResponse;
         }
 
         let nextLocation: LocationDetail | null = null;
-        if (responses[1]) {
-          const locationPayload = (await responses[1].json()) as
+        const locationResponse = portalMode ? responses[0] : responses[1];
+        if (locationResponse) {
+          const locationPayload = (await locationResponse.json()) as
             | LocationResponse
             | ApiErrorResponse;
 
-          if (!responses[1].ok) {
+          if (!locationResponse.ok) {
             const errorPayload = locationPayload as ApiErrorResponse;
             throw new Error(
               getApiErrorMessage(errorPayload, "Unable to load location."),
@@ -123,14 +135,16 @@ export function LocationEditorPage({
         }
 
         if (!isCancelled) {
-          const organizationsSuccessPayload =
-            organizationsPayload as ClientOrganizationsResponse;
-          setClientOrganizations(organizationsSuccessPayload.clientOrganizations);
+          if (organizationsSuccessPayload) {
+            setClientOrganizations(organizationsSuccessPayload.clientOrganizations);
+          }
           if (nextLocation) {
             setInitialLocation(nextLocation);
             setFormValues(mapLocationToFormValues(nextLocation));
           } else if (
+            !portalMode &&
             !defaultClientOrganizationId &&
+            organizationsSuccessPayload &&
             organizationsSuccessPayload.clientOrganizations.length > 0
           ) {
             setFormValues((current) => ({
@@ -162,17 +176,24 @@ export function LocationEditorPage({
     return () => {
       isCancelled = true;
     };
-  }, [defaultClientOrganizationId, locationId, mode]);
+  }, [defaultClientOrganizationId, locationId, mode, portalMode]);
 
   const pageTitle = mode === "create" ? "Create location" : "Edit location";
-  const backHref = mode === "edit" && locationId ? `/locations/${locationId}` : "/locations";
+  const basePath = portalMode ? "/portal/locations" : "/locations";
+  const backHref = mode === "edit" && locationId ? `${basePath}/${locationId}` : basePath;
   const helperText = useMemo(() => {
+    if (portalMode) {
+      return mode === "create"
+        ? "Create a location for your organization. Ownership is applied automatically from your authenticated client scope."
+        : "Update location details for your organization. Cross-organization reassignment is still blocked by the backend.";
+    }
+
     if (mode !== "edit") {
       return "Create a new location under a client organization.";
     }
 
     return "Update operational site details. If you change the organization, the backend will reject cross-organization reassignment.";
-  }, [mode]);
+  }, [mode, portalMode]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -209,7 +230,7 @@ export function LocationEditorPage({
 
       const successPayload = payload as LocationResponse;
       startTransition(() => {
-        router.push(`/locations/${successPayload.location.id}`);
+        router.push(`${basePath}/${successPayload.location.id}`);
         router.refresh();
       });
     } catch (error) {
@@ -255,6 +276,12 @@ export function LocationEditorPage({
             rules.
           </p>
         ) : null}
+        {portalMode ? (
+          <p className="mt-4 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+            This form is scoped to your authenticated client organization. The
+            organization owner cannot be changed here.
+          </p>
+        ) : null}
       </section>
 
       {errorMessage ? <ActionFeedback message={errorMessage} /> : null}
@@ -264,22 +291,24 @@ export function LocationEditorPage({
         onSubmit={handleSubmit}
       >
         <div className="grid gap-5 md:grid-cols-2">
-          <SelectField
-            error={errors.clientOrganizationId}
-            label="Client organization"
-            name="clientOrganizationId"
-            onChange={(value) =>
-              setFormValues((current) => ({
-                ...current,
-                clientOrganizationId: value,
-              }))
-            }
-            options={clientOrganizations.map((organization) => ({
-              label: organization.displayName ?? organization.name,
-              value: organization.id,
-            }))}
-            value={formValues.clientOrganizationId}
-          />
+          {portalMode ? null : (
+            <SelectField
+              error={errors.clientOrganizationId}
+              label="Client organization"
+              name="clientOrganizationId"
+              onChange={(value) =>
+                setFormValues((current) => ({
+                  ...current,
+                  clientOrganizationId: value,
+                }))
+              }
+              options={clientOrganizations.map((organization) => ({
+                label: organization.displayName ?? organization.name,
+                value: organization.id,
+              }))}
+              value={formValues.clientOrganizationId}
+            />
+          )}
 
           <CheckboxField
             checked={formValues.isActive}
@@ -589,7 +618,7 @@ function validateForm(values: LocationFormValues): LocationFormErrors {
   const errors: LocationFormErrors = {};
 
   if (!values.clientOrganizationId.trim()) {
-    errors.clientOrganizationId = "Select a client organization.";
+    errors.clientOrganizationId = "Client organization scope is required.";
   }
 
   if (!values.name.trim()) {

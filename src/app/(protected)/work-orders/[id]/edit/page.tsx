@@ -24,6 +24,7 @@ export default async function EditWorkOrderPage({
   }
 
   const currentUser = getMockCurrentUser(readParam(query.role));
+  const requestedClientId = readParam(query.clientId);
   const [workOrder, clients, locations] = await Promise.all([
     getWorkOrderById(id),
     listAllClients(),
@@ -61,6 +62,7 @@ export default async function EditWorkOrderPage({
               workOrder={workOrder}
               clients={clients}
               locations={locations}
+              defaultClientId={requestedClientId}
             />
           ) : (
             <div className="rounded-lg border border-rose-200 bg-rose-50 p-5 text-sm text-rose-800">

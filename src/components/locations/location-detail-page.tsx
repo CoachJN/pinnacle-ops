@@ -26,7 +26,14 @@ interface ApiErrorResponse {
   };
 }
 
-export function LocationDetailPage({ locationId }: LocationDetailPageProps) {
+interface LocationDetailPageVariantProps extends LocationDetailPageProps {
+  portalMode?: boolean;
+}
+
+export function LocationDetailPage({
+  locationId,
+  portalMode = false,
+}: LocationDetailPageVariantProps) {
   const [location, setLocation] = useState<LocationDetail | null>(null);
   const [clientOrganization, setClientOrganization] =
     useState<ClientOrganizationDetail | null>(null);
@@ -59,6 +66,15 @@ export function LocationDetailPage({ locationId }: LocationDetailPageProps) {
         }
 
         const locationSuccessPayload = locationPayload as LocationResponse;
+
+        if (!isCancelled) {
+          setLocation(locationSuccessPayload.location);
+        }
+
+        if (portalMode) {
+          return;
+        }
+
         const clientResponse = await fetch(
           `/api/client-organizations/${locationSuccessPayload.location.clientOrganizationId}`,
           { cache: "no-store" },
@@ -79,7 +95,6 @@ export function LocationDetailPage({ locationId }: LocationDetailPageProps) {
 
         if (!isCancelled) {
           const clientSuccessPayload = clientPayload as ClientOrganizationResponse;
-          setLocation(locationSuccessPayload.location);
           setClientOrganization(clientSuccessPayload.clientOrganization);
         }
       } catch (error) {
@@ -102,7 +117,7 @@ export function LocationDetailPage({ locationId }: LocationDetailPageProps) {
     return () => {
       isCancelled = true;
     };
-  }, [locationId]);
+  }, [locationId, portalMode]);
 
   if (isLoading) {
     return (
@@ -118,7 +133,7 @@ export function LocationDetailPage({ locationId }: LocationDetailPageProps) {
       <section className="space-y-4">
         <Link
           className="text-sm font-medium text-neutral-600 underline-offset-4 hover:text-neutral-950 hover:underline"
-          href="/locations"
+          href={portalMode ? "/portal/locations" : "/locations"}
         >
           Back to locations
         </Link>
@@ -133,7 +148,7 @@ export function LocationDetailPage({ locationId }: LocationDetailPageProps) {
     <section className="space-y-6">
       <Link
         className="text-sm font-medium text-neutral-600 underline-offset-4 hover:text-neutral-950 hover:underline"
-        href="/locations"
+        href={portalMode ? "/portal/locations" : "/locations"}
       >
         Back to locations
       </Link>
@@ -159,14 +174,24 @@ export function LocationDetailPage({ locationId }: LocationDetailPageProps) {
           </div>
           <Link
             className="inline-flex rounded-full bg-neutral-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800"
-            href={`/locations/${location.id}/edit`}
+            href={
+              portalMode
+                ? `/portal/locations/${location.id}/edit`
+                : `/locations/${location.id}/edit`
+            }
           >
             Edit location
           </Link>
         </div>
       </section>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(18rem,1fr)]">
+      <div
+        className={
+          portalMode
+            ? "grid gap-6"
+            : "grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(18rem,1fr)]"
+        }
+      >
         <section className="space-y-6">
           <DetailCard
             items={[
@@ -197,42 +222,44 @@ export function LocationDetailPage({ locationId }: LocationDetailPageProps) {
         </section>
 
         <aside className="space-y-6">
-          <section className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
-            <div className="flex flex-wrap items-center gap-3">
-              <h2 className="text-lg font-semibold text-neutral-950">
-                Organization summary
-              </h2>
+          {portalMode ? null : (
+            <section className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-wrap items-center gap-3">
+                <h2 className="text-lg font-semibold text-neutral-950">
+                  Organization summary
+                </h2>
+                {clientOrganization ? (
+                  <ClientOrganizationStatusBadge
+                    status={clientOrganization.status}
+                  />
+                ) : null}
+              </div>
               {clientOrganization ? (
-                <ClientOrganizationStatusBadge
-                  status={clientOrganization.status}
-                />
-              ) : null}
-            </div>
-            {clientOrganization ? (
-              <>
-                <p className="mt-3 text-base font-semibold text-neutral-950">
-                  {clientOrganization.displayName ?? clientOrganization.name}
+                <>
+                  <p className="mt-3 text-base font-semibold text-neutral-950">
+                    {clientOrganization.displayName ?? clientOrganization.name}
+                  </p>
+                  <p className="mt-2 text-sm text-neutral-600">
+                    Primary contact:{" "}
+                    {clientOrganization.primaryContactName ?? "Not provided"}
+                  </p>
+                  <p className="mt-2 text-sm text-neutral-600">
+                    Billing email: {clientOrganization.billingEmail ?? "Not provided"}
+                  </p>
+                  <Link
+                    className="mt-4 inline-flex rounded-full border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:border-neutral-500 hover:text-neutral-950"
+                    href={`/client-organizations/${clientOrganization.id}`}
+                  >
+                    View organization
+                  </Link>
+                </>
+              ) : (
+                <p className="mt-3 text-sm text-neutral-600">
+                  Organization details are unavailable.
                 </p>
-                <p className="mt-2 text-sm text-neutral-600">
-                  Primary contact:{" "}
-                  {clientOrganization.primaryContactName ?? "Not provided"}
-                </p>
-                <p className="mt-2 text-sm text-neutral-600">
-                  Billing email: {clientOrganization.billingEmail ?? "Not provided"}
-                </p>
-                <Link
-                  className="mt-4 inline-flex rounded-full border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:border-neutral-500 hover:text-neutral-950"
-                  href={`/client-organizations/${clientOrganization.id}`}
-                >
-                  View organization
-                </Link>
-              </>
-            ) : (
-              <p className="mt-3 text-sm text-neutral-600">
-                Organization details are unavailable.
-              </p>
-            )}
-          </section>
+              )}
+            </section>
+          )}
 
           <section className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
             <h2 className="text-lg font-semibold text-neutral-950">

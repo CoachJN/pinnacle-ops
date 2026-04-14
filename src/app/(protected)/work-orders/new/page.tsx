@@ -15,10 +15,15 @@ export default async function NewWorkOrderPage({
 }) {
   const params = await searchParams;
   const currentUser = getMockCurrentUser(readParam(params.role));
+  const requestedClientId = readParam(params.clientId);
   const [clients, locations] = await Promise.all([
     listAllClients(),
     listAllLocations(),
   ]);
+  const defaultClientId =
+    requestedClientId && clients.some((client) => client.id === requestedClientId && client.status === "active")
+      ? requestedClientId
+      : undefined;
 
   return (
     <InternalShell currentUser={currentUser}>
@@ -47,6 +52,8 @@ export default async function NewWorkOrderPage({
               role={currentUser.role}
               clients={clients}
               locations={locations}
+              defaultClientId={defaultClientId}
+              lockClientSelection={Boolean(defaultClientId)}
             />
           ) : (
             <div className="rounded-lg border border-rose-200 bg-rose-50 p-5 text-sm text-rose-800">

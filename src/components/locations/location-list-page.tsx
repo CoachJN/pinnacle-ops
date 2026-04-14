@@ -21,7 +21,13 @@ interface ApiErrorResponse {
   };
 }
 
-export function LocationListPage() {
+interface LocationListPageProps {
+  portalMode?: boolean;
+}
+
+export function LocationListPage({
+  portalMode = false,
+}: LocationListPageProps) {
   const [locations, setLocations] = useState<LocationSummary[]>([]);
   const [clientOrganizations, setClientOrganizations] = useState<
     ClientOrganizationSummary[]
@@ -37,6 +43,10 @@ export function LocationListPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
+    if (portalMode) {
+      return;
+    }
+
     let isCancelled = false;
 
     async function loadClientOrganizations() {
@@ -78,7 +88,7 @@ export function LocationListPage() {
     return () => {
       isCancelled = true;
     };
-  }, []);
+  }, [portalMode]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -89,7 +99,7 @@ export function LocationListPage() {
 
       try {
         const params = new URLSearchParams({ limit: "100" });
-        if (selectedClientOrganizationId) {
+        if (!portalMode && selectedClientOrganizationId) {
           params.set("clientOrganizationId", selectedClientOrganizationId);
         }
         if (selectedStatus) {
@@ -135,7 +145,7 @@ export function LocationListPage() {
     return () => {
       isCancelled = true;
     };
-  }, [deferredSearch, selectedClientOrganizationId, selectedStatus]);
+  }, [deferredSearch, portalMode, selectedClientOrganizationId, selectedStatus]);
 
   return (
     <section className="space-y-6">
@@ -146,16 +156,17 @@ export function LocationListPage() {
               Locations
             </p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">
-              Manage service locations
+              {portalMode ? "Your service locations" : "Manage service locations"}
             </h1>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">
-              Filter locations by organization, search operational sites, and
-              move quickly into detail or edit workflows.
+              {portalMode
+                ? "Review and manage the locations available to your organization."
+                : "Filter locations by organization, search operational sites, and move quickly into detail or edit workflows."}
             </p>
           </div>
           <Link
             className="inline-flex rounded-full bg-neutral-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800"
-            href="/locations/new"
+            href={portalMode ? "/portal/locations/new" : "/locations/new"}
           >
             Create location
           </Link>
@@ -163,7 +174,13 @@ export function LocationListPage() {
       </div>
 
       <section className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(12rem,0.8fr)_minmax(12rem,0.8fr)]">
+        <div
+          className={
+            portalMode
+              ? "grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(12rem,0.8fr)]"
+              : "grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(12rem,0.8fr)_minmax(12rem,0.8fr)]"
+          }
+        >
           <label className="text-sm font-medium text-neutral-700">
             Search
             <input
@@ -174,23 +191,25 @@ export function LocationListPage() {
               value={search}
             />
           </label>
-          <label className="text-sm font-medium text-neutral-700">
-            Organization
-            <select
-              className="mt-1 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-950 shadow-sm outline-none transition focus:border-neutral-500"
-              onChange={(event) =>
-                setSelectedClientOrganizationId(event.target.value)
-              }
-              value={selectedClientOrganizationId}
-            >
-              <option value="">All organizations</option>
-              {clientOrganizations.map((organization) => (
-                <option key={organization.id} value={organization.id}>
-                  {organization.displayName ?? organization.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          {portalMode ? null : (
+            <label className="text-sm font-medium text-neutral-700">
+              Organization
+              <select
+                className="mt-1 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-950 shadow-sm outline-none transition focus:border-neutral-500"
+                onChange={(event) =>
+                  setSelectedClientOrganizationId(event.target.value)
+                }
+                value={selectedClientOrganizationId}
+              >
+                <option value="">All organizations</option>
+                {clientOrganizations.map((organization) => (
+                  <option key={organization.id} value={organization.id}>
+                    {organization.displayName ?? organization.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className="text-sm font-medium text-neutral-700">
             Status
             <select
@@ -226,7 +245,9 @@ export function LocationListPage() {
               No locations found
             </h2>
             <p className="mt-2 text-sm text-neutral-600">
-              Adjust filters or create a new location to populate this list.
+              {portalMode
+                ? "Create your first location to start managing service sites for your organization."
+                : "Adjust filters or create a new location to populate this list."}
             </p>
           </div>
         ) : (
@@ -235,7 +256,9 @@ export function LocationListPage() {
               <thead className="bg-neutral-50 text-left text-xs font-semibold uppercase tracking-[0.18em] text-neutral-500">
                 <tr>
                   <th className="px-4 py-3">Location</th>
-                  <th className="px-4 py-3">Organization</th>
+                  {portalMode ? null : (
+                    <th className="px-4 py-3">Organization</th>
+                  )}
                   <th className="px-4 py-3">Address</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Updated</th>
@@ -248,7 +271,11 @@ export function LocationListPage() {
                     <td className="px-4 py-4">
                       <Link
                         className="font-semibold text-neutral-950 underline-offset-4 hover:underline"
-                        href={`/locations/${location.id}`}
+                        href={
+                          portalMode
+                            ? `/portal/locations/${location.id}`
+                            : `/locations/${location.id}`
+                        }
                       >
                         {location.name}
                       </Link>
@@ -256,9 +283,11 @@ export function LocationListPage() {
                         {location.code ? `Code: ${location.code}` : "No location code"}
                       </p>
                     </td>
-                    <td className="px-4 py-4 text-neutral-700">
-                      {location.clientSnapshot?.name ?? "Unknown organization"}
-                    </td>
+                    {portalMode ? null : (
+                      <td className="px-4 py-4 text-neutral-700">
+                        {location.clientSnapshot?.name ?? "Unknown organization"}
+                      </td>
+                    )}
                     <td className="px-4 py-4 text-neutral-700">
                       {formatAddress(location)}
                     </td>
@@ -272,13 +301,21 @@ export function LocationListPage() {
                       <div className="flex flex-wrap gap-2">
                         <Link
                           className="inline-flex rounded-full border border-neutral-300 px-3 py-1.5 font-medium text-neutral-700 transition hover:border-neutral-500 hover:text-neutral-950"
-                          href={`/locations/${location.id}`}
+                          href={
+                            portalMode
+                              ? `/portal/locations/${location.id}`
+                              : `/locations/${location.id}`
+                          }
                         >
                           Detail
                         </Link>
                         <Link
                           className="inline-flex rounded-full border border-neutral-300 px-3 py-1.5 font-medium text-neutral-700 transition hover:border-neutral-500 hover:text-neutral-950"
-                          href={`/locations/${location.id}/edit`}
+                          href={
+                            portalMode
+                              ? `/portal/locations/${location.id}/edit`
+                              : `/locations/${location.id}/edit`
+                          }
                         >
                           Edit
                         </Link>

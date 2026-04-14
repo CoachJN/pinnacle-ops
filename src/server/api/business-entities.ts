@@ -19,6 +19,10 @@ import {
   canUserPerformAction,
   createAccessDeniedError,
 } from "@/server/authorization";
+import {
+  createLocationSchema,
+  updateLocationSchema,
+} from "@/lib/validation/locations";
 import { AppError } from "@/lib/errors/app-error";
 import { ERROR_CODES } from "@/lib/errors/codes";
 import {
@@ -123,103 +127,11 @@ export function parseUpdateClientPayload(input: Record<string, unknown>) {
 }
 
 export function parseCreateLocationPayload(input: Record<string, unknown>) {
-  assertAllowedFields(input, [
-    "clientOrganizationId",
-    "name",
-    "code",
-    "status",
-    "addressLine1",
-    "addressLine2",
-    "city",
-    "region",
-    "postalCode",
-    "countryCode",
-    "locationContactName",
-    "locationContactEmail",
-    "locationContactPhone",
-    "accessNotes",
-    "notes",
-  ]);
-
-  return {
-    clientOrganizationId: requiredString(
-      input.clientOrganizationId,
-      "clientOrganizationId",
-    ),
-    name: requiredString(input.name, "name"),
-    code: nullableString(input.code, "code"),
-    status: parseOptionalOrganizationStatus(input.status, "status"),
-    addressLine1: nullableString(input.addressLine1, "addressLine1"),
-    addressLine2: nullableString(input.addressLine2, "addressLine2"),
-    city: nullableString(input.city, "city"),
-    region: nullableString(input.region, "region"),
-    postalCode: nullableString(input.postalCode, "postalCode"),
-    countryCode: nullableString(input.countryCode, "countryCode"),
-    locationContactName: nullableString(
-      input.locationContactName,
-      "locationContactName",
-    ),
-    locationContactEmail: nullableString(
-      input.locationContactEmail,
-      "locationContactEmail",
-    ),
-    locationContactPhone: nullableString(
-      input.locationContactPhone,
-      "locationContactPhone",
-    ),
-    accessNotes: nullableString(input.accessNotes, "accessNotes"),
-    notes: nullableString(input.notes, "notes"),
-  };
+  return createLocationSchema.parse(input);
 }
 
 export function parseUpdateLocationPayload(input: Record<string, unknown>) {
-  assertAllowedFields(input, [
-    "clientOrganizationId",
-    "name",
-    "code",
-    "status",
-    "addressLine1",
-    "addressLine2",
-    "city",
-    "region",
-    "postalCode",
-    "countryCode",
-    "locationContactName",
-    "locationContactEmail",
-    "locationContactPhone",
-    "accessNotes",
-    "notes",
-  ]);
-
-  return pruneUndefined({
-    clientOrganizationId: optionalString(
-      input.clientOrganizationId,
-      "clientOrganizationId",
-    ),
-    name: optionalString(input.name, "name"),
-    code: optionalNullableString(input.code, "code"),
-    status: parseOptionalOrganizationStatus(input.status, "status"),
-    addressLine1: optionalNullableString(input.addressLine1, "addressLine1"),
-    addressLine2: optionalNullableString(input.addressLine2, "addressLine2"),
-    city: optionalNullableString(input.city, "city"),
-    region: optionalNullableString(input.region, "region"),
-    postalCode: optionalNullableString(input.postalCode, "postalCode"),
-    countryCode: optionalNullableString(input.countryCode, "countryCode"),
-    locationContactName: optionalNullableString(
-      input.locationContactName,
-      "locationContactName",
-    ),
-    locationContactEmail: optionalNullableString(
-      input.locationContactEmail,
-      "locationContactEmail",
-    ),
-    locationContactPhone: optionalNullableString(
-      input.locationContactPhone,
-      "locationContactPhone",
-    ),
-    accessNotes: optionalNullableString(input.accessNotes, "accessNotes"),
-    notes: optionalNullableString(input.notes, "notes"),
-  });
+  return updateLocationSchema.parse(input);
 }
 
 export function parseCreateContractorPayload(input: Record<string, unknown>) {

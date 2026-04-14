@@ -37,7 +37,10 @@ const optionalStringFields = [
 export async function validateCreateWorkOrderForm(
   formData: FormData,
 ): Promise<WorkOrderValidationResult<PhaseOneCreateWorkOrderInput>> {
-  const base = await validateCommonWorkOrderFields(formData, true);
+  const base = await validateCommonWorkOrderFields(formData, {
+    mode: "create",
+    requireRequiredFields: true,
+  });
 
   if (!base.ok || !base.data) {
     return base as WorkOrderValidationResult<PhaseOneCreateWorkOrderInput>;
@@ -64,20 +67,28 @@ export async function validateCreateWorkOrderForm(
 export async function validateUpdateWorkOrderForm(
   formData: FormData,
 ): Promise<WorkOrderValidationResult<PhaseOneUpdateWorkOrderInput>> {
-  return validateCommonWorkOrderFields(formData, true);
+  return validateCommonWorkOrderFields(formData, {
+    mode: "edit",
+    requireRequiredFields: true,
+  });
 }
 
 async function validateCommonWorkOrderFields(
   formData: FormData,
-  requireRequiredFields: boolean,
+  options: {
+    mode: "create" | "edit";
+    requireRequiredFields: boolean;
+  },
 ): Promise<WorkOrderValidationResult<PhaseOneUpdateWorkOrderInput>> {
   const errors: WorkOrderFormErrors = {};
   const data: PhaseOneUpdateWorkOrderInput = {};
+  const currentClientId = readTrimmedString(formData, "currentClientId");
+  const currentLocationId = readTrimmedString(formData, "currentLocationId");
 
   for (const field of requiredStringFields) {
     const value = readTrimmedString(formData, field);
 
-    if (requireRequiredFields && !value) {
+    if (options.requireRequiredFields && !value) {
       errors[field] = friendlyFieldName(field) + " is required.";
       continue;
     }
@@ -114,12 +125,22 @@ async function validateCommonWorkOrderFields(
 
     if (!client) {
       errors.clientId = "Select an existing client.";
+    } else if (
+      client.status !== "active" &&
+      (options.mode === "create" || hasChangedLinkage(data.clientId, data.locationId, currentClientId, currentLocationId))
+    ) {
+      errors.clientId = "Select an active client organization.";
     }
 
     if (!location) {
       errors.locationId = "Select an existing location.";
     } else if (location.clientId !== data.clientId) {
       errors.locationId = "Select a location that belongs to the selected client.";
+    } else if (
+      location.status !== "active" &&
+      (options.mode === "create" || hasChangedLinkage(data.clientId, data.locationId, currentClientId, currentLocationId))
+    ) {
+      errors.locationId = "Select an active location.";
     }
   }
 
@@ -139,4 +160,13 @@ function friendlyFieldName(field: string): string {
   return field
     .replace(/([A-Z])/g, " $1")
     .replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function hasChangedLinkage(
+  nextClientId: string,
+  nextLocationId: string,
+  currentClientId: string,
+  currentLocationId: string,
+): boolean {
+  return nextClientId !== currentClientId || nextLocationId !== currentLocationId;
 }

@@ -24,28 +24,94 @@ export function WorkOrderForm({
   workOrder,
   clients,
   locations,
+  defaultClientId,
+  lockClientSelection = false,
 }: {
   mode: "create" | "edit";
   role: InternalUserRole;
   workOrder?: PhaseOneWorkOrder;
   clients: ClientOrganization[];
   locations: Location[];
+  defaultClientId?: string;
+  lockClientSelection?: boolean;
 }) {
   const action = mode === "create" ? createWorkOrderAction : updateWorkOrderAction;
   const [state, formAction] = useActionState(action, emptyState);
-  const initialClientId = workOrder?.clientId ?? clients[0]?.id ?? "";
-  const [selectedClientId, setSelectedClientId] = useState(initialClientId);
-  const selectedClientLocations = useMemo(
-    () => locations.filter((location) => location.clientId === selectedClientId),
-    [locations, selectedClientId],
+  const selectableClients = useMemo(
+    () =>
+      clients.filter(
+        (client) =>
+          client.status === "active" || (mode === "edit" && client.id === workOrder?.clientId),
+      ),
+    [clients, mode, workOrder?.clientId],
   );
-  const hasClients = clients.length > 0;
-  const hasLocationsForClient = selectedClientLocations.length > 0;
+  const initialClientId = workOrder?.clientId ?? defaultClientId ?? "";
+  const [selectedClientId, setSelectedClientId] = useState(initialClientId);
+  const selectedClient = selectableClients.find((client) => client.id === selectedClientId) ?? null;
+  const selectableLocations = useMemo(
+    () =>
+      locations.filter((location) => {
+        if (location.clientId !== selectedClientId) {
+          return false;
+        }
+
+        if (location.status === "active") {
+          return true;
+        }
+
+        return mode === "edit" && location.id === workOrder?.locationId;
+      }),
+    [locations, mode, selectedClientId, workOrder?.locationId],
+  );
+  const initialLocationId = workOrder?.locationId ?? "";
+  const [selectedLocationId, setSelectedLocationId] = useState(initialLocationId);
+  const selectedLocation =
+    selectableLocations.find((location) => location.id === selectedLocationId) ?? null;
+  const hasClients = selectableClients.length > 0;
+  const hasLocationsForClient = selectableLocations.length > 0;
+
+  function handleClientChange(nextClientId: string) {
+    setSelectedClientId(nextClientId);
+    setSelectedLocationId((currentLocationId) => {
+      if (!nextClientId) {
+        return "";
+      }
+
+      const nextLocations = locations.filter((location) => {
+        if (location.clientId !== nextClientId) {
+          return false;
+        }
+
+        if (location.status === "active") {
+          return true;
+        }
+
+        return mode === "edit" && location.id === workOrder?.locationId;
+      });
+
+      if (nextLocations.some((location) => location.id === currentLocationId)) {
+        return currentLocationId;
+      }
+
+      const preservedLocationId =
+        mode === "edit" && nextClientId === workOrder?.clientId ? workOrder.locationId : "";
+
+      return nextLocations.some((location) => location.id === preservedLocationId)
+        ? preservedLocationId
+        : "";
+    });
+  }
 
   return (
     <form action={formAction} className="space-y-6 rounded-lg border border-neutral-200 bg-white p-5">
       <input type="hidden" name="actorRole" value={role} />
       {workOrder ? <input type="hidden" name="id" value={workOrder.id} /> : null}
+      {mode === "edit" ? (
+        <>
+          <input type="hidden" name="currentClientId" value={workOrder?.clientId ?? ""} />
+          <input type="hidden" name="currentLocationId" value={workOrder?.locationId ?? ""} />
+        </>
+      ) : null}
       {state.message ? (
         <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
           {state.message}
@@ -57,35 +123,38 @@ export function WorkOrderForm({
         <SelectField label="Priority" name="priority" defaultValue={workOrder?.priority ?? "medium"} error={state.errors?.priority} />
         <TextareaField label="Description" name="description" defaultValue={workOrder?.description} error={state.errors?.description} required fullWidth />
         <ClientSelectField
-          clients={clients}
-          defaultValue={initialClientId}
+          clients={selectableClients}
+          value={selectedClientId}
           error={state.errors?.clientId}
           role={role}
-          onClientChange={setSelectedClientId}
+          disabled={lockClientSelection}
+          onClientChange={handleClientChange}
         />
         <LocationSelectField
-          locations={selectedClientLocations}
-          defaultValue={
-            workOrder?.locationId &&
-            selectedClientLocations.some((location) => location.id === workOrder.locationId)
-              ? workOrder.locationId
-              : selectedClientLocations[0]?.id ?? ""
-          }
+          locations={selectableLocations}
+          value={selectedLocationId}
           error={state.errors?.locationId}
           role={role}
           selectedClientId={selectedClientId}
+          onLocationChange={setSelectedLocationId}
         />
+        {selectedLocation ? (
+          <LocationSummaryCard
+            clientName={selectedClient?.name ?? "Unknown client organization"}
+            location={selectedLocation}
+          />
+        ) : null}
         {!hasClients ? (
           <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 md:col-span-2">
-            Create a client before opening a new work order.
+            Create an active client organization before opening a new work order.
             <Link className="ml-2 font-semibold underline" href={`/clients/new?role=${role}`}>
               Create client
             </Link>
           </div>
         ) : null}
-        {hasClients && !hasLocationsForClient ? (
+        {hasClients && selectedClientId && !hasLocationsForClient ? (
           <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 md:col-span-2">
-            This client has no locations yet.
+            This client organization has no active locations available for new work orders.
             <Link
               className="ml-2 font-semibold underline"
               href={`/locations/new?clientId=${selectedClientId}&role=${role}`}
@@ -121,30 +190,37 @@ export function WorkOrderForm({
 
 function ClientSelectField({
   clients,
-  defaultValue,
+  value,
   error,
   role,
+  disabled,
   onClientChange,
 }: {
   clients: ClientOrganization[];
-  defaultValue: string;
+  value: string;
   error?: string;
   role: InternalUserRole;
+  disabled: boolean;
   onClientChange: (clientId: string) => void;
 }) {
   return (
     <label className="text-sm font-medium text-neutral-700">
-      Client<span className="text-rose-700"> *</span>
+      Client organization<span className="text-rose-700"> *</span>
+      {disabled ? <input type="hidden" name="clientId" value={value} /> : null}
       <select
-        name="clientId"
-        defaultValue={defaultValue}
+        name={disabled ? undefined : "clientId"}
+        value={value}
         onChange={(event) => onClientChange(event.target.value)}
-        className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-950 shadow-sm focus:border-neutral-600 focus:outline-none"
+        disabled={disabled}
+        className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-950 shadow-sm focus:border-neutral-600 focus:outline-none disabled:bg-neutral-100"
       >
-        {clients.length === 0 ? <option value="">No clients available</option> : null}
+        <option value="">
+          {clients.length === 0 ? "No active client organizations available" : "Select a client organization"}
+        </option>
         {clients.map((client) => (
           <option key={client.id} value={client.id}>
             {client.name}
+            {client.status === "inactive" ? " (inactive)" : ""}
           </option>
         ))}
       </select>
@@ -160,30 +236,40 @@ function ClientSelectField({
 
 function LocationSelectField({
   locations,
-  defaultValue,
+  value,
   error,
   role,
   selectedClientId,
+  onLocationChange,
 }: {
   locations: Location[];
-  defaultValue: string;
+  value: string;
   error?: string;
   role: InternalUserRole;
   selectedClientId: string;
+  onLocationChange: (locationId: string) => void;
 }) {
   return (
     <label className="text-sm font-medium text-neutral-700">
       Location<span className="text-rose-700"> *</span>
       <select
-        key={selectedClientId}
         name="locationId"
-        defaultValue={defaultValue}
+        value={value}
+        onChange={(event) => onLocationChange(event.target.value)}
+        disabled={!selectedClientId || locations.length === 0}
         className="mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-950 shadow-sm focus:border-neutral-600 focus:outline-none"
       >
-        {locations.length === 0 ? <option value="">No locations for this client</option> : null}
+        <option value="">
+          {!selectedClientId
+            ? "Choose a client organization first"
+            : locations.length === 0
+              ? "No valid locations for this client organization"
+              : "Select a location"}
+        </option>
         {locations.map((location) => (
           <option key={location.id} value={location.id}>
             {location.name}
+            {location.status === "inactive" ? " (inactive)" : ""}
           </option>
         ))}
       </select>
@@ -197,6 +283,47 @@ function LocationSelectField({
         </Link>
       ) : null}
     </label>
+  );
+}
+
+function LocationSummaryCard({
+  clientName,
+  location,
+}: {
+  clientName: string;
+  location: Location;
+}) {
+  const address = [
+    location.addressLine1,
+    location.addressLine2,
+    location.city,
+    location.provinceOrState,
+    location.postalCode,
+    location.country,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+  return (
+    <div className="rounded-lg border border-neutral-200 bg-stone-50 p-4 text-sm text-neutral-700 md:col-span-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="font-semibold text-neutral-950">{location.name}</p>
+        <span
+          className={
+            location.status === "active"
+              ? "rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800"
+              : "rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800"
+          }
+        >
+          {location.status === "active" ? "Active location" : "Inactive legacy location"}
+        </span>
+      </div>
+      <p className="mt-1 text-neutral-600">{clientName}</p>
+      <p className="mt-2">{address}</p>
+      <p className="mt-2">
+        Contact: {location.locationContactName} {location.locationContactPhone ? `• ${location.locationContactPhone}` : ""}
+      </p>
+    </div>
   );
 }
 
