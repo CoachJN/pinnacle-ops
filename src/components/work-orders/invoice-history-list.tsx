@@ -1,9 +1,16 @@
+import Link from "next/link";
 import type { Invoice } from "@/types/invoice";
 import { formatDate, formatDateTime } from "@/components/work-orders/formatting";
 import { formatInvoiceCurrency } from "@/lib/invoices/money";
 import { InvoiceStatusBadge } from "@/components/invoices/invoice-status-badge";
 
-export function InvoiceHistoryList({ invoices }: { invoices: Invoice[] }) {
+export function InvoiceHistoryList({
+  buildInvoiceHref,
+  invoices,
+}: {
+  buildInvoiceHref?: (invoice: Invoice) => string;
+  invoices: Invoice[];
+}) {
   if (invoices.length === 0) {
     return (
       <p className="rounded-md border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
@@ -24,11 +31,20 @@ export function InvoiceHistoryList({ invoices }: { invoices: Invoice[] }) {
             <th className="px-4 py-3">Updated</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-neutral-200 bg-white">
+          <tbody className="divide-y divide-neutral-200 bg-white">
           {invoices.map((invoice) => (
             <tr key={invoice.id}>
               <td className="px-4 py-3 font-semibold text-neutral-950">
-                {invoice.invoiceNumber}
+                {buildInvoiceHref ? (
+                  <Link
+                    className="underline-offset-4 hover:underline"
+                    href={buildInvoiceHref(invoice)}
+                  >
+                    {invoice.invoiceNumber}
+                  </Link>
+                ) : (
+                  invoice.invoiceNumber
+                )}
               </td>
               <td className="px-4 py-3">
                 <InvoiceStatusBadge status={invoice.status} />

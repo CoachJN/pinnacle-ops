@@ -12,9 +12,12 @@ import type { FirestoreEntityMapper } from "@/server/repositories/firestore/mapp
 import {
   activityLogMapper,
   assignmentMapper,
+  clientQuoteMapper,
   clientOrganizationMapper,
+  contractorQuoteMapper,
   contractorOrganizationMapper,
   invoiceMapper,
+  internalNotificationMapper,
   locationMapper,
   quoteMapper,
   userProfileMapper,
@@ -25,12 +28,18 @@ import type {
   ActivityLogDocument,
   Assignment,
   AssignmentDocument,
+  ClientQuote,
+  ClientQuoteDocument,
   ClientOrganization,
   ClientOrganizationDocument,
+  ContractorQuote,
+  ContractorQuoteDocument,
   ContractorOrganization,
   ContractorOrganizationDocument,
   Invoice,
   InvoiceDocument,
+  InternalNotification,
+  InternalNotificationDocument,
   Location,
   LocationDocument,
   Quote,
@@ -43,7 +52,7 @@ import type {
 import { getFirebaseAdminFirestore } from "@/server/firebase";
 import type { EntityId } from "@/types/entity";
 import type { InvoiceStatus } from "@/types/invoice";
-import type { QuoteStatus } from "@/types/quote";
+import type { ClientQuoteStatus, ContractorQuoteStatus, QuoteStatus } from "@/types/quote";
 
 export interface RepositoryListOptions {
   limit?: number;
@@ -68,6 +77,14 @@ export interface EntityRepository<TDomain> {
 
 export interface UserProfileRepository extends EntityRepository<UserProfile> {
   getByEmail(email: string): Promise<UserProfile | null>;
+  listByOrganizationId(
+    organizationId: EntityId,
+    options?: RepositoryListOptions,
+  ): Promise<RepositoryListResult<UserProfile>>;
+  listByContractorOrganizationId(
+    contractorOrganizationId: EntityId,
+    options?: RepositoryListOptions,
+  ): Promise<RepositoryListResult<UserProfile>>;
 }
 
 export interface ClientOrganizationRepository
@@ -140,6 +157,25 @@ export interface QuoteRepository extends EntityRepository<Quote> {
   >;
 }
 
+export interface ContractorQuoteRepository
+  extends EntityRepository<ContractorQuote> {
+  listByWorkOrderId(
+    workOrderId: EntityId,
+    options?: RepositoryListOptions,
+  ): Promise<RepositoryListResult<ContractorQuote>>;
+  listPendingReview(
+    options?: RepositoryListOptions,
+  ): Promise<RepositoryListResult<ContractorQuote>>;
+}
+
+export interface ClientQuoteRepository extends EntityRepository<ClientQuote> {
+  listByWorkOrderId(
+    workOrderId: EntityId,
+    options?: RepositoryListOptions,
+  ): Promise<RepositoryListResult<ClientQuote>>;
+  getActiveByWorkOrderId(workOrderId: EntityId): Promise<ClientQuote | null>;
+}
+
 export interface InvoiceRepository extends EntityRepository<Invoice> {
   listByWorkOrderId(
     workOrderId: EntityId,
@@ -155,6 +191,7 @@ export interface AssignmentRepository extends EntityRepository<Assignment> {
     workOrderId: EntityId,
     options?: RepositoryListOptions,
   ): Promise<RepositoryListResult<Assignment>>;
+  getActiveByWorkOrderId(workOrderId: EntityId): Promise<Assignment | null>;
   listByContractorOrganizationId(
     contractorOrganizationId: EntityId,
     options?: RepositoryListOptions,
@@ -171,16 +208,32 @@ export interface ActivityLogRepository {
   ): Promise<RepositoryListResult<ActivityLog>>;
 }
 
+export interface InternalNotificationRepository
+  extends EntityRepository<InternalNotification> {
+  createMany(
+    notifications: readonly InternalNotification[],
+  ): Promise<readonly RepositoryMutationResult<InternalNotification>[]>;
+  listByRecipientUserId(
+    recipientUserId: EntityId,
+    options?: RepositoryListOptions & {
+      status?: InternalNotification["status"];
+    },
+  ): Promise<RepositoryListResult<InternalNotification>>;
+}
+
 export interface FirestoreRepositories {
   userProfiles: UserProfileRepository;
   clientOrganizations: ClientOrganizationRepository;
   locations: LocationRepository;
   contractorOrganizations: ContractorOrganizationRepository;
   workOrders: WorkOrderRepository;
+  contractorQuotes: ContractorQuoteRepository;
+  clientQuotes: ClientQuoteRepository;
   quotes: QuoteRepository;
   invoices: InvoiceRepository;
   assignments: AssignmentRepository;
   activityLogs: ActivityLogRepository;
+  internalNotifications: InternalNotificationRepository;
 }
 
 class BaseFirestoreRepository<TDomain extends { id: EntityId }, TDocument>
@@ -268,6 +321,28 @@ class FirestoreUserProfileRepository
       this.collection.where("email", "==", normalizedEmail).limit(1),
     );
     return result.items[0] ?? null;
+  }
+
+  listByOrganizationId(
+    organizationId: EntityId,
+    options: RepositoryListOptions = {},
+  ): Promise<RepositoryListResult<UserProfile>> {
+    const query = this.collection
+      .where("organizationId", "==", organizationId)
+      .where("isDeleted", "==", false)
+      .orderBy("email", "asc");
+    return this.listFromQuery(this.withLimit(query, options));
+  }
+
+  listByContractorOrganizationId(
+    contractorOrganizationId: EntityId,
+    options: RepositoryListOptions = {},
+  ): Promise<RepositoryListResult<UserProfile>> {
+    const query = this.collection
+      .where("contractorOrganizationId", "==", contractorOrganizationId)
+      .where("isDeleted", "==", false)
+      .orderBy("email", "asc");
+    return this.listFromQuery(this.withLimit(query, options));
   }
 }
 
@@ -462,6 +537,67 @@ class FirestoreQuoteRepository
   }
 }
 
+class FirestoreContractorQuoteRepository
+  extends BaseFirestoreRepository<ContractorQuote, ContractorQuoteDocument>
+  implements ContractorQuoteRepository
+{
+  listByWorkOrderId(
+    workOrderId: EntityId,
+    options: RepositoryListOptions = {},
+  ): Promise<RepositoryListResult<ContractorQuote>> {
+    const query = this.collection
+      .where("workOrderId", "==", workOrderId)
+      .where("isDeleted", "==", false)
+      .orderBy("createdAt", "desc");
+    return this.listFromQuery(this.withLimit(query, options));
+  }
+
+  listPendingReview(
+    options: RepositoryListOptions = {},
+  ): Promise<RepositoryListResult<ContractorQuote>> {
+    const pendingStatuses = [
+      "submitted",
+      "under_review",
+    ] as const satisfies readonly ContractorQuoteStatus[];
+    const query = this.collection
+      .where("status", "in", pendingStatuses)
+      .where("isDeleted", "==", false)
+      .orderBy("updatedAt", "desc");
+    return this.listFromQuery(this.withLimit(query, options));
+  }
+}
+
+class FirestoreClientQuoteRepository
+  extends BaseFirestoreRepository<ClientQuote, ClientQuoteDocument>
+  implements ClientQuoteRepository
+{
+  listByWorkOrderId(
+    workOrderId: EntityId,
+    options: RepositoryListOptions = {},
+  ): Promise<RepositoryListResult<ClientQuote>> {
+    const query = this.collection
+      .where("workOrderId", "==", workOrderId)
+      .where("isDeleted", "==", false)
+      .orderBy("createdAt", "desc");
+    return this.listFromQuery(this.withLimit(query, options));
+  }
+
+  async getActiveByWorkOrderId(workOrderId: EntityId): Promise<ClientQuote | null> {
+    const activeStatuses = [
+      "draft",
+      "sent",
+    ] as const satisfies readonly ClientQuoteStatus[];
+    const query = this.collection
+      .where("workOrderId", "==", workOrderId)
+      .where("status", "in", activeStatuses)
+      .where("isDeleted", "==", false)
+      .orderBy("updatedAt", "desc")
+      .limit(1);
+    const result = await this.listFromQuery(query);
+    return result.items[0] ?? null;
+  }
+}
+
 class FirestoreInvoiceRepository
   extends BaseFirestoreRepository<Invoice, InvoiceDocument>
   implements InvoiceRepository
@@ -482,8 +618,10 @@ class FirestoreInvoiceRepository
   ): Promise<RepositoryListResult<Invoice>> {
     const financeStatuses = [
       "draft",
-      "issued",
+      "sent",
+      "viewed",
       "overdue",
+      "paid",
     ] as const satisfies readonly InvoiceStatus[];
     const query = this.collection
       .where("status", "in", financeStatuses)
@@ -506,6 +644,21 @@ class FirestoreAssignmentRepository
       .where("isDeleted", "==", false)
       .orderBy("assignedAt", "desc");
     return this.listFromQuery(this.withLimit(query, options));
+  }
+
+  async getActiveByWorkOrderId(workOrderId: EntityId): Promise<Assignment | null> {
+    const activeStatuses = [
+      "assigned",
+      "accepted",
+    ] as const satisfies readonly Assignment["status"][];
+    const query = this.collection
+      .where("workOrderId", "==", workOrderId)
+      .where("status", "in", activeStatuses)
+      .where("isDeleted", "==", false)
+      .orderBy("assignedAt", "desc")
+      .limit(1);
+    const result = await this.listFromQuery(query);
+    return result.items[0] ?? null;
   }
 
   listByContractorOrganizationId(
@@ -531,6 +684,42 @@ class FirestoreActivityLogRepository
     const query = this.collection
       .where("workOrderId", "==", workOrderId)
       .orderBy("occurredAt", "desc");
+    return this.listFromQuery(this.withLimit(query, options));
+  }
+}
+
+class FirestoreInternalNotificationRepository
+  extends BaseFirestoreRepository<
+    InternalNotification,
+    InternalNotificationDocument
+  >
+  implements InternalNotificationRepository
+{
+  async createMany(
+    notifications: readonly InternalNotification[],
+  ): Promise<readonly RepositoryMutationResult<InternalNotification>[]> {
+    await Promise.all(notifications.map((notification) => this.create(notification)));
+    return notifications.map((notification) => ({
+      id: notification.id,
+      item: notification,
+    }));
+  }
+
+  listByRecipientUserId(
+    recipientUserId: EntityId,
+    options: RepositoryListOptions & {
+      status?: InternalNotification["status"];
+    } = {},
+  ): Promise<RepositoryListResult<InternalNotification>> {
+    let query: Query<DocumentData> = this.collection
+      .where("recipientUserId", "==", recipientUserId)
+      .where("isDeleted", "==", false);
+
+    if (options.status) {
+      query = query.where("status", "==", options.status);
+    }
+
+    query = query.orderBy("createdAt", "desc");
     return this.listFromQuery(this.withLimit(query, options));
   }
 }
@@ -564,6 +753,16 @@ export function createFirestoreRepositories(
       FIRESTORE_COLLECTIONS.workOrders,
       workOrderMapper,
     ),
+    contractorQuotes: new FirestoreContractorQuoteRepository(
+      firestore,
+      FIRESTORE_COLLECTIONS.contractorQuotes,
+      contractorQuoteMapper,
+    ),
+    clientQuotes: new FirestoreClientQuoteRepository(
+      firestore,
+      FIRESTORE_COLLECTIONS.clientQuotes,
+      clientQuoteMapper,
+    ),
     quotes: new FirestoreQuoteRepository(
       firestore,
       FIRESTORE_COLLECTIONS.quotes,
@@ -583,6 +782,11 @@ export function createFirestoreRepositories(
       firestore,
       FIRESTORE_COLLECTIONS.activityLogs,
       activityLogMapper,
+    ),
+    internalNotifications: new FirestoreInternalNotificationRepository(
+      firestore,
+      FIRESTORE_COLLECTIONS.internalNotifications,
+      internalNotificationMapper,
     ),
   };
 }

@@ -2,21 +2,29 @@ import "server-only";
 
 import type { Timestamp } from "firebase-admin/firestore";
 import type { EntityId, IsoDateTimeString, RecordStatus } from "@/types/entity";
+import type { ContractorStatus } from "@/modules/contractors";
 import type { UserRole } from "@/types/permissions";
 import type {
   AssignmentStatus,
   WorkOrderPriority,
   WorkOrderStatus,
 } from "@/types/work-order";
-import type { QuoteStatus } from "@/types/quote";
-import type { InvoiceCurrency, InvoiceLineItem, InvoiceStatus } from "@/types/invoice";
+import type {
+  ClientQuoteStatus,
+  ContractorQuoteStatus,
+  QuoteLineItem,
+  QuoteStatus,
+} from "@/types/quote";
+import type {
+  InvoiceCurrency,
+  InvoiceLineItem,
+  InvoiceStatus,
+  QboSyncStatus,
+} from "@/types/invoice";
 
 export type FirestoreRecordStatus = RecordStatus;
 export type FirestoreOrganizationStatus = "active" | "inactive";
-export type FirestoreContractorOrganizationStatus =
-  | "active"
-  | "inactive"
-  | "pending_approval";
+export type FirestoreContractorOrganizationStatus = ContractorStatus;
 export type UserProfileStatus = "active" | "inactive" | "invited";
 
 export interface FirestoreAuditFields {
@@ -142,6 +150,7 @@ export interface ContractorOrganization extends DomainAuditFields {
   primaryContactEmail: string | null;
   primaryContactPhone: string | null;
   serviceCategories: string[];
+  serviceAreas: string[];
   notes: string | null;
 }
 
@@ -153,6 +162,7 @@ export interface ContractorOrganizationDocument extends FirestoreAuditFields {
   primaryContactEmail: string | null;
   primaryContactPhone: string | null;
   serviceCategories: string[];
+  serviceAreas: string[];
   notes: string | null;
 }
 
@@ -210,8 +220,8 @@ export interface WorkOrderDocument extends FirestoreAuditFields {
 export interface Quote extends DomainAuditFields {
   id: EntityId;
   workOrderId: EntityId;
-  clientOrganizationId: EntityId;
-  locationId: EntityId;
+  clientOrganizationId?: EntityId;
+  locationId?: EntityId;
   contractorOrganizationId: EntityId | null;
   versionNumber: number;
   status: QuoteStatus;
@@ -256,26 +266,117 @@ export interface QuoteDocument extends FirestoreAuditFields {
   contractorSnapshot: EntitySnapshot | null;
 }
 
+export interface ContractorQuote extends DomainAuditFields {
+  id: EntityId;
+  workOrderId: EntityId;
+  contractorUserId: EntityId | null;
+  contractorOrganizationId: EntityId | null;
+  clientOrganizationId: EntityId;
+  locationId: EntityId;
+  lineItems: QuoteLineItem[];
+  subtotal?: number;
+  taxAmount: number;
+  totalAmount: number;
+  notes: string | null;
+  status: ContractorQuoteStatus;
+  submittedAt: IsoDateTimeString | null;
+  reviewedAt: IsoDateTimeString | null;
+  reviewedByUserId: EntityId | null;
+  rejectionReason: string | null;
+  workOrderSnapshot: EntitySnapshot;
+  contractorSnapshot: EntitySnapshot | null;
+}
+
+export interface ContractorQuoteDocument extends FirestoreAuditFields {
+  workOrderId: EntityId;
+  contractorUserId: EntityId | null;
+  contractorOrganizationId: EntityId | null;
+  clientOrganizationId: EntityId;
+  locationId: EntityId;
+  lineItems: QuoteLineItem[];
+  subtotal: number;
+  taxAmount: number;
+  totalAmount: number;
+  notes: string | null;
+  status: ContractorQuoteStatus;
+  submittedAt: Timestamp | null;
+  reviewedAt: Timestamp | null;
+  reviewedByUserId: EntityId | null;
+  rejectionReason: string | null;
+  workOrderSnapshot: EntitySnapshot;
+  contractorSnapshot: EntitySnapshot | null;
+}
+
+export interface ClientQuote extends DomainAuditFields {
+  id: EntityId;
+  workOrderId: EntityId;
+  sourceContractorQuoteId: EntityId | null;
+  clientOrganizationId: EntityId;
+  locationId: EntityId;
+  lineItems: QuoteLineItem[];
+  subtotal: number;
+  taxAmount: number;
+  totalAmount: number;
+  notes: string | null;
+  status: ClientQuoteStatus;
+  sentAt: IsoDateTimeString | null;
+  respondedAt: IsoDateTimeString | null;
+  approvedAt: IsoDateTimeString | null;
+  rejectedAt: IsoDateTimeString | null;
+  rejectionReason: string | null;
+  createdByUserId: EntityId;
+  workOrderSnapshot: EntitySnapshot;
+}
+
+export interface ClientQuoteDocument extends FirestoreAuditFields {
+  workOrderId: EntityId;
+  sourceContractorQuoteId: EntityId | null;
+  clientOrganizationId: EntityId;
+  locationId: EntityId;
+  lineItems: QuoteLineItem[];
+  subtotal: number;
+  taxAmount: number;
+  totalAmount: number;
+  notes: string | null;
+  status: ClientQuoteStatus;
+  sentAt: Timestamp | null;
+  respondedAt: Timestamp | null;
+  approvedAt: Timestamp | null;
+  rejectedAt: Timestamp | null;
+  rejectionReason: string | null;
+  createdByUserId: EntityId;
+  workOrderSnapshot: EntitySnapshot;
+}
+
 export interface Invoice extends DomainAuditFields {
   id: EntityId;
   workOrderId: EntityId;
   clientOrganizationId: EntityId;
   locationId: EntityId;
   invoiceNumber: string;
-  status: InvoiceStatus;
-  issueDate: IsoDateTimeString | null;
-  dueDate: IsoDateTimeString;
-  paidDate: IsoDateTimeString | null;
-  subtotalAmount: number;
+  lineItems: InvoiceLineItem[];
+  subtotal: number;
   taxAmount: number;
   totalAmount: number;
   currency: InvoiceCurrency;
-  lineItems: InvoiceLineItem[];
-  internalFinanceNotes: string | null;
+  status: InvoiceStatus;
+  issuedDate: IsoDateTimeString | null;
+  dueDate: IsoDateTimeString;
+  sentAt: IsoDateTimeString | null;
+  viewedAt: IsoDateTimeString | null;
+  paidAt: IsoDateTimeString | null;
+  voidedAt: IsoDateTimeString | null;
   paymentReference: string | null;
+  notes: string | null;
+  qboInvoiceId: string | null;
+  qboSyncStatus: QboSyncStatus | null;
   workOrderSnapshot: EntitySnapshot;
   clientSnapshot: EntitySnapshot;
   locationSnapshot: EntitySnapshot;
+  issueDate?: IsoDateTimeString | null;
+  paidDate?: IsoDateTimeString | null;
+  subtotalAmount?: number;
+  internalFinanceNotes?: string | null;
 }
 
 export interface InvoiceDocument extends FirestoreAuditFields {
@@ -283,17 +384,22 @@ export interface InvoiceDocument extends FirestoreAuditFields {
   clientOrganizationId: EntityId;
   locationId: EntityId;
   invoiceNumber: string;
-  status: InvoiceStatus;
-  issueDate: Timestamp | null;
-  dueDate: Timestamp;
-  paidDate: Timestamp | null;
-  subtotalAmount: number;
+  lineItems: InvoiceLineItem[];
+  subtotal: number;
   taxAmount: number;
   totalAmount: number;
   currency: InvoiceCurrency;
-  lineItems: InvoiceLineItem[];
-  internalFinanceNotes: string | null;
+  status: InvoiceStatus;
+  issuedDate: Timestamp | null;
+  dueDate: Timestamp;
+  sentAt: Timestamp | null;
+  viewedAt: Timestamp | null;
+  paidAt: Timestamp | null;
+  voidedAt: Timestamp | null;
   paymentReference: string | null;
+  notes: string | null;
+  qboInvoiceId: string | null;
+  qboSyncStatus: QboSyncStatus | null;
   workOrderSnapshot: EntitySnapshot;
   clientSnapshot: EntitySnapshot;
   locationSnapshot: EntitySnapshot;
@@ -302,28 +408,119 @@ export interface InvoiceDocument extends FirestoreAuditFields {
 export interface Assignment extends DomainAuditFields {
   id: EntityId;
   workOrderId: EntityId;
-  contractorOrganizationId: EntityId;
+  contractorOrganizationId: EntityId | null;
+  assigneeType: "internal" | "contractor";
+  assigneeUserId: EntityId;
+  assigneeOrganizationId: EntityId | null;
   assignedByUserId: EntityId;
   status: AssignmentStatus;
+  scheduledDate: IsoDateTimeString | null;
+  timeWindowStart: IsoDateTimeString | null;
+  timeWindowEnd: IsoDateTimeString | null;
   assignedAt: IsoDateTimeString;
-  respondedAt: IsoDateTimeString | null;
+  acceptedAt: IsoDateTimeString | null;
+  declinedAt: IsoDateTimeString | null;
   completedAt: IsoDateTimeString | null;
   notes: string | null;
   workOrderSnapshot: EntitySnapshot;
-  contractorSnapshot: EntitySnapshot;
+  contractorSnapshot: EntitySnapshot | null;
 }
 
 export interface AssignmentDocument extends FirestoreAuditFields {
   workOrderId: EntityId;
-  contractorOrganizationId: EntityId;
+  contractorOrganizationId: EntityId | null;
+  assigneeType: "internal" | "contractor";
+  assigneeUserId: EntityId;
+  assigneeOrganizationId: EntityId | null;
   assignedByUserId: EntityId;
   status: AssignmentStatus;
+  scheduledDate: Timestamp | null;
+  timeWindowStart: Timestamp | null;
+  timeWindowEnd: Timestamp | null;
   assignedAt: Timestamp;
-  respondedAt: Timestamp | null;
+  acceptedAt: Timestamp | null;
+  declinedAt: Timestamp | null;
   completedAt: Timestamp | null;
   notes: string | null;
   workOrderSnapshot: EntitySnapshot;
-  contractorSnapshot: EntitySnapshot;
+  contractorSnapshot: EntitySnapshot | null;
+}
+
+export type InternalNotificationEventType =
+  | "contractor_assigned"
+  | "contractor_accepted"
+  | "contractor_declined"
+  | "contractor_completed_assignment"
+  | "quote_submitted"
+  | "quote_awaiting_manager_review"
+  | "quote_awaiting_client_action"
+  | "work_order_stalled"
+  | "work_order_ready_for_invoicing"
+  | "invoice_created"
+  | "invoice_sent"
+  | "invoice_overdue"
+  | "sla_breach_triggered";
+
+export type InternalNotificationSeverity =
+  | "low"
+  | "normal"
+  | "high"
+  | "critical";
+
+export type InternalNotificationStatus = "active" | "resolved";
+
+export interface InternalNotificationActorSummary {
+  actorType: "user" | "system";
+  userId: EntityId | null;
+  role: UserRole | "system" | null;
+  displayName: string;
+}
+
+export interface InternalNotification extends DomainAuditFields {
+  id: EntityId;
+  recipientUserId: EntityId;
+  recipientRole: UserRole;
+  eventType: InternalNotificationEventType;
+  title: string;
+  message: string;
+  severity: InternalNotificationSeverity;
+  status: InternalNotificationStatus;
+  actor: InternalNotificationActorSummary;
+  entityType: "work-order" | "invoice" | "quote" | "assignment";
+  entityId: EntityId;
+  workOrderId: EntityId | null;
+  invoiceId: EntityId | null;
+  quoteId: EntityId | null;
+  assignmentId: EntityId | null;
+  targetPath: string;
+  readAt: IsoDateTimeString | null;
+  acknowledgedAt: IsoDateTimeString | null;
+  resolvedAt: IsoDateTimeString | null;
+  dueAt: IsoDateTimeString | null;
+  metadata: Record<string, unknown> | null;
+}
+
+export interface InternalNotificationDocument extends FirestoreAuditFields {
+  recipientUserId: EntityId;
+  recipientRole: UserRole;
+  eventType: InternalNotificationEventType;
+  title: string;
+  message: string;
+  severity: InternalNotificationSeverity;
+  status: InternalNotificationStatus;
+  actor: InternalNotificationActorSummary;
+  entityType: "work-order" | "invoice" | "quote" | "assignment";
+  entityId: EntityId;
+  workOrderId: EntityId | null;
+  invoiceId: EntityId | null;
+  quoteId: EntityId | null;
+  assignmentId: EntityId | null;
+  targetPath: string;
+  readAt: Timestamp | null;
+  acknowledgedAt: Timestamp | null;
+  resolvedAt: Timestamp | null;
+  dueAt: Timestamp | null;
+  metadata: Record<string, unknown> | null;
 }
 
 export interface ActivityLog extends DomainAuditFields {

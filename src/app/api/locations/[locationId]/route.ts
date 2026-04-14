@@ -9,7 +9,7 @@ import {
   parseJsonObject,
   parseUpdateLocationPayload,
   revalidateLocationPaths,
-  safeLocationDetail,
+  safeLocationDetailForActor,
 } from "@/server/api/business-entities";
 import { normalizePhaseTwoRouteError } from "@/app/api/_utils/phase-two";
 
@@ -29,7 +29,9 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
 
     authorizeLocationRead(context, result.value);
 
-    return jsonOk({ location: safeLocationDetail(result.value) });
+    return jsonOk({
+      location: safeLocationDetailForActor(context.actor, result.value),
+    });
   } catch (error) {
     return jsonError(normalizePhaseTwoRouteError(error));
   }
@@ -52,6 +54,9 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       ...context.audit,
       locationId,
       ...input,
+      ...(context.actor.actorType === "client"
+        ? { clientOrganizationId: undefined, notes: undefined }
+        : {}),
     });
 
     if (!result.ok) {
@@ -60,7 +65,9 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     revalidateLocationPaths(result.value.id);
 
-    return jsonOk({ location: safeLocationDetail(result.value) });
+    return jsonOk({
+      location: safeLocationDetailForActor(context.actor, result.value),
+    });
   } catch (error) {
     return jsonError(normalizePhaseTwoRouteError(error));
   }
@@ -90,7 +97,9 @@ export async function DELETE(_request: NextRequest, { params }: RouteContext) {
 
     revalidateLocationPaths(result.value.id);
 
-    return jsonOk({ location: safeLocationDetail(result.value) });
+    return jsonOk({
+      location: safeLocationDetailForActor(context.actor, result.value),
+    });
   } catch (error) {
     return jsonError(normalizePhaseTwoRouteError(error));
   }

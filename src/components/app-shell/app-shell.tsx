@@ -15,6 +15,8 @@ interface AppShellProps {
 }
 
 export async function AppShell({ children, currentUser }: AppShellProps) {
+  // Canonical authenticated application shell for current internal/client-facing
+  // routes that are not contractor-portal specific.
   if (!canAccessAppShell(currentUser)) {
     throw new AuthorizationError(
       "You do not have access to the authenticated application shell.",

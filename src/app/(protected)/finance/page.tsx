@@ -2,13 +2,13 @@ import Link from "next/link";
 import { InternalShell } from "@/components/internal/internal-shell";
 import { EmptyState } from "@/components/work-orders/empty-state";
 import { SummaryCardGrid } from "@/components/shared/summary-card";
-import { WorkOrderTable } from "@/components/work-orders/work-order-table";
+import { InternalWorkOrderTable } from "@/components/work-orders/internal-work-order-table";
 import {
   FINANCE_WORK_ORDER_QUEUE_PRESETS,
   QueuePresets,
 } from "@/components/work-orders/queue-presets";
 import { getInvoiceOperationalFlags } from "@/lib/flags/operational-flags";
-import { isFinanceCloseoutRole } from "@/lib/permissions/roles";
+import { canViewFinanceDashboard } from "@/lib/permissions/roles";
 import { getMockCurrentUser } from "@/lib/permissions/mock-current-user";
 import { listInvoices } from "@/lib/invoices/repository";
 import { listWorkOrders } from "@/lib/work-orders/repository";
@@ -34,7 +34,7 @@ export default async function FinanceQueuePage({
   const params = await searchParams;
   const currentUser = getMockCurrentUser(readParam(params.role));
 
-  if (!isFinanceCloseoutRole(currentUser.role)) {
+  if (!canViewFinanceDashboard(currentUser.role)) {
     return (
       <InternalShell currentUser={currentUser}>
         <section className="mx-auto max-w-5xl rounded-lg border border-rose-200 bg-rose-50 p-6">
@@ -110,7 +110,7 @@ export default async function FinanceQueuePage({
 
           <div className="p-4 sm:p-5">
             {activeQueue.items.length > 0 ? (
-              <WorkOrderTable
+              <InternalWorkOrderTable
                 workOrders={activeQueue.items}
                 role={currentUser.role}
                 invoices={invoices}
@@ -139,16 +139,16 @@ function buildFinanceQueues(
       workOrder.status === "completed" && workOrder.currentInvoiceId == null,
   );
 
-  const draftInvoices = filterByCurrentInvoiceStatus(
+  const draftInvoices = filterByCurrentInvoiceStatuses(
     workOrders,
     invoiceById,
-    "draft",
+    ["draft"],
   );
 
-  const issuedInvoices = filterByCurrentInvoiceStatus(
+  const unpaidInvoices = filterByCurrentInvoiceStatuses(
     workOrders,
     invoiceById,
-    "issued",
+    ["sent", "viewed"],
   );
 
   const overdueInvoices = [...workOrders].filter((workOrder) => {
@@ -175,14 +175,14 @@ function buildFinanceQueues(
     {
       key: "draft_invoices",
       label: "Draft invoice cases",
-      description: "Completed work waiting for draft-to-issued progression.",
+      description: "Completed work waiting for finance to send the invoice.",
       items: draftInvoices,
     },
     {
       key: "issued_invoices",
       label: "Invoiced not paid",
-      description: "Invoices issued and waiting for payment.",
-      items: issuedInvoices,
+      description: "Sent and viewed invoices still waiting for payment.",
+      items: unpaidInvoices,
     },
     {
       key: "overdue_invoices",
@@ -199,14 +199,14 @@ function buildFinanceQueues(
   ];
 }
 
-function filterByCurrentInvoiceStatus(
+function filterByCurrentInvoiceStatuses(
   workOrders: readonly PhaseOneWorkOrder[],
   invoiceById: Map<string, Invoice>,
-  status: Invoice["status"],
+  statuses: readonly Invoice["status"][],
 ): PhaseOneWorkOrder[] {
   return [...workOrders].filter((workOrder) => {
     const currentInvoice = currentInvoiceFor(workOrder, invoiceById);
-    return currentInvoice?.status === status;
+    return currentInvoice ? statuses.includes(currentInvoice.status) : false;
   });
 }
 

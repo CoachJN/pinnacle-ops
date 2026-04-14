@@ -32,7 +32,6 @@ export const APP_PRIMARY_NAV_ITEMS: readonly NavigationItem[] = [
     href: APP_PATHS.workOrders,
     allowedRoles: WORK_ORDER_NAV_ROLES,
     match: "prefix",
-    disabled: true,
   },
   {
     id: "clients",
@@ -54,7 +53,6 @@ export const APP_PRIMARY_NAV_ITEMS: readonly NavigationItem[] = [
     href: APP_PATHS.contractors,
     allowedRoles: INTERNAL_APP_ROLES,
     match: "prefix",
-    disabled: true,
   },
   {
     id: "finance",
@@ -62,7 +60,6 @@ export const APP_PRIMARY_NAV_ITEMS: readonly NavigationItem[] = [
     href: APP_PATHS.finance,
     allowedRoles: FINANCE_NAV_ROLES,
     match: "prefix",
-    disabled: true,
   },
   {
     id: "settings",

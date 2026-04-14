@@ -1,42 +1,61 @@
-import type { EntityId } from "./entity.ts";
+import type { EntityId, IsoDateTimeString, RecordStatus } from "./entity.ts";
 
-export type ContractorStatus = "active" | "inactive";
+export {
+  CONTRACTOR_STATUSES,
+  CONTRACTOR_STATUS_LABELS,
+  CONTRACTOR_STATUS_VALUES,
+  type ContractorStatus,
+} from "../modules/contractors/domain/constants.ts";
+import type { ContractorStatus } from "../modules/contractors/domain/constants.ts";
 
 export interface Contractor {
   id: EntityId;
-  companyName: string;
-  contactName: string;
+  name: string;
+  company: string | null;
   email: string;
   phone: string;
   status: ContractorStatus;
   serviceCategories: string[];
+  serviceAreas: string[];
   notes: string | null;
-  createdAt: string;
-  updatedAt: string;
+  createdAt: IsoDateTimeString;
+  updatedAt: IsoDateTimeString;
+  createdByUserId: EntityId;
+  updatedByUserId: EntityId;
+  recordStatus: RecordStatus;
+  isAssignable: boolean;
+  companyName: string;
+  contactName: string;
   createdBy: string;
   lastUpdatedBy: string;
 }
 
 export interface CreateContractorInput {
-  companyName: string;
-  contactName: string;
+  name: string;
+  company?: string | null;
   email: string;
   phone: string;
   status: ContractorStatus;
   serviceCategories: string[];
-  notes: string | null;
+  serviceAreas: string[];
+  notes?: string | null;
+  companyName?: string;
+  contactName?: string;
   createdBy?: string;
   lastUpdatedBy?: string;
 }
 
 export interface UpdateContractorInput {
-  companyName?: string;
-  contactName?: string;
+  name?: string;
+  company?: string | null;
   email?: string;
   phone?: string;
   status?: ContractorStatus;
   serviceCategories?: string[];
+  serviceAreas?: string[];
   notes?: string | null;
+  companyName?: string;
+  contactName?: string;
 }
 
 export interface ContractorSessionContext {

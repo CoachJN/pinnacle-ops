@@ -2,16 +2,17 @@ import "server-only";
 
 import type { ServiceResult } from "@/server/services/types";
 import type { WorkOrderNote } from "@/modules/work-orders";
-import { conflictError, notFoundError } from "@/server/services/errors";
-import { serviceFail } from "@/server/services/types";
+import { notFoundError } from "@/server/services/errors";
+import { serviceFail, serviceOk } from "@/server/services/types";
 import type { EntityId } from "@/types/entity";
 
 import {
+  assertWorkOrderAllowsCollaboration,
   createWorkOrderServiceDependencies,
   parseWorkOrderNotePayload,
   requireWorkOrder,
   type WorkOrderServiceDependencies,
-} from "./shared";
+} from "./shared.ts";
 
 export interface AddWorkOrderNoteServiceInput {
   workOrderId: EntityId;
@@ -34,7 +35,11 @@ export function createAddWorkOrderNoteService(
 }
 
 class DefaultAddWorkOrderNoteService implements AddWorkOrderNoteService {
-  constructor(private readonly dependencies: WorkOrderServiceDependencies) {}
+  private readonly dependencies: WorkOrderServiceDependencies;
+
+  constructor(dependencies: WorkOrderServiceDependencies) {
+    this.dependencies = dependencies;
+  }
 
   async addWorkOrderNote(
     input: AddWorkOrderNoteServiceInput,
@@ -49,10 +54,12 @@ class DefaultAddWorkOrderNoteService implements AddWorkOrderNoteService {
       return workOrder;
     }
 
-    if (workOrder.value.status === "CLOSED") {
-      return serviceFail(
-        conflictError("Cannot add notes to a closed work order."),
-      );
+    const collaborationResult = assertWorkOrderAllowsCollaboration(
+      workOrder.value.status,
+      "notes",
+    );
+    if (!collaborationResult.ok) {
+      return collaborationResult;
     }
 
     const note = await this.dependencies.notes.createNote({
@@ -65,6 +72,6 @@ class DefaultAddWorkOrderNoteService implements AddWorkOrderNoteService {
       return serviceFail(notFoundError("Work order could not be found."));
     }
 
-    return { ok: true, value: note };
+    return serviceOk(note);
   }
 }

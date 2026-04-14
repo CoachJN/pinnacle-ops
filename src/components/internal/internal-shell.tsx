@@ -13,6 +13,8 @@ export function InternalShell({
   children: ReactNode;
   currentUser: MockCurrentUser;
 }) {
+  // Legacy shell for `(protected)` mock-role pages. Keep generic app navigation in
+  // `app-shell` and contractor-facing navigation in `contractor-portal`.
   const navigation = getVisibleNavigationForRole(currentUser.role);
 
   return (

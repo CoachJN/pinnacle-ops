@@ -1,10 +1,11 @@
-import type { InvoiceFormInput, InvoiceLineItem } from "@/types/invoice";
+import type { InvoiceFormInput, InvoiceLineItem, InvoiceStatus } from "@/types/invoice";
 import {
   calculateInvoiceLineTotal,
   calculateInvoiceSubtotal,
   calculateInvoiceTotal,
   roundCurrency,
 } from "@/lib/invoices/money";
+import { z } from "zod";
 
 export interface InvoiceFormErrors {
   dueDate?: string;
@@ -18,12 +19,145 @@ export type InvoiceFormValidationResult =
   | {
       ok: true;
       data: InvoiceFormInput & {
-        subtotalAmount: number;
+        subtotal: number;
         totalAmount: number;
       };
       errors?: never;
     }
   | { ok: false; data?: never; errors: InvoiceFormErrors };
+
+const nonEmptyStringSchema = z.string().trim().min(1);
+const nullableTrimmedStringSchema = z.string().trim().min(1).nullable().optional();
+const entityIdSchema = z.string().trim().min(1);
+const isoDateStringSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((value) => Number.isFinite(Date.parse(value)), {
+    message: "Must be a valid date.",
+  });
+const moneySchema = z
+  .number()
+  .finite()
+  .nonnegative()
+  .transform((value) => roundMoney(value));
+const positiveQuantitySchema = z
+  .number()
+  .finite()
+  .positive()
+  .transform((value) => roundMoney(value));
+
+export const invoiceStatusTransitions = {
+  draft: ["sent", "void"],
+  issued: ["viewed", "overdue", "paid", "void"],
+  sent: ["viewed", "overdue", "paid", "void"],
+  viewed: ["overdue", "paid", "void"],
+  overdue: ["paid"],
+  paid: [],
+  void: [],
+} as const satisfies Record<InvoiceStatus, readonly InvoiceStatus[]>;
+
+export const invoiceLineItemSchema = z
+  .object({
+    id: entityIdSchema.optional(),
+    description: nonEmptyStringSchema,
+    quantity: positiveQuantitySchema,
+    unitPrice: moneySchema,
+    lineTotal: moneySchema.optional(),
+  })
+  .transform((value) => ({
+    ...value,
+    id: value.id ?? crypto.randomUUID(),
+    lineTotal: roundMoney(
+      value.lineTotal ?? calculateInvoiceLineTotal(value.quantity, value.unitPrice),
+    ),
+  }))
+  .superRefine((value, context) => {
+    const calculated = roundMoney(value.quantity * value.unitPrice);
+    if (calculated !== value.lineTotal) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "lineTotal must equal quantity multiplied by unitPrice.",
+        path: ["lineTotal"],
+      });
+    }
+  });
+
+const invoiceMoneyFieldsSchema = z.object({
+  subtotal: moneySchema.optional(),
+  taxAmount: moneySchema,
+  totalAmount: moneySchema.optional(),
+});
+
+const invoiceDraftPayloadSchema = z
+  .object({
+    workOrderId: entityIdSchema,
+    invoiceId: entityIdSchema.optional(),
+    dueDate: isoDateStringSchema,
+    currency: z.enum(["CAD", "USD"]),
+    lineItems: z.array(invoiceLineItemSchema),
+    subtotal: moneySchema.optional(),
+    taxAmount: moneySchema,
+    totalAmount: moneySchema.optional(),
+    notes: nullableTrimmedStringSchema,
+  })
+  .superRefine((value, context) => {
+    if (value.lineItems.length < 1) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "At least one line item is required.",
+        path: ["lineItems"],
+      });
+    }
+
+    validateInvoiceTotalsConsistency(value.lineItems, value, context);
+  });
+
+export const createInvoiceFromWorkOrderSchema = invoiceDraftPayloadSchema;
+
+export const updateInvoiceDraftSchema = invoiceDraftPayloadSchema.extend({
+  invoiceId: entityIdSchema,
+});
+
+export const sendInvoiceSchema = z
+  .object({
+    workOrderId: entityIdSchema,
+    invoiceId: entityIdSchema,
+    issuedDate: isoDateStringSchema.optional(),
+    sentAt: isoDateStringSchema.optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.issuedDate && value.sentAt) {
+      const issuedAt = Date.parse(value.issuedDate);
+      const sentAt = Date.parse(value.sentAt);
+      if (sentAt < issuedAt) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "sentAt cannot be earlier than issuedDate.",
+          path: ["sentAt"],
+        });
+      }
+    }
+  });
+
+export const markInvoiceViewedSchema = z.object({
+  workOrderId: entityIdSchema,
+  invoiceId: entityIdSchema,
+  viewedAt: isoDateStringSchema.optional(),
+});
+
+export const markInvoicePaidSchema = z.object({
+  workOrderId: entityIdSchema,
+  invoiceId: entityIdSchema,
+  paidAt: isoDateStringSchema.optional(),
+  paymentReference: nullableTrimmedStringSchema,
+});
+
+export const voidInvoiceSchema = z.object({
+  workOrderId: entityIdSchema,
+  invoiceId: entityIdSchema,
+  voidedAt: isoDateStringSchema.optional(),
+});
 
 export function validateInvoiceForm(
   formData: FormData,
@@ -31,10 +165,8 @@ export function validateInvoiceForm(
   const dueDate = readTrimmedString(formData, "dueDate");
   const currency = readTrimmedString(formData, "currency");
   const taxAmount = readMoney(formData, "taxAmount");
-  const internalFinanceNotes = readNullableTrimmedString(
-    formData,
-    "internalFinanceNotes",
-  );
+  const notes = readNullableTrimmedString(formData, "notes")
+    ?? readNullableTrimmedString(formData, "internalFinanceNotes");
   const paymentReference = readNullableTrimmedString(
     formData,
     "paymentReference",
@@ -62,24 +194,64 @@ export function validateInvoiceForm(
     return { ok: false, errors };
   }
 
-  const validCurrency = currency === "USD" ? "USD" : "CAD";
-  const validTaxAmount = taxAmount ?? 0;
-  const subtotalAmount = calculateInvoiceSubtotal(lineItems);
-  const totalAmount = calculateInvoiceTotal(subtotalAmount, validTaxAmount);
+  const subtotal = calculateInvoiceSubtotal(lineItems);
+  const totalAmount = calculateInvoiceTotal(subtotal, taxAmount ?? 0);
 
   return {
     ok: true,
     data: {
       dueDate,
-      currency: validCurrency,
+      currency: currency === "USD" ? "USD" : "CAD",
       lineItems,
-      taxAmount: validTaxAmount,
-      subtotalAmount,
+      taxAmount: taxAmount ?? 0,
+      subtotal,
       totalAmount,
-      internalFinanceNotes,
+      notes,
       paymentReference,
     },
   };
+}
+
+export function canInvoiceStatusTransition(
+  from: InvoiceStatus,
+  to: InvoiceStatus,
+): boolean {
+  if (from === "issued") {
+    return invoiceStatusTransitions.issued.includes(to);
+  }
+
+  return invoiceStatusTransitions[from as Exclude<InvoiceStatus, "issued">].includes(
+    to,
+  );
+}
+
+function validateInvoiceTotalsConsistency(
+  lineItems: InvoiceLineItem[],
+  totals: z.infer<typeof invoiceMoneyFieldsSchema>,
+  context: z.RefinementCtx,
+): void {
+  const expectedSubtotal = roundMoney(
+    lineItems.reduce((sum, item) => sum + item.lineTotal, 0),
+  );
+  const providedSubtotal = totals.subtotal ?? expectedSubtotal;
+  const expectedTotal = roundMoney(providedSubtotal + totals.taxAmount);
+  const providedTotal = totals.totalAmount ?? expectedTotal;
+
+  if (providedSubtotal !== expectedSubtotal) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "subtotal must equal the sum of all line item totals.",
+      path: ["subtotal"],
+    });
+  }
+
+  if (providedTotal !== expectedTotal) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "totalAmount must equal subtotal plus taxAmount.",
+      path: ["totalAmount"],
+    });
+  }
 }
 
 function readLineItems(formData: FormData): InvoiceLineItem[] {
@@ -136,7 +308,7 @@ function readMoney(formData: FormData, field: string): number | null {
     return null;
   }
 
-  return roundCurrency(amount);
+  return roundMoney(amount);
 }
 
 function readPositiveNumber(formData: FormData, field: string): number | null {
@@ -150,5 +322,9 @@ function readPositiveNumber(formData: FormData, field: string): number | null {
     return null;
   }
 
-  return roundCurrency(amount);
+  return roundMoney(amount);
+}
+
+function roundMoney(value: number): number {
+  return Math.round(value * 100) / 100;
 }

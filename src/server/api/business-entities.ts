@@ -43,7 +43,8 @@ const ORGANIZATION_STATUSES = [
 const CONTRACTOR_STATUSES = [
   "active",
   "inactive",
-  "pending_approval",
+  "onboarding",
+  "suspended",
 ] as const satisfies readonly FirestoreContractorOrganizationStatus[];
 
 export {
@@ -143,6 +144,7 @@ export function parseCreateContractorPayload(input: Record<string, unknown>) {
     "primaryContactEmail",
     "primaryContactPhone",
     "serviceCategories",
+    "serviceAreas",
     "notes",
   ]);
 
@@ -154,6 +156,7 @@ export function parseCreateContractorPayload(input: Record<string, unknown>) {
     primaryContactEmail: nullableString(input.primaryContactEmail, "primaryContactEmail"),
     primaryContactPhone: nullableString(input.primaryContactPhone, "primaryContactPhone"),
     serviceCategories: optionalStringArray(input.serviceCategories, "serviceCategories"),
+    serviceAreas: optionalStringArray(input.serviceAreas, "serviceAreas"),
     notes: nullableString(input.notes, "notes"),
   };
 }
@@ -167,6 +170,7 @@ export function parseUpdateContractorPayload(input: Record<string, unknown>) {
     "primaryContactEmail",
     "primaryContactPhone",
     "serviceCategories",
+    "serviceAreas",
     "notes",
   ]);
 
@@ -190,6 +194,7 @@ export function parseUpdateContractorPayload(input: Record<string, unknown>) {
       input.serviceCategories,
       "serviceCategories",
     ),
+    serviceAreas: optionalStringArray(input.serviceAreas, "serviceAreas"),
     notes: optionalNullableString(input.notes, "notes"),
   });
 }
@@ -451,6 +456,22 @@ export function safeLocationSummary(location: Location) {
   };
 }
 
+export function safeLocationSummaryForActor(
+  actor: AccessActor,
+  location: Location,
+) {
+  const summary = safeLocationSummary(location);
+
+  if (actor.actorType !== "client") {
+    return summary;
+  }
+
+  return {
+    ...summary,
+    clientSnapshot: undefined,
+  };
+}
+
 export function safeLocationDetail(location: Location) {
   return {
     ...safeLocationSummary(location),
@@ -467,6 +488,24 @@ export function safeLocationDetail(location: Location) {
   };
 }
 
+export function safeLocationDetailForActor(
+  actor: AccessActor,
+  location: Location,
+) {
+  const detail = safeLocationDetail(location);
+
+  if (actor.actorType !== "client") {
+    return detail;
+  }
+
+  return {
+    ...detail,
+    clientSnapshot: undefined,
+    notes: undefined,
+    recordStatus: undefined,
+  };
+}
+
 export function safeContractorSummary(contractor: ContractorOrganization) {
   return {
     id: contractor.id,
@@ -477,6 +516,7 @@ export function safeContractorSummary(contractor: ContractorOrganization) {
     primaryContactEmail: contractor.primaryContactEmail,
     primaryContactPhone: contractor.primaryContactPhone,
     serviceCategories: contractor.serviceCategories,
+    serviceAreas: contractor.serviceAreas,
     updatedAt: contractor.updatedAt,
   };
 }
@@ -492,8 +532,10 @@ export function safeContractorDetail(contractor: ContractorOrganization) {
 
 export function revalidateClientPaths(id?: EntityId): void {
   revalidatePath("/clients");
+  revalidatePath("/client-organizations");
   if (id) {
     revalidatePath(`/clients/${id}`);
+    revalidatePath(`/client-organizations/${id}`);
   }
 }
 
@@ -648,7 +690,9 @@ function parseOptionalContractorStatus(
     typeof value !== "string" ||
     !(CONTRACTOR_STATUSES as readonly string[]).includes(value)
   ) {
-    throw validationError(`${field} must be active, inactive, or pending_approval.`);
+    throw validationError(
+      `${field} must be active, inactive, onboarding, or suspended.`,
+    );
   }
 
   return value as FirestoreContractorOrganizationStatus;

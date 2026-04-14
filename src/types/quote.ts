@@ -49,3 +49,88 @@ export type QuoteFormInput = Pick<
   | "scopeSummary"
   | "contractorNotes"
 >;
+
+export type ContractorQuoteStatus =
+  | "draft"
+  | "submitted"
+  | "under_review"
+  | "rejected"
+  | "accepted";
+
+export type ClientQuoteStatus =
+  | "draft"
+  | "sent"
+  | "approved"
+  | "rejected"
+  | "expired";
+
+export type QuoteDecisionAction =
+  | "accept_contractor_quote"
+  | "reject_contractor_quote"
+  | "send_client_quote"
+  | "approve_client_quote"
+  | "reject_client_quote";
+
+export interface QuoteLineItem {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+}
+
+export interface QuoteLineItemTotals {
+  subtotal: number;
+  taxAmount: number;
+  totalAmount: number;
+}
+
+export interface ContractorQuote extends QuoteLineItemTotals {
+  id: EntityId;
+  workOrderId: EntityId;
+  contractorUserId: EntityId | null;
+  contractorOrganizationId: EntityId | null;
+  lineItems: QuoteLineItem[];
+  notes: string | null;
+  status: ContractorQuoteStatus;
+  submittedAt: IsoDateTimeString | null;
+  reviewedAt: IsoDateTimeString | null;
+  reviewedByUserId: EntityId | null;
+  rejectionReason: string | null;
+  createdAt: IsoDateTimeString;
+  updatedAt: IsoDateTimeString;
+}
+
+export interface ClientQuote extends QuoteLineItemTotals {
+  id: EntityId;
+  workOrderId: EntityId;
+  sourceContractorQuoteId: EntityId | null;
+  lineItems: QuoteLineItem[];
+  notes: string | null;
+  status: ClientQuoteStatus;
+  sentAt: IsoDateTimeString | null;
+  respondedAt: IsoDateTimeString | null;
+  approvedAt: IsoDateTimeString | null;
+  rejectedAt: IsoDateTimeString | null;
+  rejectionReason: string | null;
+  createdByUserId: EntityId;
+  createdAt: IsoDateTimeString;
+  updatedAt: IsoDateTimeString;
+}
+
+export interface ClientPortalQuoteDetail extends QuoteLineItemTotals {
+  id: EntityId;
+  workOrderId: EntityId;
+  clientOrganizationId: EntityId;
+  locationId: EntityId;
+  status: ClientQuoteStatus;
+  notes: string | null;
+  lineItems: QuoteLineItem[];
+  sentAt: IsoDateTimeString | null;
+  respondedAt: IsoDateTimeString | null;
+  approvedAt: IsoDateTimeString | null;
+  rejectedAt: IsoDateTimeString | null;
+  rejectionReason: string | null;
+  createdAt: IsoDateTimeString;
+  updatedAt: IsoDateTimeString;
+  workOrderNumber: string;
+}

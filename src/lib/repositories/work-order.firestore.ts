@@ -1,6 +1,10 @@
 import "server-only";
 
-import { Timestamp, type DocumentData, type Firestore } from "firebase-admin/firestore";
+import {
+  Timestamp,
+  type DocumentData,
+  type Firestore,
+} from "firebase-admin/firestore";
 
 import type { EntityId, IsoDateTimeString } from "@/types/entity";
 import type {
@@ -64,9 +68,9 @@ interface WorkOrderAttachmentDocument {
   workOrderId: EntityId;
   fileName: string;
   contentType: string;
-  fileSizeBytes: number;
+  sizeBytes: number;
   storagePath: string;
-  uploadedByUserId: EntityId;
+  uploadedBy: EntityId;
   createdAt: Timestamp;
 }
 
@@ -191,22 +195,58 @@ export function parseWorkOrderDocument(
     throw new Error(`Work order document "${id}" is missing data.`);
   }
 
+  const createdAt = parseRequiredTimestamp(raw.createdAt, "createdAt");
+  const updatedAt =
+    parseNullableTimestamp(raw.updatedAt, "updatedAt") ?? createdAt;
+  const requestedByEmail = parseNullableString(
+    raw.requestedByEmail,
+    "requestedByEmail",
+  );
+  const requestedByPhone = parseNullableString(
+    raw.requestedByPhone,
+    "requestedByPhone",
+  );
+  const workOrderNumber =
+    parseOptionalString(raw.workOrderNumber, "workOrderNumber") ??
+    buildWorkOrderNumber(id);
+  const title = parseRequiredString(raw.title, "title");
+  const description = parseRequiredString(raw.description, "description");
+  const requestedByName = parseRequiredString(
+    raw.requestedByName,
+    "requestedByName",
+  );
+  const clientOrganizationId = parseEntityId(
+    raw.clientOrganizationId,
+    "clientOrganizationId",
+  );
+  const locationId = parseEntityId(raw.locationId, "locationId");
+  const searchText = normalizeSearchText(
+    parseOptionalString(raw.searchText, "searchText") ??
+      buildWorkOrderSearchText({
+        workOrderNumber,
+        title,
+        description,
+        requestedByName,
+        requestedByEmail,
+        requestedByPhone,
+        clientOrganizationId,
+        locationId,
+      }),
+  );
+
   return {
     id,
-    workOrderNumber: parseRequiredString(raw.workOrderNumber, "workOrderNumber"),
-    title: parseRequiredString(raw.title, "title"),
-    description: parseRequiredString(raw.description, "description"),
-    clientOrganizationId: parseEntityId(
-      raw.clientOrganizationId,
-      "clientOrganizationId",
-    ),
-    locationId: parseEntityId(raw.locationId, "locationId"),
+    workOrderNumber,
+    title,
+    description,
+    clientOrganizationId,
+    locationId,
     status: parseEnumValue(raw.status, WORK_ORDER_STATUSES, "status"),
     priority: parseEnumValue(raw.priority, WORK_ORDER_PRIORITIES, "priority"),
     category: parseEnumValue(raw.category, WORK_ORDER_CATEGORIES, "category"),
-    requestedByName: parseRequiredString(raw.requestedByName, "requestedByName"),
-    requestedByEmail: parseNullableString(raw.requestedByEmail),
-    requestedByPhone: parseNullableString(raw.requestedByPhone),
+    requestedByName,
+    requestedByEmail,
+    requestedByPhone,
     source: parseEnumValue(raw.source, WORK_ORDER_SOURCES, "source"),
     createdByUserId: parseEntityId(raw.createdByUserId, "createdByUserId"),
     assignedCoordinatorUserId: parseNullableEntityId(
@@ -218,13 +258,14 @@ export function parseWorkOrderDocument(
       "assignedManagerUserId",
     ),
     dueDate: parseNullableTimestamp(raw.dueDate, "dueDate"),
-    createdAt: parseRequiredTimestamp(raw.createdAt, "createdAt"),
-    updatedAt: parseRequiredTimestamp(raw.updatedAt, "updatedAt"),
+    createdAt,
+    updatedAt,
     closedAt: parseNullableTimestamp(raw.closedAt, "closedAt"),
-    isArchived: parseBoolean(raw.isArchived, "isArchived"),
-    searchText: normalizeSearchText(
-      parseRequiredString(raw.searchText, "searchText"),
-    ),
+    isArchived:
+      raw.isArchived === undefined || raw.isArchived === null
+        ? false
+        : parseBoolean(raw.isArchived, "isArchived"),
+    searchText,
   };
 }
 
@@ -249,13 +290,15 @@ export function parseWorkOrderNoteDocument(
     throw new Error(`Work order note "${id}" is missing data.`);
   }
 
+  const createdAt = parseRequiredTimestamp(raw.createdAt, "createdAt");
+
   return {
     id,
     workOrderId: parseEntityId(raw.workOrderId ?? workOrderId, "workOrderId"),
     body: parseRequiredString(raw.body, "body"),
     createdByUserId: parseEntityId(raw.createdByUserId, "createdByUserId"),
-    createdAt: parseRequiredTimestamp(raw.createdAt, "createdAt"),
-    updatedAt: parseRequiredTimestamp(raw.updatedAt, "updatedAt"),
+    createdAt,
+    updatedAt: parseNullableTimestamp(raw.updatedAt, "updatedAt") ?? createdAt,
   };
 }
 
@@ -266,15 +309,9 @@ export function serializeWorkOrderAttachmentForFirestore(
     workOrderId: normalizeEntityId(attachment.workOrderId, "workOrderId"),
     fileName: normalizeRequiredString(attachment.fileName, "fileName"),
     contentType: normalizeRequiredString(attachment.contentType, "contentType"),
-    fileSizeBytes: normalizePositiveInteger(
-      attachment.fileSizeBytes,
-      "fileSizeBytes",
-    ),
+    sizeBytes: normalizePositiveInteger(attachment.sizeBytes, "sizeBytes"),
     storagePath: normalizeRequiredString(attachment.storagePath, "storagePath"),
-    uploadedByUserId: normalizeEntityId(
-      attachment.uploadedByUserId,
-      "uploadedByUserId",
-    ),
+    uploadedBy: normalizeEntityId(attachment.uploadedBy, "uploadedBy"),
     createdAt: toFirestoreTimestamp(attachment.createdAt),
   };
 }
@@ -293,9 +330,9 @@ export function parseWorkOrderAttachmentDocument(
     workOrderId: parseEntityId(raw.workOrderId ?? workOrderId, "workOrderId"),
     fileName: parseRequiredString(raw.fileName, "fileName"),
     contentType: parseRequiredString(raw.contentType, "contentType"),
-    fileSizeBytes: parsePositiveInteger(raw.fileSizeBytes, "fileSizeBytes"),
+    sizeBytes: parsePositiveInteger(raw.sizeBytes ?? raw.fileSizeBytes, "sizeBytes"),
     storagePath: parseRequiredString(raw.storagePath, "storagePath"),
-    uploadedByUserId: parseEntityId(raw.uploadedByUserId, "uploadedByUserId"),
+    uploadedBy: parseEntityId(raw.uploadedBy ?? raw.uploadedByUserId, "uploadedBy"),
     createdAt: parseRequiredTimestamp(raw.createdAt, "createdAt"),
   };
 }
@@ -382,9 +419,9 @@ export function buildWorkOrderAttachmentCreateModel(input: {
     workOrderId: normalizeEntityId(input.workOrderId, "workOrderId"),
     fileName: input.data.fileName.trim(),
     contentType: input.data.contentType.trim(),
-    fileSizeBytes: input.data.fileSizeBytes,
+    sizeBytes: input.data.sizeBytes,
     storagePath: input.data.storagePath.trim(),
-    uploadedByUserId: input.data.uploadedByUserId.trim(),
+    uploadedBy: input.data.uploadedBy.trim(),
     createdAt: input.now,
   };
 }
@@ -414,7 +451,7 @@ export async function workOrderExists(
   return snapshot.exists;
 }
 
-function toFirestoreTimestamp(value: IsoDateTimeString): Timestamp {
+export function toFirestoreTimestamp(value: IsoDateTimeString): Timestamp {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     throw new Error(`Invalid ISO datetime value "${value}".`);
@@ -505,12 +542,20 @@ function normalizeRequiredString(value: string, fieldName: string): string {
   return parseRequiredString(value, fieldName);
 }
 
-function parseNullableString(value: unknown): string | null {
+function parseOptionalString(value: unknown, fieldName: string): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  return parseRequiredString(value, fieldName);
+}
+
+function parseNullableString(value: unknown, fieldName: string): string | null {
   if (value === undefined || value === null) {
     return null;
   }
 
-  return parseRequiredString(value, "string");
+  return parseRequiredString(value, fieldName);
 }
 
 function normalizeNullableString(value: string | null | undefined): string | null {

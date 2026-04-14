@@ -8,6 +8,7 @@ import type { QuoteStatus } from "@/types/quote";
 import type { WorkOrderStatus } from "@/types/work-order";
 import { invalidTransitionError, notFoundError, validationError } from "./errors.ts";
 import type { ActivityLogService } from "./activity-log-service.ts";
+import type { NotificationService } from "./notification-service.ts";
 import { createServiceLogger } from "./observability.ts";
 import {
   canQuoteTransition,
@@ -54,7 +55,10 @@ export interface TransitionQuoteInput extends ServiceAuditContext {
 
 export function createQuoteService(
   repositories: Pick<FirestoreRepositories, "workOrders" | "quotes">,
-  dependencies: { activityLogs: ActivityLogService },
+  dependencies: {
+    activityLogs: ActivityLogService;
+    notifications?: NotificationService;
+  },
 ): QuoteService {
   return new FirestoreQuoteService(repositories, dependencies);
 }
@@ -65,11 +69,17 @@ class FirestoreQuoteService implements QuoteService {
     "workOrders" | "quotes"
   >;
 
-  private readonly dependencies: { activityLogs: ActivityLogService };
+  private readonly dependencies: {
+    activityLogs: ActivityLogService;
+    notifications?: NotificationService;
+  };
 
   constructor(
     repositories: Pick<FirestoreRepositories, "workOrders" | "quotes">,
-    dependencies: { activityLogs: ActivityLogService },
+    dependencies: {
+      activityLogs: ActivityLogService;
+      notifications?: NotificationService;
+    },
   ) {
     this.repositories = repositories;
     this.dependencies = dependencies;
@@ -345,6 +355,42 @@ class FirestoreQuoteService implements QuoteService {
       fromStatus: quote.value.status,
       toStatus: input.toStatus,
     });
+
+    const notificationEventType =
+      input.toStatus === "submitted"
+        ? "quote_submitted"
+        : input.toStatus === "ready_for_client"
+          ? "quote_awaiting_client_action"
+          : null;
+
+    if (notificationEventType) {
+      const workOrder = await this.repositories.workOrders.getById(transitioned.workOrderId);
+      await this.dependencies.notifications?.captureOperationalEvent({
+        ...input,
+        now: timestamp,
+        eventType: notificationEventType,
+        entityType: "quote",
+        entityId: transitioned.id,
+        workOrder,
+        quote: transitioned,
+        fromStatus: quote.value.status,
+        toStatus: input.toStatus,
+      });
+
+      if (input.toStatus === "submitted") {
+        await this.dependencies.notifications?.captureOperationalEvent({
+          ...input,
+          now: timestamp,
+          eventType: "quote_awaiting_manager_review",
+          entityType: "quote",
+          entityId: transitioned.id,
+          workOrder,
+          quote: transitioned,
+          fromStatus: quote.value.status,
+          toStatus: input.toStatus,
+        });
+      }
+    }
 
     return serviceOk(transitioned);
   }

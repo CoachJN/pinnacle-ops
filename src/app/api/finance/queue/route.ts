@@ -5,17 +5,17 @@ import {
   getWorkOrderApiContext,
   jsonError,
   jsonOk,
+  listScopeForActor,
   parseWorkOrderListLimit,
-  safeInvoiceSummary,
-  safeWorkOrderSummary,
 } from "@/server/api/work-orders";
-import type { InvoiceStatus } from "@/types/invoice";
-
-const FINANCE_QUEUE_STATUSES = [
-  "draft",
-  "issued",
-  "overdue",
-] as const satisfies readonly InvoiceStatus[];
+import {
+  buildFinanceQueue,
+  filterFinanceQueueItems,
+  parseFinanceQueueFilter,
+  type FinanceQueueInvoiceRecord,
+  type FinanceQueueWorkOrderRecord,
+} from "@/modules/finance";
+import type { Invoice, WorkOrder } from "@/server/repositories";
 
 export async function GET(request: NextRequest) {
   try {
@@ -23,57 +23,121 @@ export async function GET(request: NextRequest) {
     authorizeFinanceQueueRead(context);
 
     const limit = parseWorkOrderListLimit(request);
-    const statuses = parseFinanceQueueStatuses(request);
-    const queue = await context.services.invoices.listFinanceQueue({
-      limit,
-      statuses,
-    });
+    const filter = parseFinanceQueueRequestFilter(request);
+    const scope = listScopeForActor(context.actor, Math.min(Math.max(limit * 4, 100), 200));
+    const [invoiceQueue, workOrders] = await Promise.all([
+      context.services.invoices.listFinanceQueue({
+        limit: scope.limit,
+      }),
+      context.services.workOrders.list(scope),
+    ]);
 
-    if (!queue.ok) {
-      throw queue.error;
+    if (!invoiceQueue.ok) {
+      throw invoiceQueue.error;
+    }
+    if (!workOrders.ok) {
+      throw workOrders.error;
     }
 
-    const workOrders = await Promise.all(
-      queue.value.map((invoice) => context.services.workOrders.getById(invoice.workOrderId)),
-    );
+    const queue = filterFinanceQueueItems(
+      buildFinanceQueue({
+        workOrders: workOrders.value.map(toFinanceQueueWorkOrderRecord),
+        invoices: invoiceQueue.value.map(toFinanceQueueInvoiceRecord),
+      }),
+      filter,
+    ).slice(0, limit);
 
     return jsonOk({
-      queue: queue.value.map((invoice, index) => {
-        const workOrder = workOrders[index];
+      queue: queue.map((item) => {
         return {
-          invoice: safeInvoiceSummary(invoice),
-          workOrder:
-            workOrder.ok ? safeWorkOrderSummary(workOrder.value) : null,
+          id: item.id,
+          state: item.state,
+          requiresAttention: item.requiresAttention,
+          invoice: item.invoice,
+          workOrder: item.workOrder,
         };
       }),
+      meta: {
+        filter,
+        total: queue.length,
+      },
     });
   } catch (error) {
     return jsonError(error);
   }
 }
 
-function parseFinanceQueueStatuses(request: NextRequest): InvoiceStatus[] | undefined {
-  const raw = request.nextUrl.searchParams.get("statuses");
-  if (!raw) {
-    return undefined;
-  }
+function parseFinanceQueueRequestFilter(request: NextRequest) {
+  const view = request.nextUrl.searchParams.get("view");
+  const statuses = request.nextUrl.searchParams.get("statuses");
 
-  const statuses = raw
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
+  try {
+    if (view) {
+      return parseFinanceQueueFilter(view).filter;
+    }
 
-  if (
-    statuses.length === 0 ||
-    statuses.some(
-      (status) =>
-        !(FINANCE_QUEUE_STATUSES as readonly string[]).includes(status),
-    )
-  ) {
+    if (!statuses) {
+      return "all";
+    }
+
+    const normalizedStatuses = statuses
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    if (normalizedStatuses.length !== 1) {
+      throw new Error();
+    }
+
+    return parseFinanceQueueFilter(mapLegacyStatusFilter(normalizedStatuses[0])).filter;
+  } catch {
     throw createValidationAppError(
-      "statuses must be a comma-separated list of draft, issued, or overdue.",
+      "view must be one of all, attention, ready_for_invoicing, draft, sent, overdue, or paid.",
     );
   }
+}
 
-  return statuses as InvoiceStatus[];
+function mapLegacyStatusFilter(value: string): string {
+  if (value === "viewed") {
+    return "sent";
+  }
+
+  return value;
+}
+
+function toFinanceQueueWorkOrderRecord(
+  workOrder: WorkOrder,
+): FinanceQueueWorkOrderRecord {
+  return {
+    id: workOrder.id,
+    workOrderNumber: workOrder.workOrderNumber,
+    title: workOrder.title,
+    status: workOrder.status,
+    priority: workOrder.priority,
+    clientOrganizationId: workOrder.clientOrganizationId,
+    locationId: workOrder.locationId,
+    currentInvoiceId: workOrder.currentInvoiceId,
+    clientSnapshot: workOrder.clientSnapshot,
+    locationSnapshot: workOrder.locationSnapshot,
+    completedAt: workOrder.completedAt,
+    updatedAt: workOrder.updatedAt,
+  };
+}
+
+function toFinanceQueueInvoiceRecord(
+  invoice: Invoice,
+): FinanceQueueInvoiceRecord {
+  return {
+    id: invoice.id,
+    workOrderId: invoice.workOrderId,
+    invoiceNumber: invoice.invoiceNumber,
+    status: invoice.status,
+    dueDate: invoice.dueDate,
+    totalAmount: invoice.totalAmount,
+    currency: invoice.currency,
+    sentAt: invoice.sentAt,
+    viewedAt: invoice.viewedAt,
+    paidAt: invoice.paidAt,
+    updatedAt: invoice.updatedAt,
+  };
 }

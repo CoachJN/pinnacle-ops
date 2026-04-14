@@ -231,13 +231,13 @@ export const WORK_ORDER_TRANSITION_RULES = [
 ] as const satisfies readonly StatusTransitionRule<"work_order">[];
 
 export const ASSIGNMENT_TRANSITION_RULES = [
-  assignmentRule("pending", "accepted", contractorAssignmentRoles, "standard"),
-  assignmentRule("pending", "declined", contractorAssignmentRoles, "standard"),
-  assignmentRule("pending", "cancelled", coordinatorOperationsRoles, "standard"),
+  assignmentRule("assigned", "accepted", contractorAssignmentRoles, "standard"),
+  assignmentRule("assigned", "declined", contractorAssignmentRoles, "standard"),
+  assignmentRule("assigned", "cancelled", coordinatorOperationsRoles, "standard"),
   assignmentRule("accepted", "completed", contractorAssignmentRoles, "standard"),
   assignmentRule("accepted", "cancelled", managerOverrideRoles, "override"),
-  assignmentRule("declined", "pending", managerOverrideRoles, "reopen"),
-  assignmentRule("cancelled", "pending", ownerOverrideRoles, "override"),
+  assignmentRule("declined", "assigned", managerOverrideRoles, "reopen"),
+  assignmentRule("cancelled", "assigned", ownerOverrideRoles, "override"),
   assignmentRule("completed", "accepted", managerOverrideRoles, "reopen"),
 ] as const satisfies readonly StatusTransitionRule<"assignment">[];
 

@@ -3,7 +3,7 @@ export const APP_PATHS = {
   signIn: "/sign-in",
   dashboard: "/dashboard",
   clientOrganizations: "/client-organizations",
-  workOrders: "/work-orders",
+  workOrders: "/dashboard/work-orders",
   clients: "/clients",
   locations: "/locations",
   contractors: "/contractors",

@@ -111,7 +111,7 @@ export function InvoiceSection({
             role={role}
             workOrderId={workOrder.id}
             invoiceId={currentInvoice.id}
-            label="Issue invoice"
+            label="Send invoice"
           />
         ) : null}
 
@@ -192,17 +192,25 @@ function InvoiceSummary({ invoice }: { invoice: Invoice }) {
       <div className="grid gap-4 md:grid-cols-3">
         <SummaryField label="Invoice number" value={invoice.invoiceNumber} />
         <SummaryField
-          label="Issue date"
-          value={invoice.issueDate ? formatDateTime(invoice.issueDate) : "Not issued"}
+          label="Issued date"
+          value={invoice.issuedDate ? formatDateTime(invoice.issuedDate) : "Not issued"}
         />
         <SummaryField label="Due date" value={formatDate(invoice.dueDate)} />
         <SummaryField
+          label="Sent at"
+          value={invoice.sentAt ? formatDateTime(invoice.sentAt) : "Not sent"}
+        />
+        <SummaryField
+          label="Viewed at"
+          value={invoice.viewedAt ? formatDateTime(invoice.viewedAt) : "Not viewed"}
+        />
+        <SummaryField
           label="Paid date"
-          value={invoice.paidDate ? formatDateTime(invoice.paidDate) : "Not paid"}
+          value={invoice.paidAt ? formatDateTime(invoice.paidAt) : "Not paid"}
         />
         <SummaryField
           label="Subtotal"
-          value={formatInvoiceCurrency(invoice.subtotalAmount, invoice.currency)}
+          value={formatInvoiceCurrency(invoice.subtotal ?? 0, invoice.currency)}
         />
         <SummaryField
           label="Tax"
@@ -215,6 +223,10 @@ function InvoiceSummary({ invoice }: { invoice: Invoice }) {
         <SummaryField
           label="Payment reference"
           value={invoice.paymentReference ?? "Not recorded"}
+        />
+        <SummaryField
+          label="QBO sync"
+          value={invoice.qboSyncStatus ?? "Not queued"}
         />
         <SummaryField
           label="Last updated"
@@ -251,9 +263,9 @@ function InvoiceSummary({ invoice }: { invoice: Invoice }) {
           </tbody>
         </table>
       </div>
-      {invoice.internalFinanceNotes ? (
+      {invoice.notes ? (
         <p className="mt-4 text-sm text-neutral-700">
-          {invoice.internalFinanceNotes}
+          {invoice.notes}
         </p>
       ) : null}
     </div>
@@ -330,8 +342,12 @@ function getInvoiceStateMessage(
     return "Draft invoices keep the work order completed until issuance.";
   }
 
-  if (currentInvoice?.status === "issued") {
-    return "The invoice is issued; the work order remains invoiced until payment is recorded.";
+  if (currentInvoice?.status === "sent") {
+    return "The invoice has been sent; the work order remains invoiced until payment is recorded.";
+  }
+
+  if (currentInvoice?.status === "viewed") {
+    return "The invoice has been viewed and is still awaiting payment.";
   }
 
   if (currentInvoice?.status === "overdue") {

@@ -221,7 +221,7 @@ export function InvoiceForm({
         <label className="text-sm font-medium text-neutral-700">
           Tax amount <span className="text-rose-700">*</span>
           <input
-            name="taxAmount"
+          name="taxAmount"
             type="number"
             min="0"
             step="0.01"
@@ -246,10 +246,10 @@ export function InvoiceForm({
       </div>
 
       <label className="block text-sm font-medium text-neutral-700">
-        Internal finance notes
+        Notes
         <textarea
-          name="internalFinanceNotes"
-          defaultValue={invoice?.internalFinanceNotes ?? ""}
+          name="notes"
+          defaultValue={invoice?.notes ?? invoice?.internalFinanceNotes ?? ""}
           rows={4}
           className="mt-1 w-full rounded-md border border-neutral-300 px-3 py-2 text-sm text-neutral-950 shadow-sm focus:border-neutral-600 focus:outline-none"
         />

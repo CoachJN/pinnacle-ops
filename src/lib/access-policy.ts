@@ -659,29 +659,12 @@ export const invoicePolicy = {
   },
 
   canRead(actor: AccessActor, target: InvoiceAccessTarget): boolean {
-    if (
-      isInternalActorWithAuthorityForTenant(
-        actor,
-        target.organizationId,
-        PERMISSION_ENTITIES.Invoices,
-        AUTHORITY_CATEGORIES.View,
-      )
-    ) {
-      return true;
-    }
-
-    if (
-      isClientActorForLocation(
-        actor,
-        target,
-        PERMISSION_ENTITIES.Invoices,
-        AUTHORITY_CATEGORIES.View,
-      )
-    ) {
-      return true;
-    }
-
-    return false;
+    return isInternalActorWithAuthorityForTenant(
+      actor,
+      target.organizationId,
+      PERMISSION_ENTITIES.Invoices,
+      AUTHORITY_CATEGORIES.View,
+    );
   },
 
   canEdit(actor: AccessActor, target: InvoiceAccessTarget): boolean {

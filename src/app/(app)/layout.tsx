@@ -7,6 +7,7 @@ export default async function AppLayout({
 }: Readonly<{
   children: ReactNode;
 }>) {
+  // Canonical authenticated application surface. Prefer new internal pages here.
   const currentUser = await redirectIfCannotAccessAppShell();
 
   return <AppShell currentUser={currentUser}>{children}</AppShell>;

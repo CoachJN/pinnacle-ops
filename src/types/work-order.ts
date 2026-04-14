@@ -24,6 +24,7 @@ export type WorkOrderStatus =
   | "approved"
   | "scheduled"
   | "completed"
+  | "ready_for_invoicing"
   | "invoiced"
   | "paid"
   | "closed"
@@ -190,8 +191,10 @@ export interface UpdateWorkOrderInput extends UpdateEntityInput {
   closedAt?: IsoDateTimeString;
 }
 
+export type AssignmentAssigneeType = "internal" | "contractor";
+
 export type AssignmentStatus =
-  | "pending"
+  | "assigned"
   | "accepted"
   | "declined"
   | "cancelled"
@@ -203,10 +206,17 @@ export interface AssignmentOwnershipReference {
 }
 
 export interface Assignment extends AuditableEntity, AssignmentOwnershipReference {
+  assigneeType: AssignmentAssigneeType;
+  assigneeUserId: EntityId;
+  assigneeOrganizationId?: EntityId | null;
   assignedByUserId: EntityId;
   status: AssignmentStatus;
+  scheduledDate?: IsoDateTimeString | null;
+  timeWindowStart?: IsoDateTimeString | null;
+  timeWindowEnd?: IsoDateTimeString | null;
   assignedAt: IsoDateTimeString;
-  respondedAt?: IsoDateTimeString;
+  acceptedAt?: IsoDateTimeString | null;
+  declinedAt?: IsoDateTimeString | null;
   completedAt?: IsoDateTimeString;
   notes?: string;
 }
@@ -214,7 +224,13 @@ export interface Assignment extends AuditableEntity, AssignmentOwnershipReferenc
 export interface CreateAssignmentInput
   extends CreateEntityInput,
     AssignmentOwnershipReference {
+  assigneeType: AssignmentAssigneeType;
+  assigneeUserId: EntityId;
+  assigneeOrganizationId?: EntityId | null;
   assignedByUserId: EntityId;
+  scheduledDate?: IsoDateTimeString | null;
+  timeWindowStart?: IsoDateTimeString | null;
+  timeWindowEnd?: IsoDateTimeString | null;
   assignedAt: IsoDateTimeString;
   status?: AssignmentStatus;
   notes?: string;
@@ -223,10 +239,54 @@ export interface CreateAssignmentInput
 export interface UpdateAssignmentInput extends UpdateEntityInput {
   workOrderId?: EntityId;
   contractorOrganizationId?: EntityId;
+  assigneeType?: AssignmentAssigneeType;
+  assigneeUserId?: EntityId;
+  assigneeOrganizationId?: EntityId | null;
   assignedByUserId?: EntityId;
   status?: AssignmentStatus;
+  scheduledDate?: IsoDateTimeString | null;
+  timeWindowStart?: IsoDateTimeString | null;
+  timeWindowEnd?: IsoDateTimeString | null;
   assignedAt?: IsoDateTimeString;
-  respondedAt?: IsoDateTimeString;
+  acceptedAt?: IsoDateTimeString | null;
+  declinedAt?: IsoDateTimeString | null;
   completedAt?: IsoDateTimeString;
   notes?: string;
+}
+
+export interface ClientPortalWorkOrderSummary {
+  id: EntityId;
+  workOrderNumber: string;
+  title: string;
+  status: WorkOrderStatus | string;
+  priority: WorkOrderPriority | string;
+  locationId: EntityId;
+  locationName: string;
+  category?: string | null;
+  requestedServiceDate?: IsoDateTimeString | null;
+  createdAt: IsoDateTimeString;
+  updatedAt: IsoDateTimeString;
+  currentQuoteStatus?: string | null;
+  currentQuoteId?: EntityId | null;
+}
+
+export interface ClientPortalWorkOrderDetail
+  extends ClientPortalWorkOrderSummary {
+  clientOrganizationId: EntityId;
+  clientOrganizationName: string;
+  description: string;
+  locationCode?: string | null;
+  locationAddress?: string | null;
+  requestedByName?: string | null;
+  requestedByEmail?: string | null;
+  requestedByPhone?: string | null;
+  dueDate?: IsoDateTimeString | null;
+  closedAt?: IsoDateTimeString | null;
+  activeQuote?: {
+    id: EntityId;
+    status: string;
+    totalAmount: number;
+    sentAt?: IsoDateTimeString | null;
+    respondedAt?: IsoDateTimeString | null;
+  } | null;
 }

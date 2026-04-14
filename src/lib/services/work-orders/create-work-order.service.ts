@@ -16,8 +16,8 @@ import {
   type WorkOrderDetailDto,
   type WorkOrderServiceDependencies,
   type WorkOrderStatusControls,
-} from "./shared";
-import { validateWorkOrderRelationships } from "./shared";
+} from "./shared.ts";
+import { validateWorkOrderRelationships } from "./shared.ts";
 
 export interface CreateWorkOrderServiceInput {
   payload: unknown;
@@ -41,7 +41,11 @@ export function createCreateWorkOrderService(
 }
 
 class DefaultCreateWorkOrderService implements CreateWorkOrderService {
-  constructor(private readonly dependencies: WorkOrderServiceDependencies) {}
+  private readonly dependencies: WorkOrderServiceDependencies;
+
+  constructor(dependencies: WorkOrderServiceDependencies) {
+    this.dependencies = dependencies;
+  }
 
   async createWorkOrder(
     input: CreateWorkOrderServiceInput,

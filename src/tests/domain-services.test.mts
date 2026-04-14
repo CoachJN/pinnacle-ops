@@ -31,8 +31,9 @@ test("quote persisted status rules require review before client decision", () =>
 
 test("invoice persisted status rules guard paid and void terminal states", () => {
   assert.equal(canInvoiceTransition("draft", "paid"), false);
-  assert.equal(canInvoiceTransition("draft", "issued"), true);
-  assert.equal(canInvoiceTransition("issued", "overdue"), true);
+  assert.equal(canInvoiceTransition("draft", "sent"), true);
+  assert.equal(canInvoiceTransition("sent", "viewed"), true);
+  assert.equal(canInvoiceTransition("viewed", "overdue"), true);
   assert.equal(canInvoiceTransition("overdue", "paid"), true);
   assert.equal(canInvoiceTransition("paid", "void"), false);
   assert.equal(isTerminalInvoiceStatus("paid"), true);

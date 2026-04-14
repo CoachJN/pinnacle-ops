@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { InternalShell } from "@/components/internal/internal-shell";
 import { EmptyState } from "@/components/work-orders/empty-state";
-import { WorkOrderFilters } from "@/components/work-orders/work-order-filters";
-import { WorkOrderTable } from "@/components/work-orders/work-order-table";
+import { InternalWorkOrderFilters } from "@/components/work-orders/internal-work-order-filters";
+import { InternalWorkOrderTable } from "@/components/work-orders/internal-work-order-table";
 import { QueuePresets } from "@/components/work-orders/queue-presets";
 import { getInvoiceOperationalFlags } from "@/lib/flags/operational-flags";
 import { listInvoices } from "@/lib/invoices/repository";
@@ -78,7 +78,7 @@ export default async function WorkOrderListPage({
           ) : null}
         </div>
 
-        <WorkOrderFilters
+        <InternalWorkOrderFilters
           role={currentUser.role}
           view={view ?? ""}
           status={status ?? ""}
@@ -93,7 +93,7 @@ export default async function WorkOrderListPage({
             Your current mock role cannot view work orders.
           </div>
         ) : filteredWorkOrders.length > 0 ? (
-          <WorkOrderTable
+          <InternalWorkOrderTable
             workOrders={filteredWorkOrders}
             role={currentUser.role}
             invoices={invoices}

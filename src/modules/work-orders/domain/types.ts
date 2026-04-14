@@ -1,11 +1,13 @@
-import type { EntityId, IsoDateTimeString } from "@/types/entity";
+import type { EntityId, IsoDateTimeString } from "../../../types/entity.ts";
 
 import type {
+  AssignmentAssigneeType,
+  AssignmentStatus,
   WorkOrderCategory,
   WorkOrderPriority,
   WorkOrderSource,
   WorkOrderStatus,
-} from "./constants";
+} from "./constants.ts";
 
 export interface WorkOrder {
   id: EntityId;
@@ -46,10 +48,86 @@ export interface WorkOrderAttachment {
   workOrderId: EntityId;
   fileName: string;
   contentType: string;
-  fileSizeBytes: number;
+  sizeBytes: number;
   storagePath: string;
-  uploadedByUserId: EntityId;
+  uploadedBy: EntityId;
   createdAt: IsoDateTimeString;
+}
+
+export interface Assignment {
+  id: EntityId;
+  workOrderId: EntityId;
+  assigneeType: AssignmentAssigneeType;
+  assigneeUserId: EntityId;
+  assigneeOrganizationId: EntityId | null;
+  assignedByUserId: EntityId;
+  status: AssignmentStatus;
+  scheduledDate: IsoDateTimeString | null;
+  timeWindowStart: IsoDateTimeString | null;
+  timeWindowEnd: IsoDateTimeString | null;
+  assignedAt: IsoDateTimeString;
+  acceptedAt: IsoDateTimeString | null;
+  declinedAt: IsoDateTimeString | null;
+  completedAt: IsoDateTimeString | null;
+  notes: string | null;
+  createdAt: IsoDateTimeString;
+  updatedAt: IsoDateTimeString;
+}
+
+export interface CreateAssignmentDto {
+  workOrderId: EntityId;
+  assigneeType: AssignmentAssigneeType;
+  assigneeUserId: EntityId;
+  scheduledDate?: IsoDateTimeString | null;
+  timeWindowStart?: IsoDateTimeString | null;
+  timeWindowEnd?: IsoDateTimeString | null;
+  notes?: string | null;
+}
+
+export interface ReassignAssignmentDto extends CreateAssignmentDto {
+  currentAssignmentId: EntityId;
+}
+
+export interface CreateContractorAssignmentDto {
+  contractorOrganizationId: EntityId;
+  scheduledDate?: IsoDateTimeString | null;
+  timeWindowStart?: IsoDateTimeString | null;
+  timeWindowEnd?: IsoDateTimeString | null;
+  notes?: string | null;
+}
+
+export interface ReassignContractorAssignmentDto
+  extends CreateContractorAssignmentDto {
+  currentAssignmentId: EntityId;
+}
+
+export interface AcceptAssignmentDto {
+  assignmentId: EntityId;
+}
+
+export interface DeclineAssignmentDto {
+  assignmentId: EntityId;
+  notes?: string | null;
+}
+
+export interface CompleteAssignmentDto {
+  assignmentId: EntityId;
+  notes?: string | null;
+}
+
+export interface WorkOrderStatusTransitionWithAssignmentDto {
+  status: WorkOrderStatus;
+}
+
+export interface WorkOrderActionAvailability {
+  canUpdateStatus: boolean;
+  canAddNote: boolean;
+  canAddAttachment: boolean;
+  canAssign: boolean;
+  canReassign: boolean;
+  canAcceptAssignment: boolean;
+  canDeclineAssignment: boolean;
+  canCompleteAssignment: boolean;
 }
 
 export interface WorkOrderListItem {
@@ -75,6 +153,43 @@ export interface WorkOrderListItem {
 export interface WorkOrderDetail extends WorkOrder {
   notes: WorkOrderNote[];
   attachments: WorkOrderAttachment[];
+  assignments: Assignment[];
+  activeAssignment: Assignment | null;
+}
+
+export interface CreateWorkOrderDto {
+  title: string;
+  description: string;
+  clientOrganizationId: EntityId;
+  locationId: EntityId;
+  priority: WorkOrderPriority;
+  category: WorkOrderCategory;
+  requestedByName: string;
+  requestedByEmail?: string;
+  requestedByPhone?: string;
+  source: WorkOrderSource;
+  createdByUserId: EntityId;
+  assignedCoordinatorUserId?: EntityId;
+  assignedManagerUserId?: EntityId;
+  dueDate?: IsoDateTimeString;
+  status?: WorkOrderStatus;
+}
+
+export interface UpdateWorkOrderStatusDto {
+  status: WorkOrderStatus;
+}
+
+export interface CreateWorkOrderNoteDto {
+  body: string;
+  createdByUserId: EntityId;
+}
+
+export interface CreateWorkOrderAttachmentMetadataDto {
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+  storagePath: string;
+  uploadedBy: EntityId;
 }
 
 export interface WorkOrderListQuery {
@@ -94,3 +209,5 @@ export interface WorkOrderListQuery {
   limit?: number;
   cursor?: string;
 }
+
+export interface WorkOrderListQueryDto extends WorkOrderListQuery {}

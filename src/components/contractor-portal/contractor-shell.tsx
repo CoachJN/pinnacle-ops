@@ -9,6 +9,7 @@ export function ContractorShell({
   children: ReactNode;
   currentUser: MockContractorCurrentUser;
 }) {
+  // Contractor-only shell. Keep admin management UI out of this boundary.
   const query = `contractorId=${currentUser.contractorId}`;
 
   return (

@@ -28,7 +28,8 @@ export interface Location extends AuditableEntity {
 export type ContractorOrganizationStatus =
   | "active"
   | "inactive"
-  | "pending_approval";
+  | "onboarding"
+  | "suspended";
 
 export interface ContractorOrganization extends AuditableEntity {
   name: string;
@@ -36,4 +37,5 @@ export interface ContractorOrganization extends AuditableEntity {
   status: ContractorOrganizationStatus;
   primaryContactEmail?: string;
   primaryContactPhone?: string;
+  serviceAreas?: string[];
 }

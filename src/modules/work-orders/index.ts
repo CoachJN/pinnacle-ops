@@ -4,6 +4,17 @@ export const workOrdersModule = {
 } as const;
 
 export {
+  canAssignmentTransition,
+  canManageAssignments,
+  canOverrideAssignmentCompletion,
+  getContractorAssignmentEligibility,
+  isActiveAssignmentStatus,
+  isTerminalAssignmentWorkOrderStatus,
+} from "./domain/assignment-rules.ts";
+export {
+  ASSIGNMENT_ASSIGNEE_TYPES,
+  ASSIGNMENT_STATUS_LABELS,
+  ASSIGNMENT_STATUSES,
   WORK_ORDER_CATEGORIES,
   WORK_ORDER_CATEGORY_LABELS,
   WORK_ORDER_PRIORITIES,
@@ -16,14 +27,24 @@ export {
   getWorkOrderStatusLabel,
 } from "./domain/constants.ts";
 export {
+  acceptAssignmentSchema,
+  assignmentAssigneeTypeSchema,
+  assignmentStatusSchema,
+  completeAssignmentSchema,
+  createContractorAssignmentSchema,
+  createAssignmentSchema,
   createWorkOrderAttachmentMetadataSchema,
   createWorkOrderNoteSchema,
   createWorkOrderSchema,
+  declineAssignmentSchema,
+  reassignAssignmentSchema,
+  reassignContractorAssignmentSchema,
   updateWorkOrderStatusSchema,
   workOrderCategorySchema,
   workOrderListQuerySchema,
   workOrderPrioritySchema,
   workOrderSourceSchema,
+  workOrderStatusTransitionWithAssignmentSchema,
   workOrderStatusSchema,
 } from "./domain/schemas.ts";
 export {
@@ -32,21 +53,31 @@ export {
   WORK_ORDER_STATUS_TRANSITION_MAP,
 } from "./domain/transitions.ts";
 export type {
+  AcceptAssignmentDto,
+  Assignment,
+  CompleteAssignmentDto,
+  CreateContractorAssignmentDto,
+  CreateAssignmentDto,
   CreateWorkOrderAttachmentMetadataDto,
   CreateWorkOrderDto,
   CreateWorkOrderNoteDto,
+  DeclineAssignmentDto,
+  ReassignAssignmentDto,
+  ReassignContractorAssignmentDto,
   UpdateWorkOrderStatusDto,
-  WorkOrderListQueryDto,
-} from "./domain/schemas.ts";
-export type {
+  WorkOrderActionAvailability,
   WorkOrder,
   WorkOrderAttachment,
   WorkOrderDetail,
   WorkOrderListItem,
   WorkOrderListQuery,
+  WorkOrderListQueryDto,
   WorkOrderNote,
+  WorkOrderStatusTransitionWithAssignmentDto,
 } from "./domain/types.ts";
 export type {
+  AssignmentAssigneeType,
+  AssignmentStatus,
   WorkOrderCategory,
   WorkOrderPriority,
   WorkOrderSource,

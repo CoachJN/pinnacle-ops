@@ -58,6 +58,23 @@ describe("phase 3 work order domain foundation", () => {
           createdByUserId: "user-1",
         }),
     );
+
+    assert.throws(
+      () =>
+        createWorkOrderSchema.parse({
+          title: "Replace failed rooftop capacitor",
+          description:
+            "Diagnose the rooftop unit and replace the failed capacitor.",
+          clientOrganizationId: "client-1",
+          locationId: "location-1",
+          priority: "HIGH",
+          category: "HVAC",
+          requestedByName: "Jordan Lee",
+          source: "CLIENT_PORTAL",
+          createdByUserId: "user-1",
+          dueDate: "not-a-date",
+        }),
+    );
   });
 
   test("validates trimmed note and attachment metadata payloads", () => {
@@ -68,13 +85,20 @@ describe("phase 3 work order domain foundation", () => {
     const attachment = createWorkOrderAttachmentMetadataSchema.parse({
       fileName: "estimate.pdf",
       contentType: "application/pdf",
-      fileSizeBytes: 2048,
+      sizeBytes: 2048,
       storagePath: "work-orders/wo-1/estimate.pdf",
-      uploadedByUserId: "user-1",
+      uploadedBy: "user-1",
     });
 
     assert.equal(note.body, "Technician is waiting on access approval.");
-    assert.equal(attachment.fileSizeBytes, 2048);
+    assert.equal(attachment.sizeBytes, 2048);
+
+    assert.throws(() =>
+      createWorkOrderNoteSchema.parse({
+        body: "   ",
+        createdByUserId: "user-1",
+      }),
+    );
   });
 
   test("validates list query filters", () => {
@@ -108,6 +132,7 @@ describe("phase 3 work order domain foundation", () => {
     assert.equal(isWorkOrderStatusTransitionAllowed("OPEN", "IN_PROGRESS"), true);
     assert.equal(isWorkOrderStatusTransitionAllowed("NEW", "IN_PROGRESS"), false);
     assert.equal(isWorkOrderStatusTransitionAllowed("COMPLETED", "CANCELLED"), false);
+    assert.equal(isWorkOrderStatusTransitionAllowed("CANCELLED", "OPEN"), false);
     assert.deepEqual(getAllowedNextWorkOrderStatuses("CLOSED"), []);
   });
 });

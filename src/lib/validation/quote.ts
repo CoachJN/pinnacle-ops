@@ -1,5 +1,11 @@
 import type { QuoteFormInput } from "@/types/quote";
 import { calculateQuoteTotal } from "@/lib/quotes/money";
+import { z } from "zod";
+import type {
+  ClientQuoteStatus,
+  ContractorQuoteStatus,
+  QuoteDecisionAction,
+} from "@/types/quote";
 
 export interface QuoteFormErrors {
   contractorName?: string;
@@ -100,4 +106,195 @@ function readMoney(formData: FormData, field: string): number | null {
   }
 
   return Math.round(amount * 100) / 100;
+}
+
+const nonEmptyStringSchema = z.string().trim().min(1);
+const nullableTrimmedStringSchema = z.string().trim().min(1).nullable().optional();
+const entityIdSchema = z.string().trim().min(1);
+const moneySchema = z
+  .number()
+  .finite()
+  .nonnegative()
+  .transform((value) => Math.round(value * 100) / 100);
+const positiveQuantitySchema = z.number().finite().positive();
+
+export const contractorQuoteStatuses = [
+  "draft",
+  "submitted",
+  "under_review",
+  "rejected",
+  "accepted",
+] as const satisfies readonly ContractorQuoteStatus[];
+
+export const clientQuoteStatuses = [
+  "draft",
+  "sent",
+  "approved",
+  "rejected",
+  "expired",
+] as const satisfies readonly ClientQuoteStatus[];
+
+export const quoteDecisionActions = [
+  "accept_contractor_quote",
+  "reject_contractor_quote",
+  "send_client_quote",
+  "approve_client_quote",
+  "reject_client_quote",
+] as const satisfies readonly QuoteDecisionAction[];
+
+export const quoteLineItemSchema = z
+  .object({
+    description: nonEmptyStringSchema,
+    quantity: positiveQuantitySchema,
+    unitPrice: moneySchema,
+    lineTotal: moneySchema,
+  })
+  .superRefine((value, context) => {
+    const calculated = roundMoney(value.quantity * value.unitPrice);
+    if (calculated !== value.lineTotal) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "lineTotal must equal quantity multiplied by unitPrice.",
+        path: ["lineTotal"],
+      });
+    }
+  });
+
+const quoteMoneyFieldsSchema = z.object({
+  subtotal: moneySchema,
+  taxAmount: moneySchema,
+  totalAmount: moneySchema,
+});
+
+const quoteBaseSchema = z
+  .object({
+    workOrderId: entityIdSchema,
+    lineItems: z.array(quoteLineItemSchema),
+    subtotal: moneySchema,
+    taxAmount: moneySchema,
+    totalAmount: moneySchema,
+    notes: nullableTrimmedStringSchema,
+  })
+  .superRefine((value, context) => {
+    validateQuoteTotalsConsistency(value.lineItems, value, context);
+  });
+
+export const saveContractorQuoteDraftSchema = quoteBaseSchema.extend({
+  contractorQuoteId: entityIdSchema.optional(),
+  contractorUserId: entityIdSchema.nullable().optional(),
+  contractorOrganizationId: entityIdSchema.nullable().optional(),
+});
+
+export const submitContractorQuoteSchema = saveContractorQuoteDraftSchema.superRefine(
+  (value, context) => {
+    if (value.lineItems.length < 1) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "At least one line item is required to submit a contractor quote.",
+        path: ["lineItems"],
+      });
+    }
+  },
+);
+
+export const reviewContractorQuoteSchema = z
+  .object({
+    workOrderId: entityIdSchema,
+    contractorQuoteId: entityIdSchema,
+    action: z.enum(["accept_contractor_quote", "reject_contractor_quote"]),
+    rejectionReason: nullableTrimmedStringSchema,
+  })
+  .superRefine((value, context) => {
+    if (
+      value.action === "reject_contractor_quote" &&
+      !value.rejectionReason?.trim()
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Rejection reason is required when rejecting a contractor quote.",
+        path: ["rejectionReason"],
+      });
+    }
+  });
+
+export const createClientQuoteSchema = quoteBaseSchema.extend({
+  sourceContractorQuoteId: entityIdSchema.nullable().optional(),
+});
+
+export const sendClientQuoteSchema = z.object({
+  workOrderId: entityIdSchema,
+  clientQuoteId: entityIdSchema,
+});
+
+export const approveClientQuoteSchema = z.object({
+  workOrderId: entityIdSchema,
+  clientQuoteId: entityIdSchema,
+  status: z.literal("approved"),
+});
+
+export const rejectClientQuoteSchema = z.object({
+  workOrderId: entityIdSchema,
+  clientQuoteId: entityIdSchema,
+  status: z.literal("rejected"),
+  rejectionReason: nonEmptyStringSchema,
+});
+
+export function canTransitionContractorQuote(
+  from: ContractorQuoteStatus,
+  to: ContractorQuoteStatus,
+): boolean {
+  const transitions: Record<ContractorQuoteStatus, readonly ContractorQuoteStatus[]> = {
+    draft: ["submitted"],
+    submitted: ["under_review", "accepted", "rejected"],
+    under_review: ["accepted", "rejected"],
+    rejected: [],
+    accepted: [],
+  };
+
+  return transitions[from].includes(to);
+}
+
+export function canTransitionClientQuote(
+  from: ClientQuoteStatus,
+  to: ClientQuoteStatus,
+): boolean {
+  const transitions: Record<ClientQuoteStatus, readonly ClientQuoteStatus[]> = {
+    draft: ["sent", "expired"],
+    sent: ["approved", "rejected", "expired"],
+    approved: [],
+    rejected: [],
+    expired: [],
+  };
+
+  return transitions[from].includes(to);
+}
+
+function validateQuoteTotalsConsistency(
+  lineItems: Array<{ lineTotal: number }>,
+  totals: z.infer<typeof quoteMoneyFieldsSchema>,
+  context: z.RefinementCtx,
+): void {
+  const expectedSubtotal = roundMoney(
+    lineItems.reduce((sum, item) => sum + item.lineTotal, 0),
+  );
+
+  if (expectedSubtotal !== totals.subtotal) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "subtotal must equal the sum of all line item totals.",
+      path: ["subtotal"],
+    });
+  }
+
+  if (roundMoney(totals.subtotal + totals.taxAmount) !== totals.totalAmount) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "totalAmount must equal subtotal plus taxAmount.",
+      path: ["totalAmount"],
+    });
+  }
+}
+
+function roundMoney(value: number): number {
+  return Math.round(value * 100) / 100;
 }

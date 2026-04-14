@@ -204,7 +204,7 @@ export function getFinanceDashboardData(
     (workOrder) => workOrder.status === "completed" && !workOrder.currentInvoiceId,
   );
   const draftInvoices = byCurrentInvoiceStatus(workOrders, invoices, ["draft"]);
-  const issuedInvoices = byCurrentInvoiceStatus(workOrders, invoices, ["issued"]);
+  const issuedInvoices = byCurrentInvoiceStatus(workOrders, invoices, ["sent", "viewed"]);
   const overdueInvoices = byDerivedOverdueInvoice(workOrders, invoices);
   const paidAwaitingClose = byStatuses(workOrders, ["paid"]);
 

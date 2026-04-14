@@ -18,6 +18,7 @@ import {
   getWorkOrdersCollection,
   parseWorkOrderDocument,
   serializeWorkOrderForFirestore,
+  toFirestoreTimestamp,
 } from "./work-order.firestore";
 
 export interface CreateWorkOrderRepositoryInput {
@@ -304,11 +305,11 @@ class FirestoreWorkOrderRepository implements WorkOrderRepository {
     }
 
     if (filters.dueDateFrom) {
-      query = query.where("dueDate", ">=", filters.dueDateFrom);
+      query = query.where("dueDate", ">=", toFirestoreTimestamp(filters.dueDateFrom));
     }
 
     if (filters.dueDateTo) {
-      query = query.where("dueDate", "<=", filters.dueDateTo);
+      query = query.where("dueDate", "<=", toFirestoreTimestamp(filters.dueDateTo));
     }
 
     if (canApplyQueryLimit(filters)) {

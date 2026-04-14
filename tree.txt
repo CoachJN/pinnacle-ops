@@ -1,0 +1,672 @@
+src/
+├── app/
+│   ├── (app)/
+│   │   ├── client-organizations/
+│   │   │   ├── [clientOrganizationId]/
+│   │   │   │   └── page.tsx
+│   │   │   └── page.tsx
+│   │   ├── dashboard/
+│   │   │   ├── page.tsx
+│   │   │   └── work-orders/
+│   │   │       ├── [workOrderId]/
+│   │   │       │   └── page.tsx
+│   │   │       ├── new/
+│   │   │       │   └── page.tsx
+│   │   │       └── page.tsx
+│   │   ├── layout.tsx
+│   │   ├── locations/
+│   │   │   ├── [locationId]/
+│   │   │   │   ├── edit/
+│   │   │   │   │   └── page.tsx
+│   │   │   │   └── page.tsx
+│   │   │   ├── new/
+│   │   │   │   └── page.tsx
+│   │   │   └── page.tsx
+│   │   └── portal/
+│   │       └── locations/
+│   │           ├── [locationId]/
+│   │           │   ├── edit/
+│   │           │   │   └── page.tsx
+│   │           │   └── page.tsx
+│   │           ├── new/
+│   │           │   └── page.tsx
+│   │           └── page.tsx
+│   ├── (contractor)/
+│   │   └── contractor/
+│   │       ├── dashboard/
+│   │       │   └── page.tsx
+│   │       └── work-orders/
+│   │           ├── [id]/
+│   │           │   ├── page.tsx
+│   │           │   └── quote/
+│   │           │       └── page.tsx
+│   │           └── page.tsx
+│   ├── (protected)/
+│   │   ├── clients/
+│   │   │   ├── [id]/
+│   │   │   │   ├── edit/
+│   │   │   │   │   └── page.tsx
+│   │   │   │   └── page.tsx
+│   │   │   ├── new/
+│   │   │   │   └── page.tsx
+│   │   │   └── page.tsx
+│   │   ├── contractors/
+│   │   │   ├── [id]/
+│   │   │   │   ├── edit/
+│   │   │   │   │   └── page.tsx
+│   │   │   │   └── page.tsx
+│   │   │   ├── new/
+│   │   │   │   └── page.tsx
+│   │   │   └── page.tsx
+│   │   ├── dashboard/
+│   │   ├── finance/
+│   │   │   └── page.tsx
+│   │   ├── layout.tsx
+│   │   ├── settings/
+│   │   │   └── page.tsx
+│   │   └── work-orders/
+│   │       ├── [id]/
+│   │       │   ├── edit/
+│   │       │   │   └── page.tsx
+│   │       │   ├── invoice/
+│   │       │   │   ├── [invoiceId]/
+│   │       │   │   │   └── edit/
+│   │       │   │   │       └── page.tsx
+│   │       │   │   └── new/
+│   │       │   │       └── page.tsx
+│   │       │   ├── page.tsx
+│   │       │   └── quotes/
+│   │       │       ├── [quoteId]/
+│   │       │       │   └── edit/
+│   │       │       │       └── page.tsx
+│   │       │       └── new/
+│   │       │           └── page.tsx
+│   │       ├── new/
+│   │       │   └── page.tsx
+│   │       └── page.tsx
+│   ├── (public)/
+│   │   ├── layout.tsx
+│   │   ├── login/
+│   │   │   └── page.tsx
+│   │   ├── sign-in/
+│   │   │   └── page.tsx
+│   │   └── unauthorized/
+│   │       └── page.tsx
+│   ├── api/
+│   │   ├── _utils/
+│   │   │   └── phase-two.ts
+│   │   ├── auth/
+│   │   │   ├── logout/
+│   │   │   │   └── route.ts
+│   │   │   └── session/
+│   │   │       └── route.ts
+│   │   ├── client-organizations/
+│   │   │   ├── [clientOrganizationId]/
+│   │   │   │   └── route.ts
+│   │   │   └── route.ts
+│   │   ├── clients/
+│   │   │   ├── [id]/
+│   │   │   │   └── route.ts
+│   │   │   └── route.ts
+│   │   ├── contractors/
+│   │   │   ├── [id]/
+│   │   │   │   └── route.ts
+│   │   │   └── route.ts
+│   │   ├── finance/
+│   │   │   └── queue/
+│   │   │       └── route.ts
+│   │   ├── locations/
+│   │   │   ├── [locationId]/
+│   │   │   │   └── route.ts
+│   │   │   └── route.ts
+│   │   └── work-orders/
+│   │       ├── [id]/
+│   │       │   ├── activity/
+│   │       │   │   └── route.ts
+│   │       │   ├── assign-contractor/
+│   │       │   │   └── route.ts
+│   │       │   ├── assign-internal/
+│   │       │   │   └── route.ts
+│   │       │   ├── assignments/
+│   │       │   │   ├── [assignmentId]/
+│   │       │   │   │   ├── accept/
+│   │       │   │   │   │   └── route.ts
+│   │       │   │   │   ├── complete/
+│   │       │   │   │   │   └── route.ts
+│   │       │   │   │   └── decline/
+│   │       │   │   │       └── route.ts
+│   │       │   │   ├── reassign/
+│   │       │   │   │   └── route.ts
+│   │       │   │   └── route.ts
+│   │       │   ├── attachments/
+│   │       │   │   ├── [attachmentId]/
+│   │       │   │   │   └── content/
+│   │       │   │   │       └── route.ts
+│   │       │   │   └── route.ts
+│   │       │   ├── invoices/
+│   │       │   │   ├── [invoiceId]/
+│   │       │   │   │   ├── route.ts
+│   │       │   │   │   └── transition/
+│   │       │   │   │       └── route.ts
+│   │       │   │   └── route.ts
+│   │       │   ├── notes/
+│   │       │   │   └── route.ts
+│   │       │   ├── quote-workflow/
+│   │       │   │   └── route.ts
+│   │       │   ├── quotes/
+│   │       │   │   ├── [quoteId]/
+│   │       │   │   │   ├── route.ts
+│   │       │   │   │   └── transition/
+│   │       │   │   │       └── route.ts
+│   │       │   │   └── route.ts
+│   │       │   ├── route.ts
+│   │       │   ├── status/
+│   │       │   │   └── route.ts
+│   │       │   └── transition/
+│   │       │       └── route.ts
+│   │       └── route.ts
+│   ├── favicon.ico
+│   ├── globals.css
+│   ├── layout.tsx
+│   └── page.tsx
+├── components/
+│   ├── app-shell/
+│   │   ├── app-shell.tsx
+│   │   ├── sidebar-nav.tsx
+│   │   └── topbar.tsx
+│   ├── auth/
+│   │   ├── login-form.tsx
+│   │   ├── logout-button.tsx
+│   │   └── sign-in-form.tsx
+│   ├── client-organizations/
+│   │   ├── client-organization-detail-page.tsx
+│   │   ├── client-organization-list-page.tsx
+│   │   ├── client-organization-status-badge.tsx
+│   │   └── types.ts
+│   ├── clients/
+│   │   └── client-form.tsx
+│   ├── contractor-portal/
+│   │   ├── contractor-action-panel.tsx
+│   │   ├── contractor-quote-form.tsx
+│   │   ├── contractor-shell.tsx
+│   │   └── contractor-work-order-list.tsx
+│   ├── contractors/
+│   │   ├── contractor-assignment-form.tsx
+│   │   └── contractor-form.tsx
+│   ├── internal/
+│   │   └── internal-shell.tsx
+│   ├── invoices/
+│   │   ├── invoice-form.tsx
+│   │   └── invoice-status-badge.tsx
+│   ├── layout/
+│   ├── locations/
+│   │   ├── location-detail-page.tsx
+│   │   ├── location-editor-page.tsx
+│   │   ├── location-form.tsx
+│   │   ├── location-list-page.tsx
+│   │   ├── location-status-badge.tsx
+│   │   └── types.ts
+│   ├── quotes/
+│   │   ├── quote-form.tsx
+│   │   └── quote-status-badge.tsx
+│   ├── shared/
+│   │   ├── action-feedback.tsx
+│   │   ├── confirm-action-dialog.tsx
+│   │   └── summary-card.tsx
+│   ├── ui/
+│   └── work-orders/
+│       ├── activity-timeline.tsx
+│       ├── badges.tsx
+│       ├── create/
+│       │   ├── category-selector.tsx
+│       │   ├── client-selector.tsx
+│       │   ├── location-selector.tsx
+│       │   ├── priority-selector.tsx
+│       │   ├── types.ts
+│       │   ├── work-order-create-page.tsx
+│       │   └── work-order-form.tsx
+│       ├── derived-status-indicators.tsx
+│       ├── detail-section.tsx
+│       ├── empty-state.tsx
+│       ├── form-submit-button.tsx
+│       ├── formatting.ts
+│       ├── invoice-history-list.tsx
+│       ├── invoice-section.tsx
+│       ├── list/
+│       │   ├── work-order-filters.tsx
+│       │   ├── work-order-list.tsx
+│       │   ├── work-order-priority-badge.tsx
+│       │   ├── work-order-status-badge.tsx
+│       │   └── work-order-table.tsx
+│       ├── queue-presets.tsx
+│       ├── quote-history-list.tsx
+│       ├── quote-section.tsx
+│       ├── quote-summary-card.tsx
+│       ├── status-transition-panel.tsx
+│       ├── work-order-attachments-panel.tsx
+│       ├── work-order-client-location-panel.tsx
+│       ├── work-order-detail-header.tsx
+│       ├── work-order-detail-page.tsx
+│       ├── work-order-filters.tsx
+│       ├── work-order-form.tsx
+│       ├── work-order-notes-panel.tsx
+│       ├── work-order-overview-panel.tsx
+│       ├── work-order-quote-panel.tsx
+│       ├── work-order-requester-panel.tsx
+│       └── work-order-table.tsx
+├── config/
+│   ├── app.ts
+│   ├── domain.ts
+│   ├── env.client.ts
+│   ├── env.server.ts
+│   ├── env.ts
+│   ├── features.ts
+│   └── index.ts
+├── hooks/
+├── lib/
+│   ├── access-policy.ts
+│   ├── audit-log.ts
+│   ├── auth/
+│   │   ├── auth-types.ts
+│   │   ├── current-user.ts
+│   │   ├── guards.ts
+│   │   └── session.ts
+│   ├── auth-context.ts
+│   ├── authorization.ts
+│   ├── clients/
+│   │   ├── actions.ts
+│   │   └── repository.ts
+│   ├── config/
+│   │   └── operational-thresholds.ts
+│   ├── contractors/
+│   │   ├── actions.ts
+│   │   ├── contractor-actions.ts
+│   │   ├── projections.ts
+│   │   └── repository.ts
+│   ├── core-relationship-integrity.ts
+│   ├── dashboard/
+│   │   └── work-order-dashboard-data.ts
+│   ├── data-visibility.ts
+│   ├── enforcement.ts
+│   ├── env/
+│   │   ├── client.ts
+│   │   └── server.ts
+│   ├── errors/
+│   │   ├── app-error.ts
+│   │   ├── codes.ts
+│   │   ├── index.ts
+│   │   └── safe-error.ts
+│   ├── firebase/
+│   │   ├── admin.ts
+│   │   ├── client.ts
+│   │   ├── config.ts
+│   │   └── index.ts
+│   ├── flags/
+│   │   └── operational-flags.ts
+│   ├── input-validation.ts
+│   ├── invoices/
+│   │   ├── actions.ts
+│   │   ├── money.ts
+│   │   ├── repository.ts
+│   │   └── status.ts
+│   ├── locations/
+│   │   ├── actions.ts
+│   │   └── repository.ts
+│   ├── logging/
+│   │   └── logger.ts
+│   ├── navigation/
+│   │   └── nav-config.ts
+│   ├── permissions/
+│   │   ├── client-location-permissions.ts
+│   │   ├── client-organizations.ts
+│   │   ├── client-permissions.ts
+│   │   ├── contractor-permissions.ts
+│   │   ├── contractor-session.ts
+│   │   ├── dashboard-permissions.ts
+│   │   ├── index.ts
+│   │   ├── invoice-permissions.ts
+│   │   ├── location-permissions.ts
+│   │   ├── locations.ts
+│   │   ├── mock-current-user.ts
+│   │   ├── navigation-permissions.ts
+│   │   ├── quote-permissions.ts
+│   │   ├── resolve-action-actor.ts
+│   │   ├── roles.ts
+│   │   ├── work-order-permissions.ts
+│   │   └── work-orders.ts
+│   ├── quotes/
+│   │   ├── actions.ts
+│   │   ├── money.ts
+│   │   ├── repository.ts
+│   │   └── status.ts
+│   ├── rbac/
+│   │   ├── checks.ts
+│   │   ├── permissions.ts
+│   │   └── roles.ts
+│   ├── repositories/
+│   │   ├── client-organization.repository.ts
+│   │   ├── location.repository.ts
+│   │   ├── work-order-attachment.repository.ts
+│   │   ├── work-order-note.repository.ts
+│   │   ├── work-order.firestore.ts
+│   │   └── work-order.repository.ts
+│   ├── services/
+│   │   ├── client-organization.service.ts
+│   │   ├── location.service.ts
+│   │   └── work-orders/
+│   │       ├── add-work-order-attachment.service.ts
+│   │       ├── add-work-order-note.service.ts
+│   │       ├── assignment-workflow.service.ts
+│   │       ├── create-work-order.service.ts
+│   │       ├── get-work-order-detail.service.ts
+│   │       ├── index.ts
+│   │       ├── list-work-orders.service.ts
+│   │       ├── shared.ts
+│   │       └── update-work-order-status.service.ts
+│   ├── status-transitions.ts
+│   ├── utils/
+│   │   ├── constants.ts
+│   │   ├── domain-validation.ts
+│   │   ├── errors.ts
+│   │   ├── logger.ts
+│   │   └── normalization.ts
+│   ├── utils.ts
+│   ├── validation/
+│   │   ├── client-location.ts
+│   │   ├── client-organizations.ts
+│   │   ├── common.ts
+│   │   ├── contractor.ts
+│   │   ├── invoice.ts
+│   │   ├── locations.ts
+│   │   ├── quote.ts
+│   │   ├── work-order.ts
+│   │   └── work-orders.ts
+│   ├── work-orders/
+│   │   ├── actions.ts
+│   │   ├── attachment-storage.server.ts
+│   │   ├── attachments.ts
+│   │   ├── constants.ts
+│   │   ├── quote-api-helpers.ts
+│   │   ├── repository.ts
+│   │   └── status.ts
+│   ├── workflow/
+│   │   ├── action-availability.ts
+│   │   ├── internal-events.ts
+│   │   └── system-actor.ts
+│   └── workflows/
+│       ├── action-gating/
+│       │   ├── get-available-actions.ts
+│       │   ├── helpers.ts
+│       │   ├── index.ts
+│       │   ├── invoice-actions.ts
+│       │   ├── quote-actions.ts
+│       │   ├── types.ts
+│       │   └── work-order-actions.ts
+│       ├── audit/
+│       │   ├── build-audit-record.ts
+│       │   ├── build-transition-event.ts
+│       │   ├── event-types.ts
+│       │   ├── index.ts
+│       │   ├── log-transition-attempt.ts
+│       │   ├── log-transition-success.ts
+│       │   ├── repositories.ts
+│       │   └── types.ts
+│       ├── execution/
+│       │   ├── build-monitoring-summary.ts
+│       │   ├── claim-scheduled-actions.ts
+│       │   ├── create-sla-timers.ts
+│       │   ├── evaluate-sla-breaches.ts
+│       │   ├── index.ts
+│       │   ├── process-scheduled-action.ts
+│       │   ├── process-scheduled-actions-batch.ts
+│       │   ├── repositories.ts
+│       │   ├── retry-policy.ts
+│       │   ├── sla-types.ts
+│       │   ├── types.ts
+│       │   └── worker-types.ts
+│       ├── lifecycle/
+│       │   ├── index.ts
+│       │   ├── invoice-status.ts
+│       │   ├── invoice-transitions.ts
+│       │   ├── quote-status.ts
+│       │   ├── quote-transitions.ts
+│       │   ├── types.ts
+│       │   ├── work-order-status.ts
+│       │   └── work-order-transitions.ts
+│       ├── optimization/
+│       │   ├── assignment-engine.ts
+│       │   ├── build-insights.ts
+│       │   ├── build-work-queue.ts
+│       │   ├── index.ts
+│       │   ├── priority-scoring.ts
+│       │   ├── recommendations.ts
+│       │   ├── risk-detection.ts
+│       │   └── types.ts
+│       ├── orchestration/
+│       │   ├── build-orchestration-actions.ts
+│       │   ├── evaluate-rules.ts
+│       │   ├── handle-orchestration.ts
+│       │   ├── index.ts
+│       │   ├── persist-orchestration-actions.ts
+│       │   ├── repositories.ts
+│       │   ├── rule-types.ts
+│       │   ├── rules/
+│       │   │   ├── invoice-rules.ts
+│       │   │   ├── quote-rules.ts
+│       │   │   └── work-order-rules.ts
+│       │   └── types.ts
+│       ├── rbac-transition/
+│       │   ├── adapters.ts
+│       │   ├── authorize-transition.ts
+│       │   ├── index.ts
+│       │   ├── invoice-rules.ts
+│       │   ├── quote-rules.ts
+│       │   ├── role-types.ts
+│       │   ├── types.ts
+│       │   └── work-order-rules.ts
+│       ├── reactions/
+│       │   ├── automation-intents.ts
+│       │   ├── dispatch-automation-intent.ts
+│       │   ├── dispatch-notification-intent.ts
+│       │   ├── event-handlers.ts
+│       │   ├── handle-transition-event.ts
+│       │   ├── index.ts
+│       │   ├── notification-intents.ts
+│       │   ├── repositories.ts
+│       │   └── types.ts
+│       ├── transition-engine/
+│       │   ├── adapters.ts
+│       │   ├── errors.ts
+│       │   ├── index.ts
+│       │   ├── invoice-transition-validator.ts
+│       │   ├── quote-transition-validator.ts
+│       │   ├── types.ts
+│       │   ├── validate-transition.ts
+│       │   └── work-order-transition-validator.ts
+│       ├── transition-service/
+│       │   ├── apply-invoice-transition.ts
+│       │   ├── apply-quote-transition.ts
+│       │   ├── apply-work-order-transition.ts
+│       │   ├── context-builders.ts
+│       │   ├── errors.ts
+│       │   ├── index.ts
+│       │   ├── repositories.ts
+│       │   └── types.ts
+│       └── verification/
+│           ├── assertions.ts
+│           ├── cli.mts
+│           ├── fixtures.ts
+│           ├── index.ts
+│           ├── report-builder.ts
+│           ├── scenario-runner.ts
+│           ├── scenarios/
+│           │   ├── helpers.ts
+│           │   ├── index.ts
+│           │   ├── invoice-overdue.ts
+│           │   ├── optimization-ranking.ts
+│           │   ├── quote-rejection.ts
+│           │   ├── sla-breach.ts
+│           │   ├── system-transitions.ts
+│           │   ├── unauthorized-attempts.ts
+│           │   ├── work-order-no-quote.ts
+│           │   └── work-order-standard.ts
+│           └── types.ts
+├── modules/
+│   ├── README.md
+│   ├── clients/
+│   │   ├── domain/
+│   │   ├── index.ts
+│   │   ├── repositories/
+│   │   ├── server/
+│   │   ├── ui/
+│   │   └── validation/
+│   ├── contractors/
+│   │   ├── domain/
+│   │   ├── index.ts
+│   │   ├── repositories/
+│   │   ├── server/
+│   │   ├── ui/
+│   │   └── validation/
+│   ├── dashboard/
+│   │   ├── domain/
+│   │   ├── index.ts
+│   │   ├── repositories/
+│   │   ├── server/
+│   │   ├── ui/
+│   │   └── validation/
+│   ├── finance/
+│   │   ├── domain/
+│   │   ├── index.ts
+│   │   ├── repositories/
+│   │   ├── server/
+│   │   ├── ui/
+│   │   └── validation/
+│   ├── locations/
+│   │   ├── domain/
+│   │   ├── index.ts
+│   │   ├── repositories/
+│   │   ├── server/
+│   │   ├── ui/
+│   │   └── validation/
+│   ├── settings/
+│   │   ├── domain/
+│   │   ├── index.ts
+│   │   ├── repositories/
+│   │   ├── server/
+│   │   ├── ui/
+│   │   └── validation/
+│   └── work-orders/
+│       ├── domain/
+│       │   ├── constants.ts
+│       │   ├── schemas.ts
+│       │   ├── transitions.ts
+│       │   └── types.ts
+│       ├── index.ts
+│       ├── repositories/
+│       ├── server/
+│       ├── ui/
+│       └── validation/
+├── server/
+│   ├── api/
+│   │   ├── business-entities.ts
+│   │   ├── work-order-core.ts
+│   │   └── work-orders.ts
+│   ├── auth/
+│   │   ├── index.ts
+│   │   └── redirect-path.ts
+│   ├── authorization/
+│   │   ├── actions.ts
+│   │   ├── capabilities.ts
+│   │   ├── evaluator.ts
+│   │   ├── index.ts
+│   │   ├── policies.ts
+│   │   ├── visibility.ts
+│   │   └── work-order.permissions.ts
+│   ├── db/
+│   ├── firebase/
+│   │   ├── admin.ts
+│   │   └── index.ts
+│   ├── repositories/
+│   │   ├── firestore/
+│   │   │   ├── collections.ts
+│   │   │   ├── index.ts
+│   │   │   ├── mappers.ts
+│   │   │   ├── models.ts
+│   │   │   ├── repositories.ts
+│   │   │   └── timestamps.ts
+│   │   └── index.ts
+│   └── services/
+│       ├── activity-log-service.ts
+│       ├── assignment-service.ts
+│       ├── client-location-service.ts
+│       ├── contractor-service.ts
+│       ├── errors.ts
+│       ├── index.ts
+│       ├── invoice-service.ts
+│       ├── observability.ts
+│       ├── quote-service.ts
+│       ├── quote-workflow-service.ts
+│       ├── status-rules.ts
+│       ├── types.ts
+│       └── work-order-service.ts
+├── styles/
+├── tests/
+│   ├── action-gating.test.mts
+│   ├── assignment-workflow.service.test.mts
+│   ├── domain-services.test.mts
+│   ├── integration/
+│   │   └── api/
+│   │       ├── locations.test.ts
+│   │       └── work-orders-location-linking.test.ts
+│   ├── invoice-service.test.mts
+│   ├── lifecycle.test.mts
+│   ├── observability.test.mts
+│   ├── phase-five-contractors.test.mts
+│   ├── phase-four-quotes.test.mts
+│   ├── phase-one-work-order.test.mts
+│   ├── phase-seven-operational-polish.test.mts
+│   ├── phase-three-permissions.test.mts
+│   ├── phase-two-locations.test.mts
+│   ├── quote-api-workflow.test.mts
+│   ├── quote-service.test.mts
+│   ├── quote-workflow-service.test.mts
+│   ├── rbac-transition.test.mts
+│   ├── server-authorization.test.mts
+│   ├── support/
+│   │   └── phase-two-fixtures.ts
+│   ├── transition-engine.test.mts
+│   ├── transition-reactions.test.mts
+│   ├── transition-service.test.mts
+│   ├── unit/
+│   │   ├── permissions/
+│   │   │   └── locations.test.ts
+│   │   └── validation/
+│   │       ├── locations.test.ts
+│   │       └── work-orders.test.ts
+│   ├── verification-hardening.test.mts
+│   ├── work-order-core-domain.test.mts
+│   ├── work-order-core-services.test.mts
+│   ├── work-order-service.test.mts
+│   ├── work-order.permissions.test.mts
+│   ├── workflow-execution.test.mts
+│   ├── workflow-optimization.test.mts
+│   ├── workflow-orchestration.test.mts
+│   └── workflow-verification.test.mts
+└── types/
+    ├── audit.ts
+    ├── auth.ts
+    ├── client-organization.ts
+    ├── client.ts
+    ├── collaboration.ts
+    ├── contractor.ts
+    ├── entity.ts
+    ├── financial-controls.ts
+    ├── financial.ts
+    ├── invoice.ts
+    ├── location.ts
+    ├── navigation.ts
+    ├── organization.ts
+    ├── permissions.ts
+    ├── quote.ts
+    ├── visibility.ts
+    └── work-order.ts

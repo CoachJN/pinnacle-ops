@@ -17,7 +17,7 @@ import {
   resolveClosedAt,
   type WorkOrderDetailDto,
   type WorkOrderServiceDependencies,
-} from "./shared";
+} from "./shared.ts";
 
 export interface UpdateWorkOrderStatusServiceInput {
   workOrderId: EntityId;
@@ -42,7 +42,11 @@ export function createUpdateWorkOrderStatusService(
 class DefaultUpdateWorkOrderStatusService
   implements UpdateWorkOrderStatusService
 {
-  constructor(private readonly dependencies: WorkOrderServiceDependencies) {}
+  private readonly dependencies: WorkOrderServiceDependencies;
+
+  constructor(dependencies: WorkOrderServiceDependencies) {
+    this.dependencies = dependencies;
+  }
 
   async updateWorkOrderStatus(
     input: UpdateWorkOrderStatusServiceInput,

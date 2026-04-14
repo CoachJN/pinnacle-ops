@@ -87,7 +87,8 @@ export function canTransitionWorkOrder(
   if (nextStatus === "invoiced") {
     return (
       currentStatus === "completed" &&
-      context.currentInvoice?.status === "issued" &&
+      (context.currentInvoice?.status === "sent" ||
+        context.currentInvoice?.status === "viewed") &&
       isFinanceCloseoutRole(role)
     );
   }

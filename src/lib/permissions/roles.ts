@@ -56,3 +56,11 @@ export function isOperationalRole(role: InternalUserRole): boolean {
 export function isFinanceCloseoutRole(role: InternalUserRole): boolean {
   return role === USER_ROLES.FinanceAdmin || role === USER_ROLES.Owner;
 }
+
+export function canViewFinanceDashboard(role: InternalUserRole): boolean {
+  return (
+    role === USER_ROLES.Manager ||
+    role === USER_ROLES.FinanceAdmin ||
+    role === USER_ROLES.Owner
+  );
+}

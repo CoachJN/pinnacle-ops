@@ -15,3 +15,20 @@ export interface ClientOrganizationDetail extends ClientOrganizationSummary {
   createdAt: string;
   recordStatus: "active" | "archived";
 }
+
+export interface ClientOrganizationFormValues {
+  name: string;
+  displayName: string;
+  primaryContactName: string;
+  primaryContactEmail: string;
+  primaryContactPhone: string;
+  billingEmail: string;
+  notes: string;
+  isActive: boolean;
+}
+
+export interface ClientOrganizationFormErrors {
+  name?: string;
+  primaryContactEmail?: string;
+  billingEmail?: string;
+}

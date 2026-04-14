@@ -7,6 +7,7 @@ import {
   USER_ROLES,
   roleCanAccessEntity,
 } from "../types/permissions.ts";
+import { canUserPerformAction } from "../server/authorization/index.ts";
 
 describe("server authorization foundation", () => {
   test("exposes the complete application role vocabulary", () => {
@@ -89,5 +90,33 @@ describe("server authorization foundation", () => {
         false,
       );
     }
+  });
+
+  test("manager cannot mark an invoice paid", () => {
+    assert.equal(
+      canUserPerformAction({
+        actor: {
+          actorType: "internal",
+          userId: "manager-1",
+          role: USER_ROLES.Manager,
+          scope: {
+            kind: "internal",
+            organizationId: "org-1",
+          },
+        },
+        entity: "invoice",
+        action: "mark_paid",
+        target: {
+          organizationId: "org-1",
+          workOrderId: "wo-1",
+          clientOrganizationId: "client-1",
+          locationId: "loc-1",
+          contractorOrganizationId: undefined,
+          status: "sent",
+        },
+        nextStatus: "paid",
+      }),
+      false,
+    );
   });
 });

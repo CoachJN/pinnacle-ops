@@ -68,3 +68,11 @@ export type CreateLocationInput = Pick<
 >;
 
 export type UpdateLocationInput = Partial<CreateLocationInput>;
+
+export interface ClientPortalLandingSummary {
+  organizationId: EntityId;
+  organizationName: string;
+  locationCount: number;
+  activeWorkOrderCount: number;
+  quotesAwaitingResponseCount: number;
+}

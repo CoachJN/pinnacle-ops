@@ -90,6 +90,52 @@ test("createWorkOrder rejects locations that do not belong to the selected clien
   assert.match(result.error.message, /does not belong to the specified client organization/i);
 });
 
+test("createWorkOrder allows an explicitly controlled valid initial status", async () => {
+  const harness = createHarness();
+  const service = createCreateWorkOrderService(harness.dependencies);
+
+  const result = await service.createWorkOrder({
+    workOrderId: "wo-open-1234",
+    payload: {
+      ...makeCreatePayload(),
+      status: "OPEN",
+    },
+    controls: {
+      allowInitialStatusOverride: true,
+    },
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assert.equal(result.value.status, "OPEN");
+  assert.deepEqual(result.value.allowedNextStatuses, ["IN_PROGRESS", "CANCELLED"]);
+});
+
+test("createWorkOrder rejects invalid initial status overrides", async () => {
+  const harness = createHarness();
+  const service = createCreateWorkOrderService(harness.dependencies);
+
+  const result = await service.createWorkOrder({
+    payload: {
+      ...makeCreatePayload(),
+      status: "COMPLETED",
+    },
+    controls: {
+      allowInitialStatusOverride: true,
+    },
+  });
+
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    return;
+  }
+
+  assert.match(result.error.message, /initial work order status COMPLETED is not allowed from NEW/i);
+});
+
 test("listWorkOrders validates query filters and returns list-ready DTOs", async () => {
   const harness = createHarness({
     workOrders: [
@@ -115,6 +161,57 @@ test("listWorkOrders validates query filters and returns list-ready DTOs", async
   assert.equal(result.value.items.length, 1);
   assert.equal(result.value.items[0]?.id, "wo-1");
   assert.equal(result.value.items[0]?.allowedActions.canUpdateStatus, true);
+});
+
+test("listWorkOrders supports basic search against normalized search text", async () => {
+  const harness = createHarness({
+    workOrders: [
+      makeWorkOrder({
+        id: "wo-1",
+        title: "Fix rooftop leak",
+        searchText: "wo-1 fix rooftop leak jordan lee",
+      }),
+      makeWorkOrder({
+        id: "wo-2",
+        title: "Repair loading dock light",
+        searchText: "wo-2 repair loading dock light alex kim",
+      }),
+    ],
+  });
+  const service = createListWorkOrdersService(harness.dependencies);
+
+  const result = await service.listWorkOrders({
+    query: {
+      search: "dock light",
+    },
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assert.equal(result.value.items.length, 1);
+  assert.equal(result.value.items[0]?.id, "wo-2");
+});
+
+test("listWorkOrders rejects invalid due date ranges", async () => {
+  const harness = createHarness();
+  const service = createListWorkOrdersService(harness.dependencies);
+
+  const result = await service.listWorkOrders({
+    query: {
+      dueDateFrom: "2026-04-30T00:00:00.000Z",
+      dueDateTo: "2026-04-01T00:00:00.000Z",
+    },
+  });
+
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    return;
+  }
+
+  assert.match(result.error.message, /dueDateFrom must be less than or equal to dueDateTo/i);
 });
 
 test("getWorkOrderDetail returns notes and attachments as an aggregate", async () => {
@@ -182,6 +279,25 @@ test("updateWorkOrderStatus rejects invalid transitions", async () => {
   assert.match(result.error.message, /cannot transition work order from NEW to COMPLETED/i);
 });
 
+test("updateWorkOrderStatus rejects no-op transitions at the service boundary", async () => {
+  const harness = createHarness({
+    workOrders: [makeWorkOrder({ id: "wo-1", status: "OPEN" })],
+  });
+  const service = createUpdateWorkOrderStatusService(harness.dependencies);
+
+  const result = await service.updateWorkOrderStatus({
+    workOrderId: "wo-1",
+    payload: { status: "OPEN" },
+  });
+
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    return;
+  }
+
+  assert.match(result.error.message, /already in OPEN status/i);
+});
+
 test("note and attachment services validate payloads and persist metadata", async () => {
   const harness = createHarness({
     workOrders: [makeWorkOrder({ id: "wo-1" })],
@@ -203,9 +319,9 @@ test("note and attachment services validate payloads and persist metadata", asyn
     payload: {
       fileName: " estimate.pdf ",
       contentType: "application/pdf",
-      fileSizeBytes: 2048,
-      storagePath: "work-orders/wo-1/estimate.pdf",
-      uploadedByUserId: "user-2",
+      sizeBytes: 2048,
+      storagePath: "work-orders/wo-1/attachments/upload-1-estimate.pdf",
+      uploadedBy: "user-2",
     },
   });
 
@@ -240,9 +356,9 @@ test("note and attachment services reject writes to closed work orders", async (
     payload: {
       fileName: "closed.pdf",
       contentType: "application/pdf",
-      fileSizeBytes: 128,
-      storagePath: "work-orders/wo-closed/closed.pdf",
-      uploadedByUserId: "user-2",
+      sizeBytes: 128,
+      storagePath: "work-orders/wo-closed/attachments/upload-1-closed.pdf",
+      uploadedBy: "user-2",
     },
   });
 
@@ -257,6 +373,31 @@ test("note and attachment services reject writes to closed work orders", async (
     attachmentResult.error.message,
     /cannot add attachments to a closed work order/i,
   );
+});
+
+test("attachment service rejects storage paths outside the work order attachment directory", async () => {
+  const harness = createHarness({
+    workOrders: [makeWorkOrder({ id: "wo-1" })],
+  });
+  const attachmentService = createAddWorkOrderAttachmentService(harness.dependencies);
+
+  const result = await attachmentService.addWorkOrderAttachment({
+    workOrderId: "wo-1",
+    payload: {
+      fileName: "estimate.pdf",
+      contentType: "application/pdf",
+      sizeBytes: 2048,
+      storagePath: "work-orders/wo-2/attachments/upload-1-estimate.pdf",
+      uploadedBy: "user-2",
+    },
+  });
+
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    return;
+  }
+
+  assert.match(result.error.message, /storagepath must target the selected work order attachment directory/i);
 });
 
 test("helper utilities stay stable for number generation and search normalization", () => {
@@ -449,6 +590,13 @@ function createInMemoryWorkOrderRepository(
     async list(filters: WorkOrderRepositoryListFilters = {}) {
       return [...store.values()]
         .filter((workOrder) =>
+          filters.search
+            ? workOrder.searchText
+                .toLowerCase()
+                .includes(filters.search.trim().toLowerCase())
+            : true,
+        )
+        .filter((workOrder) =>
           filters.status ? workOrder.status === filters.status : true,
         )
         .filter((workOrder) =>
@@ -513,9 +661,9 @@ function createInMemoryAttachmentRepository(
         workOrderId: input.workOrderId,
         fileName: (input.data as CreateWorkOrderAttachmentMetadataDto).fileName.trim(),
         contentType: input.data.contentType,
-        fileSizeBytes: input.data.fileSizeBytes,
+        sizeBytes: input.data.sizeBytes,
         storagePath: input.data.storagePath,
-        uploadedByUserId: input.data.uploadedByUserId,
+        uploadedBy: input.data.uploadedBy,
         createdAt: input.now ?? "2026-04-14T00:00:00.000Z",
       });
       store.set(
@@ -601,9 +749,9 @@ function makeAttachment(
     workOrderId: "wo-1",
     fileName: "estimate.pdf",
     contentType: "application/pdf",
-    fileSizeBytes: 2048,
-    storagePath: "work-orders/wo-1/estimate.pdf",
-    uploadedByUserId: "user-1",
+    sizeBytes: 2048,
+    storagePath: "work-orders/wo-1/attachments/upload-1-estimate.pdf",
+    uploadedBy: "user-1",
     createdAt: "2026-04-14T00:00:00.000Z",
     ...overrides,
   };

@@ -6,10 +6,13 @@ export const FIRESTORE_COLLECTIONS = {
   locations: "locations",
   contractorOrganizations: "contractorOrganizations",
   workOrders: "workOrders",
+  contractorQuotes: "contractorQuotes",
+  clientQuotes: "clientQuotes",
   quotes: "quotes",
   invoices: "invoices",
   assignments: "assignments",
   activityLogs: "activityLogs",
+  internalNotifications: "internalNotifications",
 } as const;
 
 export type FirestoreCollectionName =
@@ -26,6 +29,10 @@ export const FIRESTORE_COLLECTION_STRATEGY = {
     "Top-level contractor organization documents for assignment and vendor reporting.",
   workOrders:
     "Top-level work order documents. Critical workflow entities are not nested.",
+  contractorQuotes:
+    "Top-level contractor quote documents keyed by workOrderId and contractorOrganizationId for quote intake and review.",
+  clientQuotes:
+    "Top-level client-facing quote documents keyed by workOrderId for client approval workflow and action gating.",
   quotes:
     "Top-level quote documents keyed by workOrderId and contractorOrganizationId for queues.",
   invoices:
@@ -34,6 +41,8 @@ export const FIRESTORE_COLLECTION_STRATEGY = {
     "Top-level assignment documents keyed by workOrderId and contractorOrganizationId.",
   activityLogs:
     "Top-level immutable activity records keyed by workOrderId for audit/reporting.",
+  internalNotifications:
+    "Top-level internal notification records keyed by recipient user and entity for operational alerts.",
 } as const satisfies Record<keyof typeof FIRESTORE_COLLECTIONS, string>;
 
 export const FIRESTORE_ID_CONVENTIONS = {

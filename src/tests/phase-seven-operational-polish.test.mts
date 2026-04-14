@@ -31,9 +31,9 @@ describe("phase 7 derived operational flags", () => {
     assert.equal(workOrder.status, "in_progress");
   });
 
-  test("derives overdue issued invoice from due date", () => {
+  test("derives overdue sent invoice from due date", () => {
     const invoice = makeInvoice({
-      status: "issued",
+      status: "sent",
       dueDate: "2026-04-05",
     });
 
@@ -44,7 +44,7 @@ describe("phase 7 derived operational flags", () => {
       ).isOverdue,
       true,
     );
-    assert.equal(invoice.status, "issued");
+    assert.equal(invoice.status, "sent");
   });
 
   test("derives quote blocking and revision states from the current quote", () => {

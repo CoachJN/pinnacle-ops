@@ -94,7 +94,8 @@ export type ContractorAssignmentView = Pick<
   | "contractorOrganizationId"
   | "status"
   | "assignedAt"
-  | "respondedAt"
+  | "acceptedAt"
+  | "declinedAt"
   | "completedAt"
   | "notes"
   | "recordStatus"
@@ -460,7 +461,8 @@ export function exposeAssignments(
         contractorOrganizationId: assignment.contractorOrganizationId,
         status: assignment.status,
         assignedAt: assignment.assignedAt,
-        respondedAt: assignment.respondedAt,
+        acceptedAt: assignment.acceptedAt,
+        declinedAt: assignment.declinedAt,
         completedAt: assignment.completedAt,
         notes: assignment.notes,
         recordStatus: assignment.recordStatus,

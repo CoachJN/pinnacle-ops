@@ -4,6 +4,8 @@ type ServerEnvKey =
   | "NODE_ENV"
   | "FIREBASE_PROJECT_ID"
   | "NEXT_PUBLIC_FIREBASE_PROJECT_ID"
+  | "FIREBASE_STORAGE_BUCKET"
+  | "NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET"
   | "FIREBASE_CLIENT_EMAIL"
   | "FIREBASE_PRIVATE_KEY"
   | "FIREBASE_DATABASE_URL"
@@ -25,6 +27,9 @@ export const serverEnv = {
   firebaseProjectId:
     readServerEnv("FIREBASE_PROJECT_ID") ??
     readServerEnv("NEXT_PUBLIC_FIREBASE_PROJECT_ID"),
+  firebaseStorageBucket:
+    readServerEnv("FIREBASE_STORAGE_BUCKET") ??
+    readServerEnv("NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET"),
   firebaseClientEmail: readServerEnv("FIREBASE_CLIENT_EMAIL"),
   firebasePrivateKey: readServerEnv("FIREBASE_PRIVATE_KEY"),
   firebaseDatabaseURL: readServerEnv("FIREBASE_DATABASE_URL"),

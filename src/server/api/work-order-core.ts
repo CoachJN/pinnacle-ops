@@ -1,9 +1,9 @@
 import "server-only";
 
-import type { NextRequest } from "next/server";
-import type { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { AppError } from "@/lib/errors/app-error";
 import { ERROR_CODES } from "@/lib/errors/codes";
+import { createWorkOrderAttachmentReadUrl } from "@/lib/work-orders/attachment-storage.server";
 import type {
   WorkOrder,
   WorkOrderAttachment,
@@ -14,18 +14,29 @@ import type {
   WorkOrderStatus,
 } from "@/modules/work-orders";
 import {
+  buildWorkOrderDetailAggregate,
   createAddWorkOrderAttachmentService,
   createAddWorkOrderNoteService,
   createCreateWorkOrderService,
   createGetWorkOrderDetailService,
   createListWorkOrdersService,
-  createUpdateWorkOrderStatusService,
   createWorkOrderServiceDependencies,
   type WorkOrderDetailDto,
   type WorkOrderListItemDto,
 } from "@/lib/services/work-orders";
+import {
+  getAllowedWorkOrderActions,
+  transitionWorkOrderStatusWithAssignmentChecks,
+} from "@/lib/services/work-orders/assignment-workflow.service";
 import { workOrderPolicy } from "@/lib/access-policy";
 import { createAccessDeniedError } from "@/server/authorization";
+import {
+  canAddWorkOrderAttachment,
+  canAddWorkOrderNote,
+  canCreateWorkOrder,
+  canUpdateWorkOrderStatus,
+  type WorkOrderPermissionTarget,
+} from "@/server/authorization/work-order.permissions";
 import {
   getWorkOrderApiContext,
   jsonOk,
@@ -36,12 +47,15 @@ import {
   type WorkOrderApiContext,
 } from "@/server/api/work-orders";
 import type { ServiceResult } from "@/server/services";
+import { USER_ROLES } from "@/types/permissions";
 
 const PHASE_THREE_STATUSES = new Set<WorkOrderStatus>([
   "NEW",
   "OPEN",
+  "ASSIGNED",
   "IN_PROGRESS",
   "COMPLETED",
+  "READY_FOR_INVOICING",
   "CANCELLED",
   "CLOSED",
 ]);
@@ -59,7 +73,6 @@ interface PhaseThreeServices {
   create: ReturnType<typeof createCreateWorkOrderService>;
   detail: ReturnType<typeof createGetWorkOrderDetailService>;
   list: ReturnType<typeof createListWorkOrdersService>;
-  updateStatus: ReturnType<typeof createUpdateWorkOrderStatusService>;
 }
 
 interface PhaseThreeApiContext extends WorkOrderApiContext {
@@ -81,6 +94,71 @@ interface RelatedSummary {
     code?: string;
     clientOrganizationId?: string;
   };
+}
+
+interface SerializedWorkOrderNote {
+  id: string;
+  workOrderId: string;
+  body: string;
+  createdByUserId: string;
+  authorDisplayName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface SerializedWorkOrderAttachment {
+  id: string;
+  workOrderId: string;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+  storagePath: string;
+  uploadedBy: string;
+  uploadedByDisplayName: string;
+  createdAt: string;
+  accessPath: string;
+}
+
+interface SerializedWorkOrderAssignment {
+  id: string;
+  workOrderId: string;
+  contractorOrganizationId: string | null;
+  assigneeType: "internal" | "contractor";
+  assigneeUserId: string;
+  assigneeDisplayName: string;
+  assignedByUserId: string;
+  assignedByDisplayName: string;
+  status: string;
+  scheduledDate: string | null;
+  timeWindowStart: string | null;
+  timeWindowEnd: string | null;
+  assignedAt: string;
+  acceptedAt: string | null;
+  declinedAt: string | null;
+  completedAt: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface SerializedAssignableUser {
+  id: string;
+  label: string;
+  role: string;
+}
+
+interface SerializedInternalAssignees {
+  coordinator: SerializedAssignableUser | null;
+  manager: SerializedAssignableUser | null;
+}
+
+interface SerializedAssignableContractor {
+  id: string;
+  label: string;
+  status: string;
+  serviceCategories: string[];
+  isAssignable: boolean;
+  reason: string | null;
 }
 
 export interface WorkOrderListFilters {
@@ -108,7 +186,6 @@ export async function getPhaseThreeWorkOrderApiContext(
         create: createCreateWorkOrderService(dependencies),
         detail: createGetWorkOrderDetailService(dependencies),
         list: createListWorkOrdersService(dependencies),
-        updateStatus: createUpdateWorkOrderStatusService(dependencies),
       },
     },
   };
@@ -178,7 +255,9 @@ export async function listPhaseThreeWorkOrders(
   );
 
   return jsonData({
-    workOrders: readableWorkOrders.map(serializeWorkOrderListItem),
+    workOrders: readableWorkOrders.map((workOrder) =>
+      serializeWorkOrderListItem(context, workOrder),
+    ),
   });
 }
 
@@ -186,14 +265,8 @@ export async function getPhaseThreeWorkOrderDetail(
   context: PhaseThreeApiContext,
   workOrderId: string,
 ): Promise<NextResponse> {
-  const detail = unwrap(
-    await context.phaseThree.services.detail.getWorkOrderDetail({ workOrderId }),
-  );
-
-  await assertCanReadWorkOrder(context, detail);
-
   return jsonData({
-    workOrder: await serializeWorkOrderDetail(context, detail),
+    workOrder: await getSerializedPhaseThreeWorkOrderDetail(context, workOrderId),
   });
 }
 
@@ -205,20 +278,34 @@ export async function updatePhaseThreeWorkOrderStatus(
   const existing = unwrap(
     await context.phaseThree.services.detail.getWorkOrderDetail({ workOrderId }),
   );
-  await assertCanTransitionWorkOrder(context, existing);
 
   const payload = await parseJsonObject(request);
-  const updated = unwrap(
-    await context.phaseThree.services.updateStatus.updateWorkOrderStatus({
+  const nextStatus = readRequiredStatus(payload.status);
+  await assertCanTransitionWorkOrder(context, existing, nextStatus);
+  const updated = unwrap(await transitionWorkOrderStatusWithAssignmentChecks(
+    {
+      activityLogs: context.services.activityLogs,
+      assignments: context.repositories.assignments,
+      workOrders: context.phaseThree.dependencies.workOrders,
+    },
+    context.actor,
+    {
+      ...context.audit,
       workOrderId,
-      payload: normalizeStatusPayload(payload),
-    }),
-  );
+      payload: {
+        ...payload,
+        status: nextStatus,
+      },
+    },
+  ));
 
   revalidateWorkOrderPaths(updated.id);
 
   return jsonData({
-    workOrder: await serializeWorkOrderDetail(context, updated),
+    workOrder: await serializeWorkOrderDetail(
+      context,
+      await buildWorkOrderDetailAggregate(context.phaseThree.dependencies, updated),
+    ),
   });
 }
 
@@ -232,7 +319,7 @@ export async function listPhaseThreeWorkOrderNotes(
   await assertCanReadWorkOrder(context, detail);
 
   return jsonData({
-    notes: detail.notes.map(serializeNote),
+    notes: await serializeNotes(context, detail.notes),
   });
 }
 
@@ -244,7 +331,7 @@ export async function addPhaseThreeWorkOrderNote(
   const existing = unwrap(
     await context.phaseThree.services.detail.getWorkOrderDetail({ workOrderId }),
   );
-  await assertCanUpdateWorkOrder(context, existing);
+  await assertCanAddNoteToWorkOrder(context, existing);
 
   const payload = await parseJsonObject(request);
   const created = unwrap(
@@ -261,7 +348,7 @@ export async function addPhaseThreeWorkOrderNote(
 
   return jsonData(
     {
-      note: serializeNote(created),
+      note: await serializeNote(context, created),
     },
     201,
   );
@@ -277,7 +364,7 @@ export async function listPhaseThreeWorkOrderAttachments(
   await assertCanReadWorkOrder(context, detail);
 
   return jsonData({
-    attachments: detail.attachments.map(serializeAttachment),
+    attachments: await serializeAttachments(context, detail.attachments),
   });
 }
 
@@ -289,7 +376,7 @@ export async function addPhaseThreeWorkOrderAttachment(
   const existing = unwrap(
     await context.phaseThree.services.detail.getWorkOrderDetail({ workOrderId }),
   );
-  await assertCanUpdateWorkOrder(context, existing);
+  await assertCanAddAttachmentToWorkOrder(context, existing);
 
   const payload = await parseJsonObject(request);
   const created = unwrap(
@@ -297,7 +384,7 @@ export async function addPhaseThreeWorkOrderAttachment(
       workOrderId,
       payload: {
         ...payload,
-        uploadedByUserId: context.actor.userId,
+        uploadedBy: context.actor.userId,
       },
     }),
   );
@@ -310,6 +397,32 @@ export async function addPhaseThreeWorkOrderAttachment(
     },
     201,
   );
+}
+
+export async function accessPhaseThreeWorkOrderAttachmentContent(
+  context: PhaseThreeApiContext,
+  workOrderId: string,
+  attachmentId: string,
+): Promise<NextResponse> {
+  const detail = unwrap(
+    await context.phaseThree.services.detail.getWorkOrderDetail({ workOrderId }),
+  );
+  await assertCanReadWorkOrder(context, detail);
+
+  const attachment = detail.attachments.find((item) => item.id === attachmentId);
+  if (!attachment) {
+    throw new AppError({
+      code: ERROR_CODES.NotFound,
+      message: "Attachment could not be found.",
+    });
+  }
+
+  const signedUrl = await createWorkOrderAttachmentReadUrl({
+    fileName: attachment.fileName,
+    storagePath: attachment.storagePath,
+  });
+
+  return NextResponse.redirect(signedUrl);
 }
 
 function jsonData<T>(data: T, status = 200): NextResponse {
@@ -346,22 +459,13 @@ function parseListFilters(request: NextRequest): WorkOrderListFilters {
   });
 }
 
-function normalizeStatusPayload(
-  payload: Record<string, unknown>,
-): Record<string, unknown> {
-  return {
-    ...payload,
-    status: readRequiredStatus(payload.status),
-  };
-}
-
 function assertCanCreateWorkOrder(
   context: PhaseThreeApiContext,
   clientOrganizationId: string,
   locationId: string,
 ): void {
   const organizationId = context.actor.scope.organizationId;
-  const allowed = workOrderPolicy.canCreate(context.actor, {
+  const allowed = canCreateWorkOrder(context.actor, {
     organizationId,
     clientOrganizationId,
     locationId,
@@ -384,27 +488,22 @@ async function assertCanReadWorkOrder(
   );
   const allowed = workOrderPolicy.canRead(
     context.actor,
-    permissionTarget,
     {
-      assignments: assignments.items.map((assignment) => ({
-        organizationId: assignment.organizationId,
-        workOrderId: assignment.workOrderId,
-        contractorOrganizationId: assignment.contractorOrganizationId,
-      })),
+      id: permissionTarget.id,
+      organizationId: permissionTarget.organizationId,
+      clientOrganizationId: permissionTarget.clientOrganizationId,
+      locationId: permissionTarget.locationId,
+    },
+    {
+      assignments: assignments.items
+        .filter((assignment) => Boolean(assignment.contractorOrganizationId))
+        .map((assignment) => ({
+          organizationId: assignment.organizationId,
+          workOrderId: assignment.workOrderId,
+          contractorOrganizationId: assignment.contractorOrganizationId!,
+        })),
     },
   );
-
-  if (!allowed) {
-    throw createAccessDeniedError();
-  }
-}
-
-async function assertCanUpdateWorkOrder(
-  context: PhaseThreeApiContext,
-  workOrder: WorkOrder | WorkOrderDetail | WorkOrderListItem,
-): Promise<void> {
-  const permissionTarget = await buildPermissionTarget(context, workOrder);
-  const allowed = workOrderPolicy.canUpdate(context.actor, permissionTarget);
 
   if (!allowed) {
     throw createAccessDeniedError();
@@ -414,9 +513,42 @@ async function assertCanUpdateWorkOrder(
 async function assertCanTransitionWorkOrder(
   context: PhaseThreeApiContext,
   workOrder: WorkOrder | WorkOrderDetail | WorkOrderListItem,
+  nextStatus: WorkOrderStatus,
 ): Promise<void> {
   const permissionTarget = await buildPermissionTarget(context, workOrder);
-  const allowed = workOrderPolicy.canTransition(context.actor, permissionTarget);
+  const allowed = canUpdateWorkOrderStatus(
+    context.actor,
+    permissionTarget,
+    nextStatus,
+  );
+
+  if (!allowed) {
+    throw createAccessDeniedError();
+  }
+}
+
+async function assertCanAddNoteToWorkOrder(
+  context: PhaseThreeApiContext,
+  workOrder: WorkOrder | WorkOrderDetail | WorkOrderListItem,
+): Promise<void> {
+  const allowed = canAddWorkOrderNote(
+    context.actor,
+    await buildPermissionTarget(context, workOrder),
+  );
+
+  if (!allowed) {
+    throw createAccessDeniedError();
+  }
+}
+
+async function assertCanAddAttachmentToWorkOrder(
+  context: PhaseThreeApiContext,
+  workOrder: WorkOrder | WorkOrderDetail | WorkOrderListItem,
+): Promise<void> {
+  const allowed = canAddWorkOrderAttachment(
+    context.actor,
+    await buildPermissionTarget(context, workOrder),
+  );
 
   if (!allowed) {
     throw createAccessDeniedError();
@@ -490,7 +622,7 @@ async function filterReadableWorkOrders(
 async function buildPermissionTarget(
   context: PhaseThreeApiContext,
   workOrder: WorkOrder | WorkOrderDetail | WorkOrderListItem,
-) {
+): Promise<WorkOrderPermissionTarget & { id: string; status: WorkOrderStatus }> {
   const clientOrganization =
     await context.phaseThree.dependencies.clientOrganizations.getById(
       workOrder.clientOrganizationId,
@@ -514,50 +646,266 @@ async function buildPermissionTarget(
     organizationId: clientOrganization.organizationId,
     clientOrganizationId: workOrder.clientOrganizationId,
     locationId: workOrder.locationId,
+    status: workOrder.status,
+    requestedByUserId:
+      "createdByUserId" in workOrder ? workOrder.createdByUserId : undefined,
+    assignedCoordinatorUserId: workOrder.assignedCoordinatorUserId,
+    assignedManagerUserId: workOrder.assignedManagerUserId,
   };
+}
+
+export async function getSerializedPhaseThreeWorkOrderDetail(
+  context: PhaseThreeApiContext,
+  workOrderId: string,
+) {
+  const detail = unwrap(
+    await context.phaseThree.services.detail.getWorkOrderDetail({ workOrderId }),
+  );
+
+  await assertCanReadWorkOrder(context, detail);
+
+  return serializeWorkOrderDetail(context, detail);
 }
 
 async function serializeWorkOrderDetail(
   context: PhaseThreeApiContext,
   workOrder: WorkOrderDetailDto,
 ) {
+  if (context.actor.actorType === "client") {
+    return {
+      id: workOrder.id,
+      workOrderNumber: workOrder.workOrderNumber,
+      title: workOrder.title,
+      description: workOrder.description,
+      clientOrganizationId: workOrder.clientOrganizationId,
+      locationId: workOrder.locationId,
+      status: workOrder.status,
+      priority: workOrder.priority,
+      category: workOrder.category,
+      requestedByName: workOrder.requestedByName,
+      requestedByEmail: workOrder.requestedByEmail,
+      requestedByPhone: workOrder.requestedByPhone,
+      dueDate: workOrder.dueDate,
+      createdAt: workOrder.createdAt,
+      updatedAt: workOrder.updatedAt,
+      closedAt: workOrder.closedAt,
+      related: await buildRelatedSummary(context, workOrder),
+      allowedTransitions: [],
+      allowedActions: {
+        canUpdateStatus: false,
+        canAddNote: false,
+        canAddAttachment: false,
+        canAssign: false,
+        canReassign: false,
+        canAcceptAssignment: false,
+        canDeclineAssignment: false,
+        canCompleteAssignment: false,
+      },
+    };
+  }
+
+  const assignmentsResult = await context.repositories.assignments.listByWorkOrderId(
+    workOrder.id,
+  );
+  const activeAssignment = assignmentsResult.items.find((assignment) =>
+    assignment.status === "assigned" || assignment.status === "accepted"
+  ) ?? null;
+  const actionAvailability = getAllowedWorkOrderActions({
+    actor: context.actor,
+    workOrder,
+    activeAssignment: activeAssignment
+      ? {
+          id: activeAssignment.id,
+          workOrderId: activeAssignment.workOrderId,
+          assigneeType: activeAssignment.assigneeType,
+          assigneeUserId: activeAssignment.assigneeUserId,
+          assigneeOrganizationId: activeAssignment.assigneeOrganizationId,
+          assignedByUserId: activeAssignment.assignedByUserId,
+          status: activeAssignment.status,
+          scheduledDate: activeAssignment.scheduledDate,
+          timeWindowStart: activeAssignment.timeWindowStart,
+          timeWindowEnd: activeAssignment.timeWindowEnd,
+          assignedAt: activeAssignment.assignedAt,
+          acceptedAt: activeAssignment.acceptedAt,
+          declinedAt: activeAssignment.declinedAt,
+          completedAt: activeAssignment.completedAt,
+          notes: activeAssignment.notes,
+          createdAt: activeAssignment.createdAt,
+          updatedAt: activeAssignment.updatedAt,
+        }
+      : null,
+  });
   return {
     ...workOrder,
-    allowedTransitions: workOrder.allowedNextStatuses,
+    allowedTransitions: actionAvailability.availableStatusTransitions,
+    activeAssignmentId: activeAssignment?.id ?? null,
+    activeAssignment: activeAssignment
+      ? await serializeAssignment(context, activeAssignment)
+      : null,
+    assignments: await serializeAssignments(context, assignmentsResult.items),
+    internalAssignees: await resolveInternalAssignees(context, workOrder),
+    assignableInternalUsers: await resolveAssignableInternalUsers(context),
+    assignableContractors:
+      context.actor.actorType === "internal"
+        ? unwrap(
+            await context.services.assignments.listAssignableContractors({
+              organizationId: context.actor.scope.organizationId,
+              workOrderCategory: workOrder.category,
+            }),
+          )
+        : [],
     related: await buildRelatedSummary(context, workOrder),
-    notes: workOrder.notes.map(serializeNote),
-    attachments: workOrder.attachments.map(serializeAttachment),
+    notes: await serializeNotes(context, workOrder.notes),
+    attachments: await serializeAttachments(context, workOrder.attachments),
+    allowedActions: actionAvailability,
   };
 }
 
-function serializeWorkOrderListItem(workOrder: WorkOrderListItemDto) {
+function serializeClientWorkOrderListItem(workOrder: WorkOrderListItemDto) {
+  return {
+    id: workOrder.id,
+    workOrderNumber: workOrder.workOrderNumber,
+    title: workOrder.title,
+    clientOrganizationId: workOrder.clientOrganizationId,
+    locationId: workOrder.locationId,
+    status: workOrder.status,
+    priority: workOrder.priority,
+    category: workOrder.category,
+    dueDate: workOrder.dueDate,
+    createdAt: workOrder.createdAt,
+    updatedAt: workOrder.updatedAt,
+  };
+}
+
+function serializeWorkOrderListItem(
+  context: PhaseThreeApiContext,
+  workOrder: WorkOrderListItemDto,
+) {
+  if (context.actor.actorType === "client") {
+    return serializeClientWorkOrderListItem(workOrder);
+  }
+
+  return serializeWorkOrderListItemInternal(workOrder);
+}
+
+function serializeWorkOrderListItemInternal(workOrder: WorkOrderListItemDto) {
   return {
     ...workOrder,
     allowedTransitions: workOrder.allowedNextStatuses,
   };
 }
 
-function serializeNote(note: WorkOrderNote) {
+async function serializeNotes(
+  context: PhaseThreeApiContext,
+  notes: readonly WorkOrderNote[],
+): Promise<SerializedWorkOrderNote[]> {
+  const authorDisplayNames = await resolveNoteAuthorDisplayNames(context, notes);
+
+  return notes.map((note) => serializeNoteFromDisplayName(note, authorDisplayNames));
+}
+
+async function serializeNote(
+  context: PhaseThreeApiContext,
+  note: WorkOrderNote,
+): Promise<SerializedWorkOrderNote> {
+  const authorDisplayNames = await resolveNoteAuthorDisplayNames(context, [note]);
+  return serializeNoteFromDisplayName(note, authorDisplayNames);
+}
+
+async function serializeAttachments(
+  context: PhaseThreeApiContext,
+  attachments: readonly WorkOrderAttachment[],
+): Promise<SerializedWorkOrderAttachment[]> {
+  const uploaderDisplayNames = await resolveAttachmentUploaderDisplayNames(
+    context,
+    attachments,
+  );
+
+  return attachments.map((attachment) =>
+    serializeAttachmentFromDisplayName(attachment, uploaderDisplayNames),
+  );
+}
+
+async function serializeAssignments(
+  context: PhaseThreeApiContext,
+  assignments: readonly import("@/server/repositories").Assignment[],
+): Promise<SerializedWorkOrderAssignment[]> {
+  const displayNames = await resolveAssignmentDisplayNames(context, assignments);
+
+  return assignments.map((assignment) => ({
+    id: assignment.id,
+    workOrderId: assignment.workOrderId,
+    contractorOrganizationId: assignment.contractorOrganizationId,
+    assigneeType: assignment.assigneeType,
+    assigneeUserId: assignment.assigneeUserId,
+    assigneeDisplayName:
+      assignment.contractorSnapshot?.name ??
+      displayNames.get(assignment.assigneeUserId) ??
+      assignment.assigneeUserId,
+    assignedByUserId: assignment.assignedByUserId,
+    assignedByDisplayName:
+      displayNames.get(assignment.assignedByUserId) ?? assignment.assignedByUserId,
+    status: assignment.status,
+    scheduledDate: assignment.scheduledDate,
+    timeWindowStart: assignment.timeWindowStart,
+    timeWindowEnd: assignment.timeWindowEnd,
+    assignedAt: assignment.assignedAt,
+    acceptedAt: assignment.acceptedAt,
+    declinedAt: assignment.declinedAt,
+    completedAt: assignment.completedAt,
+    notes: assignment.notes,
+    createdAt: assignment.createdAt,
+    updatedAt: assignment.updatedAt,
+  }));
+}
+
+async function serializeAssignment(
+  context: PhaseThreeApiContext,
+  assignment: import("@/server/repositories").Assignment,
+): Promise<SerializedWorkOrderAssignment> {
+  const [serialized] = await serializeAssignments(context, [assignment]);
+  return serialized;
+}
+
+function serializeNoteFromDisplayName(
+  note: WorkOrderNote,
+  authorDisplayNames: ReadonlyMap<string, string>,
+): SerializedWorkOrderNote {
   return {
     id: note.id,
     workOrderId: note.workOrderId,
     body: note.body,
     createdByUserId: note.createdByUserId,
+    authorDisplayName:
+      authorDisplayNames.get(note.createdByUserId) ?? note.createdByUserId,
     createdAt: note.createdAt,
     updatedAt: note.updatedAt,
   };
 }
 
 function serializeAttachment(attachment: WorkOrderAttachment) {
+  return serializeAttachmentFromDisplayName(
+    attachment,
+    new Map([[attachment.uploadedBy, attachment.uploadedBy]]),
+  );
+}
+
+function serializeAttachmentFromDisplayName(
+  attachment: WorkOrderAttachment,
+  uploaderDisplayNames: ReadonlyMap<string, string>,
+): SerializedWorkOrderAttachment {
   return {
     id: attachment.id,
     workOrderId: attachment.workOrderId,
     fileName: attachment.fileName,
     contentType: attachment.contentType,
-    fileSizeBytes: attachment.fileSizeBytes,
+    sizeBytes: attachment.sizeBytes,
     storagePath: attachment.storagePath,
-    uploadedByUserId: attachment.uploadedByUserId,
+    uploadedBy: attachment.uploadedBy,
+    uploadedByDisplayName:
+      uploaderDisplayNames.get(attachment.uploadedBy) ?? attachment.uploadedBy,
     createdAt: attachment.createdAt,
+    accessPath: `/api/work-orders/${attachment.workOrderId}/attachments/${attachment.id}/content`,
   };
 }
 
@@ -587,6 +935,138 @@ async function buildRelatedSummary(
   };
 }
 
+async function resolveNoteAuthorDisplayNames(
+  context: PhaseThreeApiContext,
+  notes: readonly WorkOrderNote[],
+): Promise<Map<string, string>> {
+  const uniqueUserIds = Array.from(
+    new Set(notes.map((note) => note.createdByUserId.trim()).filter(Boolean)),
+  );
+
+  const authorEntries = await Promise.all(
+    uniqueUserIds.map(async (userId) => {
+      const profile = await context.repositories.userProfiles.getById(userId);
+      const displayName = profile?.displayName?.trim() || profile?.email?.trim() || userId;
+      return [userId, displayName] as const;
+    }),
+  );
+
+  return new Map(authorEntries);
+}
+
+async function resolveAttachmentUploaderDisplayNames(
+  context: PhaseThreeApiContext,
+  attachments: readonly WorkOrderAttachment[],
+): Promise<Map<string, string>> {
+  const uniqueUserIds = Array.from(
+    new Set(attachments.map((attachment) => attachment.uploadedBy.trim()).filter(Boolean)),
+  );
+
+  const uploaderEntries = await Promise.all(
+    uniqueUserIds.map(async (userId) => {
+      const profile = await context.repositories.userProfiles.getById(userId);
+      const displayName = profile?.displayName?.trim() || profile?.email?.trim() || userId;
+      return [userId, displayName] as const;
+    }),
+  );
+
+  return new Map(uploaderEntries);
+}
+
+async function resolveAssignmentDisplayNames(
+  context: PhaseThreeApiContext,
+  assignments: readonly import("@/server/repositories").Assignment[],
+): Promise<Map<string, string>> {
+  const uniqueUserIds = Array.from(
+    new Set(
+      assignments.flatMap((assignment) => [
+        assignment.assigneeUserId.trim(),
+        assignment.assignedByUserId.trim(),
+      ]).filter(Boolean),
+    ),
+  );
+
+  const entries = await Promise.all(
+    uniqueUserIds.map(async (userId) => {
+      const profile = await context.repositories.userProfiles.getById(userId);
+      const displayName = profile?.displayName?.trim() || profile?.email?.trim() || userId;
+      return [userId, displayName] as const;
+    }),
+  );
+
+  return new Map(entries);
+}
+
+async function resolveAssignableInternalUsers(
+  context: PhaseThreeApiContext,
+): Promise<SerializedAssignableUser[]> {
+  if (context.actor.actorType !== "internal") {
+    return [];
+  }
+
+  const profiles = await context.repositories.userProfiles.listByOrganizationId(
+    context.actor.scope.organizationId,
+    { limit: 200 },
+  );
+
+  return profiles.items
+    .filter((profile) => {
+      if (profile.status !== "active" || profile.isDeleted) {
+        return false;
+      }
+
+      return (
+        profile.role === USER_ROLES.Coordinator ||
+        profile.role === USER_ROLES.Manager ||
+        profile.role === USER_ROLES.Owner
+      );
+    })
+    .map((profile) => ({
+      id: profile.id,
+      label: profile.displayName?.trim() || profile.email,
+      role: profile.role,
+    }));
+}
+
+async function resolveInternalAssignees(
+  context: PhaseThreeApiContext,
+  workOrder: WorkOrderDetailDto,
+): Promise<SerializedInternalAssignees> {
+  const [coordinator, manager] = await Promise.all([
+    resolveInternalAssignee(context, workOrder.assignedCoordinatorUserId),
+    resolveInternalAssignee(context, workOrder.assignedManagerUserId),
+  ]);
+
+  return {
+    coordinator,
+    manager,
+  };
+}
+
+async function resolveInternalAssignee(
+  context: PhaseThreeApiContext,
+  userId: string | null,
+): Promise<SerializedAssignableUser | null> {
+  if (!userId) {
+    return null;
+  }
+
+  const profile = await context.repositories.userProfiles.getById(userId);
+  if (!profile || profile.isDeleted) {
+    return {
+      id: userId,
+      label: userId,
+      role: "unknown",
+    };
+  }
+
+  return {
+    id: profile.id,
+    label: profile.displayName?.trim() || profile.email,
+    role: profile.role,
+  };
+}
+
 function readOptionalStatus(value: string | null): WorkOrderStatus | undefined {
   if (value === null) {
     return undefined;
@@ -594,7 +1074,9 @@ function readOptionalStatus(value: string | null): WorkOrderStatus | undefined {
 
   const normalized = value.trim().toUpperCase() as WorkOrderStatus;
   if (!PHASE_THREE_STATUSES.has(normalized)) {
-    throw validationError("status must be one of NEW, OPEN, IN_PROGRESS, COMPLETED, CANCELLED, or CLOSED.");
+    throw validationError(
+      "status must be one of NEW, OPEN, ASSIGNED, IN_PROGRESS, COMPLETED, READY_FOR_INVOICING, CANCELLED, or CLOSED.",
+    );
   }
 
   return normalized;
@@ -607,7 +1089,9 @@ function readRequiredStatus(value: unknown): WorkOrderStatus {
 
   const normalized = value.trim().toUpperCase() as WorkOrderStatus;
   if (!PHASE_THREE_STATUSES.has(normalized)) {
-    throw validationError("status must be one of NEW, OPEN, IN_PROGRESS, COMPLETED, CANCELLED, or CLOSED.");
+    throw validationError(
+      "status must be one of NEW, OPEN, ASSIGNED, IN_PROGRESS, COMPLETED, READY_FOR_INVOICING, CANCELLED, or CLOSED.",
+    );
   }
 
   return normalized;

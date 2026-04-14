@@ -5,6 +5,7 @@ import type {
   FirestoreContractorOrganizationStatus,
   FirestoreRepositories,
 } from "@/server/repositories";
+import { filterContractors } from "@/modules/contractors";
 import type { EntityId } from "@/types/entity";
 import { conflictError, notFoundError, validationError } from "./errors";
 import {
@@ -45,6 +46,8 @@ export function createContractorService(
 
 export interface ListContractorOrganizationsInput {
   organizationId: EntityId;
+  status?: FirestoreContractorOrganizationStatus;
+  search?: string;
   limit?: number;
 }
 
@@ -56,6 +59,7 @@ export interface CreateContractorOrganizationInput extends ServiceAuditContext {
   primaryContactEmail?: string | null;
   primaryContactPhone?: string | null;
   serviceCategories?: string[];
+  serviceAreas?: string[];
   notes?: string | null;
 }
 
@@ -68,6 +72,7 @@ export interface UpdateContractorOrganizationInput extends ServiceAuditContext {
   primaryContactEmail?: string | null;
   primaryContactPhone?: string | null;
   serviceCategories?: string[];
+  serviceAreas?: string[];
   notes?: string | null;
 }
 
@@ -76,12 +81,19 @@ export interface ArchiveContractorOrganizationInput extends ServiceAuditContext 
 }
 
 class FirestoreContractorService implements ContractorService {
+  private readonly repositories: Pick<
+    FirestoreRepositories,
+    "contractorOrganizations" | "workOrders"
+  >;
+
   constructor(
-    private readonly repositories: Pick<
+    repositories: Pick<
       FirestoreRepositories,
       "contractorOrganizations" | "workOrders"
     >,
-  ) {}
+  ) {
+    this.repositories = repositories;
+  }
 
   async listContractorOrganizations(
     input: ListContractorOrganizationsInput,
@@ -91,7 +103,20 @@ class FirestoreContractorService implements ContractorService {
         input.organizationId,
         { limit: input.limit },
       );
-    return serviceOk(contractors.items);
+    return serviceOk(
+      filterContractors(
+        contractors.items.map((contractor) => ({
+          ...contractor,
+          company: contractor.displayName,
+          email: contractor.primaryContactEmail,
+          phone: contractor.primaryContactPhone,
+        })),
+        {
+          status: input.status,
+          search: input.search,
+        },
+      ).map(({ company: _company, email: _email, phone: _phone, ...contractor }) => contractor),
+    );
   }
 
   async getContractorOrganization(
@@ -132,6 +157,7 @@ class FirestoreContractorService implements ContractorService {
       primaryContactEmail: normalizeNullableText(input.primaryContactEmail),
       primaryContactPhone: normalizeNullableText(input.primaryContactPhone),
       serviceCategories: normalizeServiceCategories(input.serviceCategories),
+      serviceAreas: normalizeStringList(input.serviceAreas),
       notes: normalizeNullableText(input.notes),
     };
 
@@ -185,6 +211,10 @@ class FirestoreContractorService implements ContractorService {
           input.serviceCategories === undefined
             ? existing.serviceCategories
             : normalizeServiceCategories(input.serviceCategories),
+        serviceAreas:
+          input.serviceAreas === undefined
+            ? existing.serviceAreas
+            : normalizeStringList(input.serviceAreas),
         notes:
           input.notes === undefined
             ? existing.notes
@@ -257,14 +287,14 @@ function normalizeNullableText(value: string | null | undefined): string | null 
   return normalized ? normalized : null;
 }
 
-function normalizeServiceCategories(
-  serviceCategories: string[] | undefined,
-): string[] {
+function normalizeServiceCategories(serviceCategories: string[] | undefined): string[] {
+  return normalizeStringList(serviceCategories);
+}
+
+function normalizeStringList(values: string[] | undefined): string[] {
   return Array.from(
     new Set(
-      (serviceCategories ?? [])
-        .map((category) => category.trim())
-        .filter(Boolean),
+      (values ?? []).map((value) => value.trim()).filter(Boolean),
     ),
   );
 }

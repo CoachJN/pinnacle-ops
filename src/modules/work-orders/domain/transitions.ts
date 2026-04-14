@@ -1,10 +1,12 @@
-import type { WorkOrderStatus } from "./constants";
+import type { WorkOrderStatus } from "./constants.ts";
 
 export const WORK_ORDER_STATUS_TRANSITION_MAP = {
-  NEW: ["OPEN", "CANCELLED"],
-  OPEN: ["IN_PROGRESS", "CANCELLED"],
+  NEW: ["OPEN", "ASSIGNED", "CANCELLED"],
+  OPEN: ["ASSIGNED", "CANCELLED"],
+  ASSIGNED: ["IN_PROGRESS", "CANCELLED"],
   IN_PROGRESS: ["COMPLETED", "CANCELLED"],
-  COMPLETED: ["CLOSED"],
+  COMPLETED: ["READY_FOR_INVOICING", "CLOSED"],
+  READY_FOR_INVOICING: ["CLOSED"],
   CANCELLED: ["CLOSED"],
   CLOSED: [],
 } as const satisfies Record<WorkOrderStatus, readonly WorkOrderStatus[]>;

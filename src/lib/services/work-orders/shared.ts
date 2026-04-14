@@ -4,6 +4,7 @@ import { z, type ZodType } from "zod";
 
 import { AppError } from "@/lib/errors/app-error";
 import { ERROR_CODES } from "@/lib/errors/codes";
+import { isWorkOrderAttachmentStoragePathForWorkOrder } from "@/lib/work-orders/attachments";
 import {
   createClientOrganizationRepository,
   type ClientOrganizationRepository,
@@ -36,18 +37,18 @@ import {
   isWorkOrderStatusTransitionAllowed,
   workOrderListQuerySchema,
   updateWorkOrderStatusSchema,
+  type Assignment,
   createWorkOrderNoteSchema,
   createWorkOrderAttachmentMetadataSchema,
   type CreateWorkOrderAttachmentMetadataDto,
   type CreateWorkOrderDto,
   type CreateWorkOrderNoteDto,
+  type WorkOrderActionAvailability,
   type UpdateWorkOrderStatusDto,
   type WorkOrder,
-  type WorkOrderAttachment,
   type WorkOrderDetail,
   type WorkOrderListItem,
   type WorkOrderListQueryDto,
-  type WorkOrderNote,
   type WorkOrderStatus,
 } from "@/modules/work-orders";
 import type { ClientOrganization } from "@/types/client-organization";
@@ -64,12 +65,6 @@ export interface WorkOrderServiceDependencies {
 
 export interface WorkOrderStatusControls {
   allowInitialStatusOverride?: boolean;
-}
-
-export interface WorkOrderActionAvailability {
-  canUpdateStatus: boolean;
-  canAddNote: boolean;
-  canAddAttachment: boolean;
 }
 
 export interface WorkOrderListItemDto extends WorkOrderListItem {
@@ -114,7 +109,22 @@ export function parseWorkOrderCreatePayload(
 export function parseWorkOrderListQuery(
   query: unknown,
 ): ServiceResult<WorkOrderListQueryDto> {
-  return parseSchema(workOrderListQuerySchema, query ?? {});
+  const parsed = parseSchema(workOrderListQuerySchema, query ?? {});
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  if (
+    parsed.value.dueDateFrom &&
+    parsed.value.dueDateTo &&
+    Date.parse(parsed.value.dueDateFrom) > Date.parse(parsed.value.dueDateTo)
+  ) {
+    return serviceFail(
+      validationError("dueDateFrom must be less than or equal to dueDateTo."),
+    );
+  }
+
+  return parsed;
 }
 
 export function parseWorkOrderStatusPayload(
@@ -133,6 +143,26 @@ export function parseWorkOrderAttachmentPayload(
   payload: unknown,
 ): ServiceResult<CreateWorkOrderAttachmentMetadataDto> {
   return parseSchema(createWorkOrderAttachmentMetadataSchema, payload);
+}
+
+export function validateWorkOrderAttachmentStoragePath(
+  workOrderId: EntityId,
+  storagePath: string,
+): ServiceResult<void> {
+  if (
+    !isWorkOrderAttachmentStoragePathForWorkOrder({
+      workOrderId,
+      storagePath,
+    })
+  ) {
+    return serviceFail(
+      validationError(
+        "Attachment storagePath must target the selected work order attachment directory.",
+      ),
+    );
+  }
+
+  return serviceOk(undefined);
 }
 
 export async function validateWorkOrderRelationships(
@@ -250,7 +280,25 @@ export function calculateAllowedActions(
     canUpdateStatus: calculateAllowedNextStatuses(status).length > 0,
     canAddNote: status !== "CLOSED",
     canAddAttachment: status !== "CLOSED",
+    canAssign: false,
+    canReassign: false,
+    canAcceptAssignment: false,
+    canDeclineAssignment: false,
+    canCompleteAssignment: false,
   };
+}
+
+export function assertWorkOrderAllowsCollaboration(
+  status: WorkOrderStatus,
+  artifact: "notes" | "attachments",
+): ServiceResult<void> {
+  if (status === "CLOSED") {
+    return serviceFail(
+      conflictError(`Cannot add ${artifact} to a closed work order.`),
+    );
+  }
+
+  return serviceOk(undefined);
 }
 
 export function toWorkOrderListItemDto(
@@ -288,7 +336,9 @@ export function enforceWorkOrderStatusTransition(
   nextStatus: WorkOrderStatus,
 ): ServiceResult<void> {
   if (currentStatus === nextStatus) {
-    return serviceOk(undefined);
+    return serviceFail(
+      conflictError(`Work order is already in ${currentStatus} status.`),
+    );
   }
 
   if (!isWorkOrderStatusTransitionAllowed(currentStatus, nextStatus)) {
@@ -331,6 +381,8 @@ export async function buildWorkOrderDetailAggregate(
     ...workOrder,
     notes,
     attachments,
+    assignments: [] as Assignment[],
+    activeAssignment: null,
   });
 }
 

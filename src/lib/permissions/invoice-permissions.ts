@@ -69,9 +69,9 @@ export function canIssueInvoice(
 ): boolean {
   return (
     isFinanceController(role) &&
-    workOrder.status === "completed" &&
+    (workOrder.status === "completed" || workOrder.status === "invoiced") &&
     isCurrentInvoice(workOrder, invoice) &&
-    canTransitionInvoiceStatus(invoice.status, "issued")
+    canTransitionInvoiceStatus(invoice.status, "sent")
   );
 }
 
@@ -122,7 +122,7 @@ export function canTransitionWorkOrderToInvoiced(
   return (
     isFinanceController(role) &&
     workOrder.status === "completed" &&
-    invoice?.status === "issued" &&
+    invoice?.status === "sent" &&
     workOrder.currentInvoiceId === invoice.id
   );
 }

@@ -1,4 +1,4 @@
-import { APP_ROLES } from "@/lib/rbac/roles";
+import { APP_ROLES } from "../lib/rbac/roles.ts";
 
 export const USER_ROLES = APP_ROLES;
 

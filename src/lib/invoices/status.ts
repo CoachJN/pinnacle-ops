@@ -2,7 +2,8 @@ import type { InvoiceStatus } from "@/types/invoice";
 
 export const INVOICE_STATUSES = [
   "draft",
-  "issued",
+  "sent",
+  "viewed",
   "paid",
   "overdue",
   "void",
@@ -10,7 +11,8 @@ export const INVOICE_STATUSES = [
 
 export const ACTIVE_INVOICE_STATUSES = [
   "draft",
-  "issued",
+  "sent",
+  "viewed",
   "overdue",
   "paid",
 ] as const satisfies readonly InvoiceStatus[];
@@ -23,15 +25,19 @@ export const TERMINAL_INVOICE_STATUSES = [
 export const INVOICE_STATUS_LABELS = {
   draft: "Draft",
   issued: "Issued",
+  sent: "Sent",
+  viewed: "Viewed",
   paid: "Paid",
   overdue: "Overdue",
   void: "Void",
 } as const satisfies Record<InvoiceStatus, string>;
 
 export const INVOICE_TRANSITIONS = {
-  draft: ["issued", "void"],
-  issued: ["paid", "overdue", "void"],
-  overdue: ["paid", "void"],
+  draft: ["sent", "void"],
+  issued: ["viewed", "overdue", "paid", "void"],
+  sent: ["viewed", "overdue", "paid", "void"],
+  viewed: ["overdue", "paid", "void"],
+  overdue: ["paid"],
   paid: [],
   void: [],
 } as const satisfies Record<InvoiceStatus, readonly InvoiceStatus[]>;
@@ -39,7 +45,9 @@ export const INVOICE_TRANSITIONS = {
 export function getAllowedInvoiceTransitions(
   status: InvoiceStatus,
 ): readonly InvoiceStatus[] {
-  return INVOICE_TRANSITIONS[status];
+  return status === "issued"
+    ? INVOICE_TRANSITIONS.issued
+    : INVOICE_TRANSITIONS[status as Exclude<InvoiceStatus, "issued">];
 }
 
 export function canTransitionInvoiceStatus(
@@ -62,7 +70,7 @@ export function getDisplayInvoiceStatus(
   dueDate: string,
   now = new Date(),
 ): InvoiceStatus {
-  if (status !== "issued") {
+  if (status !== "sent" && status !== "viewed") {
     return status;
   }
 
@@ -71,7 +79,7 @@ export function getDisplayInvoiceStatus(
     return status;
   }
 
-  return dueAt < startOfToday(now).getTime() ? "overdue" : "issued";
+  return dueAt < startOfToday(now).getTime() ? "overdue" : status;
 }
 
 function startOfToday(now: Date): Date {

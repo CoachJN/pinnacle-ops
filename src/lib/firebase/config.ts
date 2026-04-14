@@ -13,6 +13,7 @@ export interface FirebaseClientConfig {
 
 export interface FirebaseAdminConfig {
   projectId?: string;
+  storageBucket?: string;
   clientEmail?: string;
   privateKey?: string;
   databaseURL?: string;
@@ -22,6 +23,7 @@ export interface FirebaseAdminConfig {
 export function getFirebaseAdminConfig(): FirebaseAdminConfig {
   const config: FirebaseAdminConfig = {
     projectId: serverEnv.firebaseProjectId,
+    storageBucket: serverEnv.firebaseStorageBucket,
     clientEmail: serverEnv.firebaseClientEmail,
     privateKey: serverEnv.firebasePrivateKey,
     databaseURL: serverEnv.firebaseDatabaseURL,

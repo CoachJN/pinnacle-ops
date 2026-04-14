@@ -2,16 +2,18 @@ import "server-only";
 
 import type { ServiceResult } from "@/server/services/types";
 import type { WorkOrderAttachment } from "@/modules/work-orders";
-import { conflictError, notFoundError } from "@/server/services/errors";
-import { serviceFail } from "@/server/services/types";
+import { notFoundError } from "@/server/services/errors";
+import { serviceFail, serviceOk } from "@/server/services/types";
 import type { EntityId } from "@/types/entity";
 
 import {
+  assertWorkOrderAllowsCollaboration,
   createWorkOrderServiceDependencies,
   parseWorkOrderAttachmentPayload,
   requireWorkOrder,
+  validateWorkOrderAttachmentStoragePath,
   type WorkOrderServiceDependencies,
-} from "./shared";
+} from "./shared.ts";
 
 export interface AddWorkOrderAttachmentServiceInput {
   workOrderId: EntityId;
@@ -36,7 +38,11 @@ export function createAddWorkOrderAttachmentService(
 class DefaultAddWorkOrderAttachmentService
   implements AddWorkOrderAttachmentService
 {
-  constructor(private readonly dependencies: WorkOrderServiceDependencies) {}
+  private readonly dependencies: WorkOrderServiceDependencies;
+
+  constructor(dependencies: WorkOrderServiceDependencies) {
+    this.dependencies = dependencies;
+  }
 
   async addWorkOrderAttachment(
     input: AddWorkOrderAttachmentServiceInput,
@@ -51,10 +57,20 @@ class DefaultAddWorkOrderAttachmentService
       return workOrder;
     }
 
-    if (workOrder.value.status === "CLOSED") {
-      return serviceFail(
-        conflictError("Cannot add attachments to a closed work order."),
-      );
+    const collaborationResult = assertWorkOrderAllowsCollaboration(
+      workOrder.value.status,
+      "attachments",
+    );
+    if (!collaborationResult.ok) {
+      return collaborationResult;
+    }
+
+    const storagePathResult = validateWorkOrderAttachmentStoragePath(
+      workOrder.value.id,
+      parsedPayload.value.storagePath,
+    );
+    if (!storagePathResult.ok) {
+      return storagePathResult;
     }
 
     const attachment = await this.dependencies.attachments.createAttachment({
@@ -67,6 +83,6 @@ class DefaultAddWorkOrderAttachmentService
       return serviceFail(notFoundError("Work order could not be found."));
     }
 
-    return { ok: true, value: attachment };
+    return serviceOk(attachment);
   }
 }

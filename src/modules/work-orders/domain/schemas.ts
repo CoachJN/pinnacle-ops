@@ -1,12 +1,32 @@
 import { z } from "zod";
+import {
+  getWorkOrderAttachmentValidationMessage,
+  WORK_ORDER_ATTACHMENT_MAX_SIZE_BYTES,
+} from "../../../lib/work-orders/attachments.ts";
 
 import {
+  ASSIGNMENT_ASSIGNEE_TYPES,
+  ASSIGNMENT_STATUSES,
   WORK_ORDER_CATEGORIES,
   WORK_ORDER_PRIORITIES,
   WORK_ORDER_SOURCES,
   WORK_ORDER_STATUSES,
-} from "./constants";
-import type { WorkOrderListQuery } from "./types";
+} from "./constants.ts";
+import type {
+  AcceptAssignmentDto,
+  CompleteAssignmentDto,
+  CreateContractorAssignmentDto,
+  CreateAssignmentDto,
+  CreateWorkOrderAttachmentMetadataDto,
+  CreateWorkOrderDto,
+  CreateWorkOrderNoteDto,
+  DeclineAssignmentDto,
+  ReassignContractorAssignmentDto,
+  ReassignAssignmentDto,
+  UpdateWorkOrderStatusDto,
+  WorkOrderStatusTransitionWithAssignmentDto,
+  WorkOrderListQueryDto,
+} from "./types.ts";
 
 const entityIdSchema = z.string().trim().min(1, "Must be a non-empty identifier.");
 const optionalEntityIdSchema = entityIdSchema.optional();
@@ -22,8 +42,10 @@ export const workOrderStatusSchema = z.enum(WORK_ORDER_STATUSES);
 export const workOrderPrioritySchema = z.enum(WORK_ORDER_PRIORITIES);
 export const workOrderCategorySchema = z.enum(WORK_ORDER_CATEGORIES);
 export const workOrderSourceSchema = z.enum(WORK_ORDER_SOURCES);
+export const assignmentStatusSchema = z.enum(ASSIGNMENT_STATUSES);
+export const assignmentAssigneeTypeSchema = z.enum(ASSIGNMENT_ASSIGNEE_TYPES);
 
-export const createWorkOrderSchema = z
+export const createWorkOrderSchema: z.ZodType<CreateWorkOrderDto> = z
   .object({
     title: z.string().trim().min(3).max(150),
     description: z.string().trim().min(10),
@@ -43,30 +65,130 @@ export const createWorkOrderSchema = z
   })
   .strict();
 
-export const updateWorkOrderStatusSchema = z
+export const updateWorkOrderStatusSchema: z.ZodType<UpdateWorkOrderStatusDto> = z
   .object({
     status: workOrderStatusSchema,
   })
   .strict();
 
-export const createWorkOrderNoteSchema = z
+const assignmentSchedulingSchema = z
+  .object({
+    scheduledDate: isoDateTimeSchema.nullish(),
+    timeWindowStart: isoDateTimeSchema.nullish(),
+    timeWindowEnd: isoDateTimeSchema.nullish(),
+  })
+  .superRefine((value, context) => {
+    if (value.timeWindowStart && value.timeWindowEnd) {
+      const start = Date.parse(value.timeWindowStart);
+      const end = Date.parse(value.timeWindowEnd);
+      if (start > end) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "timeWindowEnd must be greater than or equal to timeWindowStart.",
+          path: ["timeWindowEnd"],
+        });
+      }
+    }
+  });
+
+export const createAssignmentSchema: z.ZodType<CreateAssignmentDto> =
+  assignmentSchedulingSchema
+    .extend({
+      workOrderId: entityIdSchema,
+      assigneeType: assignmentAssigneeTypeSchema,
+      assigneeUserId: entityIdSchema,
+      notes: z.string().trim().max(2000).nullish(),
+    })
+    .strict();
+
+export const reassignAssignmentSchema: z.ZodType<ReassignAssignmentDto> =
+  assignmentSchedulingSchema
+    .extend({
+      currentAssignmentId: entityIdSchema,
+      workOrderId: entityIdSchema,
+      assigneeType: assignmentAssigneeTypeSchema,
+      assigneeUserId: entityIdSchema,
+      notes: z.string().trim().max(2000).nullish(),
+    })
+    .strict();
+
+export const createContractorAssignmentSchema: z.ZodType<CreateContractorAssignmentDto> =
+  assignmentSchedulingSchema
+    .extend({
+      contractorOrganizationId: entityIdSchema,
+      notes: z.string().trim().max(2000).nullish(),
+    })
+    .strict();
+
+export const reassignContractorAssignmentSchema: z.ZodType<ReassignContractorAssignmentDto> =
+  assignmentSchedulingSchema
+    .extend({
+      currentAssignmentId: entityIdSchema,
+      contractorOrganizationId: entityIdSchema,
+      notes: z.string().trim().max(2000).nullish(),
+    })
+    .strict();
+
+export const acceptAssignmentSchema: z.ZodType<AcceptAssignmentDto> = z
+  .object({
+    assignmentId: entityIdSchema,
+  })
+  .strict();
+
+export const declineAssignmentSchema: z.ZodType<DeclineAssignmentDto> = z
+  .object({
+    assignmentId: entityIdSchema,
+    notes: z.string().trim().max(2000).nullish(),
+  })
+  .strict();
+
+export const completeAssignmentSchema: z.ZodType<CompleteAssignmentDto> = z
+  .object({
+    assignmentId: entityIdSchema,
+    notes: z.string().trim().max(2000).nullish(),
+  })
+  .strict();
+
+export const workOrderStatusTransitionWithAssignmentSchema: z.ZodType<WorkOrderStatusTransitionWithAssignmentDto> =
+  z
+    .object({
+      status: workOrderStatusSchema,
+    })
+    .strict();
+
+export const createWorkOrderNoteSchema: z.ZodType<CreateWorkOrderNoteDto> = z
   .object({
     body: z.string().trim().min(1),
     createdByUserId: entityIdSchema,
   })
   .strict();
 
-export const createWorkOrderAttachmentMetadataSchema = z
+export const createWorkOrderAttachmentMetadataSchema: z.ZodType<CreateWorkOrderAttachmentMetadataDto> =
+  z
   .object({
     fileName: z.string().trim().min(1),
     contentType: z.string().trim().min(1),
-    fileSizeBytes: z.number().int().positive(),
+    sizeBytes: z.number().int().positive().max(WORK_ORDER_ATTACHMENT_MAX_SIZE_BYTES),
     storagePath: z.string().trim().min(1),
-    uploadedByUserId: entityIdSchema,
+    uploadedBy: entityIdSchema,
+  })
+  .superRefine((value, context) => {
+    const validationMessage = getWorkOrderAttachmentValidationMessage({
+      contentType: value.contentType,
+      sizeBytes: value.sizeBytes,
+    });
+
+    if (validationMessage) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: validationMessage,
+        path: ["contentType"],
+      });
+    }
   })
   .strict();
 
-export const workOrderListQuerySchema: z.ZodType<WorkOrderListQuery> = z
+export const workOrderListQuerySchema: z.ZodType<WorkOrderListQueryDto> = z
   .object({
     status: workOrderStatusSchema.optional(),
     priority: workOrderPrioritySchema.optional(),
@@ -85,13 +207,3 @@ export const workOrderListQuerySchema: z.ZodType<WorkOrderListQuery> = z
     cursor: optionalTrimmedStringSchema,
   })
   .strict();
-
-export type CreateWorkOrderDto = z.output<typeof createWorkOrderSchema>;
-export type UpdateWorkOrderStatusDto = z.output<
-  typeof updateWorkOrderStatusSchema
->;
-export type CreateWorkOrderNoteDto = z.output<typeof createWorkOrderNoteSchema>;
-export type CreateWorkOrderAttachmentMetadataDto = z.output<
-  typeof createWorkOrderAttachmentMetadataSchema
->;
-export type WorkOrderListQueryDto = z.output<typeof workOrderListQuerySchema>;

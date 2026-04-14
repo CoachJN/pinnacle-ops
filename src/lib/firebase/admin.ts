@@ -9,6 +9,7 @@ import {
 } from "firebase-admin/app";
 import { getAuth, type Auth } from "firebase-admin/auth";
 import { getFirestore, type Firestore } from "firebase-admin/firestore";
+import { getStorage, type Storage } from "firebase-admin/storage";
 import { getFirebaseAdminConfig } from "@/lib/firebase/config";
 
 export function getFirebaseAdminApp(): App {
@@ -24,6 +25,7 @@ export function getFirebaseAdminApp(): App {
     credential: getFirebaseAdminCredential(),
     databaseURL: config.databaseURL,
     projectId: config.projectId,
+    storageBucket: config.storageBucket,
   });
 }
 
@@ -39,6 +41,10 @@ export function getFirebaseAdminFirestore(): Firestore {
   }
 
   return getFirestore(getFirebaseAdminApp());
+}
+
+export function getFirebaseAdminStorage(): Storage {
+  return getStorage(getFirebaseAdminApp());
 }
 
 function getFirebaseAdminCredential() {

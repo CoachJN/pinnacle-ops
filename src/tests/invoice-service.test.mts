@@ -22,7 +22,7 @@ test("invoice workflow creates a draft for a completed work order and tracks cur
     dueDate: "2026-04-20T00:00:00.000Z",
     currency: "CAD",
     taxAmount: 15,
-    internalFinanceNotes: "Finance review ready",
+    notes: "Finance review ready",
     lineItems: [
       {
         id: "line-1",
@@ -45,7 +45,7 @@ test("invoice workflow creates a draft for a completed work order and tracks cur
   assert.equal(harness.activityEvents.some((event) => event.action === "invoice.created"), true);
 });
 
-test("marking an invoice sent moves the work order into invoiced and records finance activity", async () => {
+test("send invoice success moves the work order into invoiced and records finance activity", async () => {
   const invoice = makeInvoice({ status: "draft" });
   const workOrder = makeWorkOrder({
     status: "completed",
@@ -53,12 +53,11 @@ test("marking an invoice sent moves the work order into invoiced and records fin
   });
   const harness = createHarness({ workOrder, invoices: [invoice] });
 
-  const result = await harness.service.transition({
+  const result = await harness.service.sendInvoice({
     ...auditContext(),
     now: "2026-04-12T12:00:00.000Z",
     workOrderId: workOrder.id,
     invoiceId: invoice.id,
-    toStatus: "issued",
   });
 
   assert.equal(result.ok, true);
@@ -66,7 +65,7 @@ test("marking an invoice sent moves the work order into invoiced and records fin
     return;
   }
 
-  assert.equal(result.value.status, "issued");
+  assert.equal(result.value.status, "sent");
   assert.equal(harness.workOrderStore.get(workOrder.id)?.status, "invoiced");
   assert.equal(
     harness.activityEvents.some((event) => event.eventType === "invoice_sent"),
@@ -75,7 +74,7 @@ test("marking an invoice sent moves the work order into invoiced and records fin
 });
 
 test("marking an invoice paid requires the work order to already be invoiced", async () => {
-  const invoice = makeInvoice({ status: "issued" });
+  const invoice = makeInvoice({ status: "sent" });
   const workOrder = makeWorkOrder({
     status: "completed",
     currentInvoiceId: invoice.id,
@@ -99,23 +98,20 @@ test("marking an invoice paid requires the work order to already be invoiced", a
   assert.match(result.error.message, /work order is invoiced/i);
 });
 
-test("marking an invoice overdue requires the due date to have passed", async () => {
+test("invalid send with bad totals fails", async () => {
   const invoice = makeInvoice({
-    status: "issued",
-    dueDate: "2026-04-20T00:00:00.000Z",
+    status: "draft",
+    subtotal: 999,
+    totalAmount: 999,
   });
-  const workOrder = makeWorkOrder({
-    status: "invoiced",
-    currentInvoiceId: invoice.id,
-  });
+  const workOrder = makeWorkOrder({ status: "completed", currentInvoiceId: invoice.id });
   const harness = createHarness({ workOrder, invoices: [invoice] });
 
-  const result = await harness.service.transition({
+  const result = await harness.service.sendInvoice({
     ...auditContext(),
     now: "2026-04-12T12:00:00.000Z",
     workOrderId: workOrder.id,
     invoiceId: invoice.id,
-    toStatus: "overdue",
   });
 
   assert.equal(result.ok, false);
@@ -123,7 +119,7 @@ test("marking an invoice overdue requires the due date to have passed", async ()
     return;
   }
 
-  assert.match(result.error.message, /due date has passed/i);
+  assert.match(result.error.message, /totals are inconsistent/i);
 });
 
 test("finance queue returns overdue items first and supports status filtering", async () => {
@@ -136,8 +132,8 @@ test("finance queue returns overdue items first and supports status filtering", 
         dueDate: "2026-04-25T00:00:00.000Z",
       }),
       makeInvoice({
-        id: "inv-issued",
-        status: "issued",
+        id: "inv-sent",
+        status: "sent",
         dueDate: "2026-04-15T00:00:00.000Z",
       }),
       makeInvoice({
@@ -156,7 +152,7 @@ test("finance queue returns overdue items first and supports status filtering", 
 
   assert.deepEqual(
     queue.value.map((invoice) => invoice.id),
-    ["inv-overdue", "inv-issued", "inv-draft"],
+    ["inv-overdue", "inv-sent", "inv-draft"],
   );
 
   const filtered = await harness.service.listFinanceQueue({
@@ -200,7 +196,42 @@ test("invoice creation is blocked until the work order reaches completed", async
     return;
   }
 
-  assert.match(result.error.message, /completed work orders/i);
+  assert.match(result.error.message, /completed or ready for invoicing/i);
+});
+
+test("invoice creation is blocked when a work order already has an active invoice", async () => {
+  const existingInvoice = makeInvoice({ status: "draft" });
+  const harness = createHarness({
+    workOrder: makeWorkOrder({
+      status: "completed",
+      currentInvoiceId: existingInvoice.id,
+    }),
+    invoices: [existingInvoice],
+  });
+
+  const result = await harness.service.create({
+    ...auditContext(),
+    workOrderId: harness.workOrder.id,
+    dueDate: "2026-04-20T00:00:00.000Z",
+    currency: "CAD",
+    taxAmount: 15,
+    lineItems: [
+      {
+        id: "line-1",
+        description: "Labor",
+        quantity: 1,
+        unitPrice: 100,
+        lineTotal: 100,
+      },
+    ],
+  });
+
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    return;
+  }
+
+  assert.match(result.error.message, /already has an active invoice/i);
 });
 
 test("non-current invoices cannot be changed through finance actions", async () => {
@@ -219,7 +250,7 @@ test("non-current invoices cannot be changed through finance actions", async () 
     now: "2026-04-12T12:00:00.000Z",
     workOrderId: harness.workOrder.id,
     invoiceId: staleInvoice.id,
-    toStatus: "issued",
+    toStatus: "sent",
   });
 
   assert.equal(result.ok, false);
@@ -246,6 +277,106 @@ test("paid invoices remain terminal for subsequent finance transitions", async (
     workOrderId: harness.workOrder.id,
     invoiceId: invoice.id,
     toStatus: "void",
+  });
+
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    return;
+  }
+
+  assert.match(result.error.message, /terminal/i);
+});
+
+test("mark paid success records payment reference and advances work order", async () => {
+  const invoice = makeInvoice({ status: "sent" });
+  const workOrder = makeWorkOrder({
+    status: "invoiced",
+    currentInvoiceId: invoice.id,
+  });
+  const harness = createHarness({ workOrder, invoices: [invoice] });
+
+  const result = await harness.service.markInvoicePaid({
+    ...auditContext(),
+    now: "2026-04-12T12:00:00.000Z",
+    workOrderId: workOrder.id,
+    invoiceId: invoice.id,
+    paymentReference: "payment-123",
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assert.equal(result.value.status, "paid");
+  assert.equal(result.value.paymentReference, "payment-123");
+  assert.equal(harness.workOrderStore.get(workOrder.id)?.status, "paid");
+});
+
+test("overdue transition success from viewed invoice", async () => {
+  const invoice = makeInvoice({
+    status: "viewed",
+    dueDate: "2026-04-10T00:00:00.000Z",
+  });
+  const workOrder = makeWorkOrder({
+    status: "invoiced",
+    currentInvoiceId: invoice.id,
+  });
+  const harness = createHarness({ workOrder, invoices: [invoice] });
+
+  const result = await harness.service.markInvoiceOverdue({
+    ...auditContext(),
+    now: "2026-04-12T12:00:00.000Z",
+    workOrderId: workOrder.id,
+    invoiceId: invoice.id,
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assert.equal(result.value.status, "overdue");
+});
+
+test("void invoice success returns work order to ready for invoicing", async () => {
+  const invoice = makeInvoice({ status: "sent" });
+  const workOrder = makeWorkOrder({
+    status: "invoiced",
+    currentInvoiceId: invoice.id,
+  });
+  const harness = createHarness({ workOrder, invoices: [invoice] });
+
+  const result = await harness.service.voidInvoice({
+    ...auditContext(),
+    now: "2026-04-12T12:00:00.000Z",
+    workOrderId: workOrder.id,
+    invoiceId: invoice.id,
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assert.equal(result.value.status, "void");
+  assert.equal(harness.workOrderStore.get(workOrder.id)?.status, "ready_for_invoicing");
+});
+
+test("invalid transition from paid to sent fails", async () => {
+  const invoice = makeInvoice({ status: "paid", paidAt: "2026-04-10T00:00:00.000Z" });
+  const workOrder = makeWorkOrder({
+    status: "paid",
+    currentInvoiceId: invoice.id,
+  });
+  const harness = createHarness({ workOrder, invoices: [invoice] });
+
+  const result = await harness.service.transition({
+    ...auditContext(),
+    now: "2026-04-12T12:00:00.000Z",
+    workOrderId: workOrder.id,
+    invoiceId: invoice.id,
+    toStatus: "sent",
   });
 
   assert.equal(result.ok, false);
@@ -302,7 +433,7 @@ function createHarness(input: {
     async listFinanceQueue() {
       return toListResult(
         [...invoiceStore.values()].filter((invoice) =>
-          ["draft", "issued", "overdue"].includes(invoice.status),
+          ["draft", "sent", "viewed", "overdue", "paid"].includes(invoice.status),
         ),
       );
     },
@@ -429,10 +560,13 @@ function makeInvoice(overrides: Partial<Invoice> = {}): Invoice {
     locationId: "loc-1",
     invoiceNumber: "INV-1001",
     status: "draft",
-    issueDate: null,
+    issuedDate: null,
     dueDate: "2026-04-20T00:00:00.000Z",
-    paidDate: null,
-    subtotalAmount: 200,
+    sentAt: null,
+    viewedAt: null,
+    paidAt: null,
+    voidedAt: null,
+    subtotal: 200,
     taxAmount: 20,
     totalAmount: 220,
     currency: "CAD",
@@ -445,8 +579,10 @@ function makeInvoice(overrides: Partial<Invoice> = {}): Invoice {
         lineTotal: 200,
       },
     ],
-    internalFinanceNotes: null,
+    notes: null,
     paymentReference: null,
+    qboInvoiceId: null,
+    qboSyncStatus: null,
     workOrderSnapshot: { id: "wo-1", name: "WO-1001" },
     clientSnapshot: { id: "client-1", name: "Client One" },
     locationSnapshot: { id: "loc-1", name: "HQ" },

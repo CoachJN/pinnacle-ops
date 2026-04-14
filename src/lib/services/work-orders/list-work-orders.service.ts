@@ -8,7 +8,7 @@ import {
   toWorkOrderListItemDto,
   type WorkOrderListResultDto,
   type WorkOrderServiceDependencies,
-} from "./shared";
+} from "./shared.ts";
 
 export interface ListWorkOrdersServiceInput {
   query?: unknown;
@@ -29,7 +29,11 @@ export function createListWorkOrdersService(
 }
 
 class DefaultListWorkOrdersService implements ListWorkOrdersService {
-  constructor(private readonly dependencies: WorkOrderServiceDependencies) {}
+  private readonly dependencies: WorkOrderServiceDependencies;
+
+  constructor(dependencies: WorkOrderServiceDependencies) {
+    this.dependencies = dependencies;
+  }
 
   async listWorkOrders(
     input: ListWorkOrdersServiceInput,

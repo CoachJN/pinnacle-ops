@@ -21,9 +21,17 @@ import {
   type InvoiceService,
 } from "@/server/services/invoice-service";
 import {
+  createNotificationService,
+  type NotificationService,
+} from "@/server/services/notification-service";
+import {
   createQuoteService,
   type QuoteService,
 } from "@/server/services/quote-service";
+import {
+  createQuoteWorkflowService,
+  type QuoteWorkflowService,
+} from "@/server/services/quote-workflow-service";
 import type { FirestoreRepositories } from "@/server/repositories";
 import { createFirestoreRepositories } from "@/server/repositories";
 import {
@@ -37,7 +45,9 @@ export type {
   ClientLocationService,
   ContractorService,
   InvoiceService,
+  NotificationService,
   QuoteService,
+  QuoteWorkflowService,
   WorkOrderService,
 };
 export type {
@@ -61,7 +71,9 @@ export interface DomainServices {
   clientLocations: ClientLocationService;
   contractors: ContractorService;
   invoices: InvoiceService;
+  notifications: NotificationService;
   quotes: QuoteService;
+  quoteWorkflow: QuoteWorkflowService;
   workOrders: WorkOrderService;
 }
 
@@ -71,20 +83,27 @@ export function createDomainServices(
   const activityLogs = createActivityLogService(repositories);
   const clientLocations = createClientLocationService(repositories);
   const contractors = createContractorService(repositories);
+  const notifications = createNotificationService(repositories);
 
   return {
     activityLogs,
     assignments: createAssignmentService(repositories, {
       activityLogs,
-      contractors,
+      notifications,
     }),
     clientLocations,
     contractors,
-    invoices: createInvoiceService(repositories, { activityLogs }),
-    quotes: createQuoteService(repositories, { activityLogs }),
+    invoices: createInvoiceService(repositories, { activityLogs, notifications }),
+    notifications,
+    quotes: createQuoteService(repositories, { activityLogs, notifications }),
+    quoteWorkflow: createQuoteWorkflowService(repositories, {
+      activityLogs,
+      notifications,
+    }),
     workOrders: createWorkOrderService(repositories, {
       activityLogs,
       clientLocations,
+      notifications,
     }),
   };
 }

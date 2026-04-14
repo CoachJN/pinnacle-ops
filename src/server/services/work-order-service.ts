@@ -13,6 +13,7 @@ import {
   isTerminalWorkOrderStatus,
 } from "./status-rules.ts";
 import type { ActivityLogService } from "./activity-log-service.ts";
+import type { NotificationService } from "./notification-service.ts";
 import type { ClientLocationService } from "./client-location-service.ts";
 import { createServiceLogger } from "./observability.ts";
 import {
@@ -120,6 +121,7 @@ export function createWorkOrderService(
   dependencies: {
     activityLogs: ActivityLogService;
     clientLocations: ClientLocationService;
+    notifications?: NotificationService;
   },
 ): WorkOrderService {
   return new FirestoreWorkOrderService(repositories, dependencies);
@@ -135,6 +137,7 @@ class FirestoreWorkOrderService implements WorkOrderService {
   private readonly dependencies: {
     activityLogs: ActivityLogService;
     clientLocations: ClientLocationService;
+    notifications?: NotificationService;
   };
 
   constructor(
@@ -146,6 +149,7 @@ class FirestoreWorkOrderService implements WorkOrderService {
     dependencies: {
       activityLogs: ActivityLogService;
       clientLocations: ClientLocationService;
+      notifications?: NotificationService;
     },
   ) {
     this.repositories = repositories;
@@ -662,6 +666,19 @@ class FirestoreWorkOrderService implements WorkOrderService {
       toStatus: input.toStatus,
     });
 
+    if (input.toStatus === "ready_for_invoicing") {
+      await this.dependencies.notifications?.captureOperationalEvent({
+        ...input,
+        now: timestamp,
+        eventType: "work_order_ready_for_invoicing",
+        entityType: "work-order",
+        entityId: transitioned.id,
+        workOrder: transitioned,
+        fromStatus: existing.value.status,
+        toStatus: input.toStatus,
+      });
+    }
+
     return serviceOk(transitioned);
   }
 
@@ -764,12 +781,15 @@ class FirestoreWorkOrderService implements WorkOrderService {
       );
     }
 
-    const quote = await this.repositories.quotes.getById(workOrder.currentQuoteId);
+    const clientQuoteRepository = (this.repositories as FirestoreRepositories).clientQuotes;
+    const quote = clientQuoteRepository
+      ? await clientQuoteRepository.getById(workOrder.currentQuoteId)
+      : await this.repositories.quotes.getById(workOrder.currentQuoteId);
     if (
       !quote ||
       quote.isDeleted ||
       quote.workOrderId !== workOrder.id ||
-      quote.status !== "client_approved"
+      quote.status !== "approved"
     ) {
       return serviceFail(
         validationError(

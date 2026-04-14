@@ -15,14 +15,19 @@ export function validateContractorForm(
   formData: FormData,
 ): ContractorFormValidationResult {
   const errors: ContractorFormErrors = {};
+  const name = readRequired(formData, "contactName", "Contact name", errors);
+  const company = readRequired(formData, "companyName", "Company name", errors);
   const data: CreateContractorInput = {
-    companyName: readRequired(formData, "companyName", "Company name", errors),
-    contactName: readRequired(formData, "contactName", "Contact name", errors),
+    name,
+    company,
     email: readEmail(formData, "email", "Email", errors),
     phone: readRequired(formData, "phone", "Phone", errors),
     status: readStatus(formData, "status"),
     serviceCategories: readServiceCategories(formData),
+    serviceAreas: [],
     notes: readNullableString(formData, "notes"),
+    companyName: company,
+    contactName: name,
   };
 
   return Object.keys(errors).length === 0
@@ -59,7 +64,8 @@ function readEmail(
 }
 
 function readStatus(formData: FormData, field: string): ContractorStatus {
-  return formData.get(field) === "inactive" ? "inactive" : "active";
+  const value = formData.get(field);
+  return value === "inactive" ? "inactive" : "active";
 }
 
 function readServiceCategories(formData: FormData): string[] {

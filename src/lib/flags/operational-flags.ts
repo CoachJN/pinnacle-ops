@@ -74,7 +74,8 @@ export function getWorkOrderOperationalFlags(
     workOrder.status === "completed" && !workOrder.currentInvoiceId;
   const isAwaitingPayment =
     workOrder.status === "invoiced" &&
-    (input.currentInvoice?.status === "issued" ||
+    (input.currentInvoice?.status === "sent" ||
+      input.currentInvoice?.status === "viewed" ||
       input.currentInvoice?.status === "overdue" ||
       invoiceFlags?.isOverdue === true);
   const isReadyToClose =
@@ -115,7 +116,8 @@ export function getInvoiceOperationalFlags(
     isOverdue: displayStatus === "overdue",
     isActionableByFinance:
       invoice.status === "draft" ||
-      invoice.status === "issued" ||
+      invoice.status === "sent" ||
+      invoice.status === "viewed" ||
       invoice.status === "overdue" ||
       displayStatus === "overdue",
   };

@@ -1,6 +1,7 @@
 import { getApp, getApps, initializeApp, type FirebaseApp } from "firebase/app";
 import { getAuth, type Auth } from "firebase/auth";
 import { getFirestore, type Firestore } from "firebase/firestore";
+import { getStorage, type FirebaseStorage } from "firebase/storage";
 import { clientEnv } from "@/lib/env/client";
 import type { FirebaseClientConfig } from "@/lib/firebase/config";
 
@@ -20,6 +21,10 @@ export function getFirebaseClientAuth(): Auth {
 
 export function getFirebaseClientFirestore(): Firestore {
   return getFirestore(getFirebaseClientApp());
+}
+
+export function getFirebaseClientStorage(): FirebaseStorage {
+  return getStorage(getFirebaseClientApp());
 }
 
 export function getExistingFirebaseClientApp(): FirebaseApp | null {

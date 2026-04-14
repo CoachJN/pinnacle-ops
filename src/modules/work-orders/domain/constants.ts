@@ -1,8 +1,10 @@
 export const WORK_ORDER_STATUSES = [
   "NEW",
   "OPEN",
+  "ASSIGNED",
   "IN_PROGRESS",
   "COMPLETED",
+  "READY_FOR_INVOICING",
   "CANCELLED",
   "CLOSED",
 ] as const;
@@ -41,8 +43,10 @@ export type WorkOrderSource = (typeof WORK_ORDER_SOURCES)[number];
 export const WORK_ORDER_STATUS_LABELS = {
   NEW: "New",
   OPEN: "Open",
+  ASSIGNED: "Assigned",
   IN_PROGRESS: "In Progress",
   COMPLETED: "Completed",
+  READY_FOR_INVOICING: "Ready for Invoicing",
   CANCELLED: "Cancelled",
   CLOSED: "Closed",
 } as const satisfies Record<WorkOrderStatus, string>;
@@ -74,3 +78,29 @@ export function getWorkOrderPriorityLabel(priority: WorkOrderPriority): string {
 export function getWorkOrderCategoryLabel(category: WorkOrderCategory): string {
   return WORK_ORDER_CATEGORY_LABELS[category];
 }
+
+export const ASSIGNMENT_ASSIGNEE_TYPES = [
+  "internal",
+  "contractor",
+] as const;
+
+export type AssignmentAssigneeType =
+  (typeof ASSIGNMENT_ASSIGNEE_TYPES)[number];
+
+export const ASSIGNMENT_STATUSES = [
+  "assigned",
+  "accepted",
+  "declined",
+  "completed",
+  "cancelled",
+] as const;
+
+export type AssignmentStatus = (typeof ASSIGNMENT_STATUSES)[number];
+
+export const ASSIGNMENT_STATUS_LABELS = {
+  assigned: "Assigned",
+  accepted: "Accepted",
+  declined: "Declined",
+  completed: "Completed",
+  cancelled: "Cancelled",
+} as const satisfies Record<AssignmentStatus, string>;

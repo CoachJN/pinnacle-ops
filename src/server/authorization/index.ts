@@ -1,5 +1,8 @@
 import "server-only";
 
+// Canonical runtime authorization entry point. Lower-level policy helpers may
+// still live in `src/lib` during the transition, but server code should import
+// authorization behavior from here.
 export * from "@/server/authorization/actions";
 export * from "@/server/authorization/capabilities";
 export * from "@/server/authorization/evaluator";

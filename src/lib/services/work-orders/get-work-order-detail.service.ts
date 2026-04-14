@@ -9,7 +9,7 @@ import {
   requireWorkOrder,
   type WorkOrderDetailDto,
   type WorkOrderServiceDependencies,
-} from "./shared";
+} from "./shared.ts";
 
 export interface GetWorkOrderDetailServiceInput {
   workOrderId: EntityId;
@@ -30,7 +30,11 @@ export function createGetWorkOrderDetailService(
 }
 
 class DefaultGetWorkOrderDetailService implements GetWorkOrderDetailService {
-  constructor(private readonly dependencies: WorkOrderServiceDependencies) {}
+  private readonly dependencies: WorkOrderServiceDependencies;
+
+  constructor(dependencies: WorkOrderServiceDependencies) {
+    this.dependencies = dependencies;
+  }
 
   async getWorkOrderDetail(
     input: GetWorkOrderDetailServiceInput,

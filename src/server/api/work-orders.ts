@@ -7,6 +7,7 @@ import { AppError } from "@/lib/errors/app-error";
 import { ERROR_CODES } from "@/lib/errors/codes";
 import { toAppError, toSafeErrorResponse } from "@/lib/errors/safe-error";
 import { createAppLogger, type AppLogger } from "@/lib/logging/logger";
+import { APP_PATHS } from "@/lib/utils/constants";
 import {
   assertCanCreateWorkOrderForLocationSelection,
   assertCanUpdateWorkOrderLocationSelection,
@@ -114,7 +115,8 @@ const INVOICE_CURRENCIES = [
 
 const INVOICE_STATUSES = [
   "draft",
-  "issued",
+  "sent",
+  "viewed",
   "paid",
   "overdue",
   "void",
@@ -443,18 +445,28 @@ export function parseCreateInvoicePayload(input: Record<string, unknown>) {
     "dueDate",
     "currency",
     "lineItems",
+    "subtotal",
     "taxAmount",
-    "internalFinanceNotes",
+    "totalAmount",
+    "notes",
   ]);
 
   return {
     dueDate: requiredDateTime(input.dueDate, "dueDate"),
     currency: parseInvoiceCurrency(input.currency),
     lineItems: parseInvoiceLineItems(input.lineItems),
+    subtotal:
+      input.subtotal === undefined
+        ? undefined
+        : requiredMoney(input.subtotal, "subtotal"),
     taxAmount: requiredMoney(input.taxAmount, "taxAmount"),
-    internalFinanceNotes: optionalNullableString(
-      input.internalFinanceNotes,
-      "internalFinanceNotes",
+    totalAmount:
+      input.totalAmount === undefined
+        ? undefined
+        : requiredMoney(input.totalAmount, "totalAmount"),
+    notes: optionalNullableString(
+      input.notes,
+      "notes",
     ),
   };
 }
@@ -464,7 +476,16 @@ export function parseUpdateInvoicePayload(input: Record<string, unknown>) {
 }
 
 export function parseInvoiceTransitionPayload(input: Record<string, unknown>) {
-  assertAllowedFields(input, ["action", "toStatus", "paymentReference"]);
+  assertAllowedFields(input, [
+    "action",
+    "toStatus",
+    "paymentReference",
+    "issuedDate",
+    "sentAt",
+    "viewedAt",
+    "paidAt",
+    "voidedAt",
+  ]);
   const action = optionalString(input.action, "action");
   const explicitStatus =
     input.toStatus === undefined ? undefined : parseInvoiceStatus(input.toStatus);
@@ -479,6 +500,11 @@ export function parseInvoiceTransitionPayload(input: Record<string, unknown>) {
       input.paymentReference,
       "paymentReference",
     ),
+    issuedDate: optionalNullableDateTime(input.issuedDate, "issuedDate"),
+    sentAt: optionalNullableDateTime(input.sentAt, "sentAt"),
+    viewedAt: optionalNullableDateTime(input.viewedAt, "viewedAt"),
+    paidAt: optionalNullableDateTime(input.paidAt, "paidAt"),
+    voidedAt: optionalNullableDateTime(input.voidedAt, "voidedAt"),
   };
 }
 
@@ -729,7 +755,7 @@ export async function authorizeInvoiceTransition(
   await authorizeInvoiceRead(context, workOrder, invoice);
 
   const action =
-    toStatus === "issued"
+    toStatus === "sent"
       ? "issue_send"
       : toStatus === "paid"
         ? "mark_paid"
@@ -753,7 +779,8 @@ export function authorizeFinanceQueueRead(
 ): void {
   if (
     context.actor.actorType !== "internal" ||
-    (context.actor.role !== USER_ROLES.FinanceAdmin &&
+    (context.actor.role !== USER_ROLES.Manager &&
+      context.actor.role !== USER_ROLES.FinanceAdmin &&
       context.actor.role !== USER_ROLES.Owner)
   ) {
     throw createAccessDeniedError();
@@ -858,17 +885,22 @@ export function safeInvoiceSummary(invoice: Invoice) {
     clientOrganizationId: invoice.clientOrganizationId,
     locationId: invoice.locationId,
     invoiceNumber: invoice.invoiceNumber,
-    status: invoice.status,
-    issueDate: invoice.issueDate,
-    dueDate: invoice.dueDate,
-    paidDate: invoice.paidDate,
-    subtotalAmount: invoice.subtotalAmount,
+    lineItems: invoice.lineItems,
+    subtotal: invoice.subtotal,
     taxAmount: invoice.taxAmount,
     totalAmount: invoice.totalAmount,
     currency: invoice.currency,
-    lineItems: invoice.lineItems,
-    internalFinanceNotes: invoice.internalFinanceNotes,
+    status: invoice.status,
+    issuedDate: invoice.issuedDate,
+    dueDate: invoice.dueDate,
+    sentAt: invoice.sentAt,
+    viewedAt: invoice.viewedAt,
+    paidAt: invoice.paidAt,
+    voidedAt: invoice.voidedAt,
     paymentReference: invoice.paymentReference,
+    notes: invoice.notes,
+    qboInvoiceId: invoice.qboInvoiceId,
+    qboSyncStatus: invoice.qboSyncStatus,
     workOrderSnapshot: invoice.workOrderSnapshot,
     clientSnapshot: invoice.clientSnapshot,
     locationSnapshot: invoice.locationSnapshot,
@@ -879,8 +911,11 @@ export function safeInvoiceSummary(invoice: Invoice) {
 
 export function revalidateWorkOrderPaths(workOrderId?: EntityId): void {
   revalidatePath("/work-orders");
+  revalidatePath(APP_PATHS.workOrders);
+  revalidatePath(APP_PATHS.finance);
   if (workOrderId) {
     revalidatePath(`/work-orders/${workOrderId}`);
+    revalidatePath(`${APP_PATHS.workOrders}/${workOrderId}`);
   }
 }
 
@@ -969,14 +1004,16 @@ function toWorkOrderAuthTarget(workOrder: WorkOrder) {
 }
 
 function toAssignmentRelationships(assignments: Assignment[]) {
-  return assignments.map((assignment) => ({
-    organizationId: assignment.organizationId,
-    workOrderId: assignment.workOrderId,
-    contractorOrganizationId: assignment.contractorOrganizationId,
-  }));
+  return assignments
+    .filter((assignment) => Boolean(assignment.contractorOrganizationId))
+    .map((assignment) => ({
+      organizationId: assignment.organizationId,
+      workOrderId: assignment.workOrderId,
+      contractorOrganizationId: assignment.contractorOrganizationId!,
+    }));
 }
 
-function toInvoiceAuthTarget(workOrder: WorkOrder, invoice?: Invoice) {
+export function toInvoiceAuthTarget(workOrder: WorkOrder, invoice?: Invoice) {
   return {
     organizationId: workOrder.organizationId,
     workOrderId: workOrder.id,
@@ -1197,7 +1234,10 @@ function parseInvoiceAction(value: string): InvoiceStatus {
     case "mark_sent":
     case "send":
     case "issue":
-      return "issued";
+      return "sent";
+    case "mark_viewed":
+    case "view":
+      return "viewed";
     case "mark_paid":
     case "pay":
       return "paid";
@@ -1207,7 +1247,7 @@ function parseInvoiceAction(value: string): InvoiceStatus {
       return "void";
     default:
       throw validationError(
-        "action must be mark_sent, mark_paid, mark_overdue, or void.",
+        "action must be mark_sent, mark_viewed, mark_paid, mark_overdue, or void.",
       );
   }
 }

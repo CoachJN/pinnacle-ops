@@ -129,6 +129,7 @@ export type InvoiceStatus =
   | "draft"
   | "issued"
   | "sent"
+  | "viewed"
   | "overdue"
   | "disputed"
   | "resolved"

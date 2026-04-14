@@ -8,8 +8,8 @@ import {
   parseCreateLocationPayload,
   parseJsonObject,
   revalidateLocationPaths,
-  safeLocationDetail,
-  safeLocationSummary,
+  safeLocationDetailForActor,
+  safeLocationSummaryForActor,
 } from "@/server/api/business-entities";
 import {
   filterLocations,
@@ -30,7 +30,11 @@ export async function GET(request: NextRequest) {
       },
     );
 
-    return jsonOk({ locations: locations.map(safeLocationSummary) });
+    return jsonOk({
+      locations: locations.map((location) =>
+        safeLocationSummaryForActor(context.actor, location),
+      ),
+    });
   } catch (error) {
     return jsonError(normalizePhaseTwoRouteError(error));
   }
@@ -46,6 +50,7 @@ export async function POST(request: NextRequest) {
     const result = await context.services.clientLocations.createLocation({
       ...context.audit,
       ...input,
+      ...(context.actor.actorType === "client" ? { notes: undefined } : {}),
     });
 
     if (!result.ok) {
@@ -54,7 +59,10 @@ export async function POST(request: NextRequest) {
 
     revalidateLocationPaths(result.value.id);
 
-    return jsonOk({ location: safeLocationDetail(result.value) }, 201);
+    return jsonOk(
+      { location: safeLocationDetailForActor(context.actor, result.value) },
+      201,
+    );
   } catch (error) {
     return jsonError(normalizePhaseTwoRouteError(error));
   }
