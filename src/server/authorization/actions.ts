@@ -26,7 +26,9 @@ export const AUTHORIZATION_RESOURCES = {
   Locations: PERMISSION_ENTITIES.Locations,
   Contractors: PERMISSION_ENTITIES.Contractors,
   ContractorQuotes: PERMISSION_ENTITIES.ContractorQuotes,
-  ClientQuotes: PERMISSION_ENTITIES.ClientFacingQuotes,
+  ClientQuotes: PERMISSION_ENTITIES.ClientQuotes,
+  ContractorInvoices: PERMISSION_ENTITIES.ContractorInvoices,
+  ClientInvoices: PERMISSION_ENTITIES.ClientInvoices,
   Invoices: PERMISSION_ENTITIES.Invoices,
   Assignments: PERMISSION_ENTITIES.Assignments,
   ActivityLogs: PERMISSION_ENTITIES.ActivityLogs,
@@ -34,6 +36,7 @@ export const AUTHORIZATION_RESOURCES = {
   InternalNotes: PERMISSION_ENTITIES.InternalNotes,
   PaymentStatus: PERMISSION_ENTITIES.PaymentStatus,
   BillingData: PERMISSION_ENTITIES.BillingData,
+  ProfitabilityData: PERMISSION_ENTITIES.ProfitabilityData,
 } as const satisfies Record<string, PermissionEntity>;
 
 export type AuthorizationResource =

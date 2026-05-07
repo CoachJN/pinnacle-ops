@@ -1,41 +1,26 @@
-import type { AuditableEntity, EntityId } from "@/types/entity";
+import type { ClientOrganization } from "@/types/client-organization";
+import type { ContractorOrganization } from "@/types/contractor";
+import type { EntityId } from "@/types/entity";
+import type { Location } from "@/types/location";
 
-export type ClientOrganizationStatus = "active" | "inactive";
-
-export interface ClientOrganization extends AuditableEntity {
-  name: string;
-  displayName?: string;
-  status: ClientOrganizationStatus;
-  primaryContactEmail?: string;
-  primaryContactPhone?: string;
+export interface ClientOrganizationSummary {
+  id: EntityId;
+  name: ClientOrganization["name"];
+  displayName?: ClientOrganization["displayName"];
+  status: ClientOrganization["status"];
 }
 
-export type LocationStatus = "active" | "inactive";
-
-export interface Location extends AuditableEntity {
-  clientOrganizationId: EntityId;
-  name: string;
-  code?: string;
-  status: LocationStatus;
-  addressLine1?: string;
-  addressLine2?: string;
-  city?: string;
-  region?: string;
-  postalCode?: string;
-  countryCode?: string;
+export interface LocationSummary {
+  id: EntityId;
+  clientOrganizationId: Location["clientOrganizationId"];
+  name: Location["name"];
+  code?: Location["code"];
+  status: Location["status"];
 }
 
-export type ContractorOrganizationStatus =
-  | "active"
-  | "inactive"
-  | "onboarding"
-  | "suspended";
-
-export interface ContractorOrganization extends AuditableEntity {
-  name: string;
-  displayName?: string;
-  status: ContractorOrganizationStatus;
-  primaryContactEmail?: string;
-  primaryContactPhone?: string;
-  serviceAreas?: string[];
+export interface ContractorOrganizationSummary {
+  id: EntityId;
+  name: ContractorOrganization["name"];
+  displayName?: ContractorOrganization["displayName"];
+  status: ContractorOrganization["status"];
 }

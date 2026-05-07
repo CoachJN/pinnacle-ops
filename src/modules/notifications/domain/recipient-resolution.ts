@@ -12,7 +12,7 @@ interface RecipientResolutionInput {
   readonly eventType: InternalNotificationEventType;
   readonly workOrder: Pick<
     WorkOrder,
-    "assignedCoordinatorUserId" | "assignedManagerUserId"
+    "coordinatorUserId" | "managerUserId"
   > | null;
   readonly organizationUsers: readonly NotificationRecipientContextUser[];
 }
@@ -23,13 +23,13 @@ export function resolveInternalNotificationRecipients(
   const recipients = new Map<string, NotificationRecipient>();
 
   const includeAssignedCoordinator = () => {
-    if (!input.workOrder?.assignedCoordinatorUserId) {
+    if (!input.workOrder?.coordinatorUserId) {
       return;
     }
 
     const coordinator = input.organizationUsers.find(
       (user) =>
-        user.id === input.workOrder?.assignedCoordinatorUserId &&
+        user.id === input.workOrder?.coordinatorUserId &&
         user.role === APP_ROLES.Coordinator,
     );
     if (coordinator) {
@@ -42,13 +42,13 @@ export function resolveInternalNotificationRecipients(
   };
 
   const includeAssignedManager = () => {
-    if (!input.workOrder?.assignedManagerUserId) {
+    if (!input.workOrder?.managerUserId) {
       return;
     }
 
     const manager = input.organizationUsers.find(
       (user) =>
-        user.id === input.workOrder?.assignedManagerUserId &&
+        user.id === input.workOrder?.managerUserId &&
         (user.role === APP_ROLES.Manager || user.role === APP_ROLES.Owner),
     );
     if (manager && isInternalRecipientRole(manager.role)) {

@@ -31,10 +31,10 @@ export default async function ContractorWorkOrdersPage({
 
       <nav className="flex flex-wrap gap-2" aria-label="Contractor work order filters">
         <FilterLink label="All assigned" href="/contractor/work-orders" active={filter === "all"} />
-        <FilterLink label="Quote requested" href="/contractor/work-orders?filter=quote_requested" active={filter === "quote_requested"} />
-        <FilterLink label="Approved to proceed" href="/contractor/work-orders?filter=approved_to_proceed" active={filter === "approved_to_proceed"} />
+        <FilterLink label="Quote required" href="/contractor/work-orders?filter=quote_required" active={filter === "quote_required"} />
+        <FilterLink label="Client approved" href="/contractor/work-orders?filter=client_approved" active={filter === "client_approved"} />
         <FilterLink label="In progress" href="/contractor/work-orders?filter=in_progress" active={filter === "in_progress"} />
-        <FilterLink label="Completed" href="/contractor/work-orders?filter=completed" active={filter === "completed"} />
+        <FilterLink label="Work completed" href="/contractor/work-orders?filter=work_completed" active={filter === "work_completed"} />
       </nav>
 
       <ContractorWorkOrderList items={items} />
@@ -60,10 +60,10 @@ function FilterLink({
 
 function parseFilter(value: string | undefined): ContractorWorkOrderFilter {
   if (
-    value === "quote_requested" ||
-    value === "approved_to_proceed" ||
+    value === "quote_required" ||
+    value === "client_approved" ||
     value === "in_progress" ||
-    value === "completed"
+    value === "work_completed"
   ) {
     return value;
   }

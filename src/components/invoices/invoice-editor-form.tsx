@@ -4,7 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { Dispatch, FormEvent, SetStateAction } from "react";
-import type { Invoice, InvoiceCurrency, InvoiceLineItem } from "@/types/invoice";
+import type {
+  ClientInvoice,
+  InvoiceCurrency,
+  InvoiceLineItem,
+} from "@/types/invoice";
 import {
   calculateInvoiceLineTotal,
   calculateInvoiceSubtotal,
@@ -41,7 +45,7 @@ export function InvoiceEditorForm({
   workOrder,
 }: {
   cancelHref: string;
-  invoice?: Invoice;
+  invoice?: ClientInvoice;
   method: "POST" | "PATCH";
   submitHref: string;
   successHref: string;

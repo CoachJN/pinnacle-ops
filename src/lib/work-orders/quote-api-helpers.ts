@@ -1,36 +1,31 @@
 import type { AccessActor } from "../../types/auth.ts";
 import { USER_ROLES, type UserRole } from "../../types/permissions.ts";
-import type { QuoteStatus } from "../../types/quote.ts";
+import type { ClientQuoteStatus } from "../../types/quote.ts";
 import type {
   ActivityLog,
-  Quote,
+  ClientQuote,
   WorkOrder,
 } from "../../server/repositories/firestore/models.ts";
 
-export function safeQuoteSummaryForActor(actor: AccessActor, quote: Quote) {
+export function safeQuoteSummaryForActor(actor: AccessActor, quote: ClientQuote) {
   if (actor.actorType === "internal") {
     return {
       id: quote.id,
       workOrderId: quote.workOrderId,
       clientOrganizationId: quote.clientOrganizationId,
       locationId: quote.locationId,
-      contractorOrganizationId: quote.contractorOrganizationId,
-      versionNumber: quote.versionNumber,
+      sourceContractorQuoteId: quote.sourceContractorQuoteId,
       status: quote.status,
-      laborAmount: quote.laborAmount,
-      materialAmount: quote.materialAmount,
-      otherAmount: quote.otherAmount,
+      lineItems: quote.lineItems,
+      subtotal: quote.subtotal,
+      taxAmount: quote.taxAmount,
       totalAmount: quote.totalAmount,
-      currency: quote.currency,
-      scopeSummary: quote.scopeSummary,
-      contractorNotes: quote.contractorNotes,
-      internalReviewNotes: quote.internalReviewNotes,
-      clientResponseNotes: quote.clientResponseNotes,
-      submittedByUserId: quote.submittedByUserId,
-      submittedAt: quote.submittedAt,
-      reviewedAt: quote.reviewedAt,
-      clientDecisionAt: quote.clientDecisionAt,
-      contractorSnapshot: quote.contractorSnapshot,
+      notes: quote.notes,
+      sentAt: quote.sentAt,
+      respondedAt: quote.respondedAt,
+      approvedAt: quote.approvedAt,
+      rejectedAt: quote.rejectedAt,
+      rejectionReason: quote.rejectionReason,
       workOrderSnapshot: quote.workOrderSnapshot,
       createdAt: quote.createdAt,
       updatedAt: quote.updatedAt,
@@ -41,18 +36,14 @@ export function safeQuoteSummaryForActor(actor: AccessActor, quote: Quote) {
     return {
       id: quote.id,
       workOrderId: quote.workOrderId,
-      versionNumber: quote.versionNumber,
       status: quote.status,
-      laborAmount: quote.laborAmount,
-      materialAmount: quote.materialAmount,
-      otherAmount: quote.otherAmount,
+      lineItems: quote.lineItems,
+      subtotal: quote.subtotal,
+      taxAmount: quote.taxAmount,
       totalAmount: quote.totalAmount,
-      currency: quote.currency,
-      scopeSummary: quote.scopeSummary,
-      contractorNotes: quote.contractorNotes,
-      submittedAt: quote.submittedAt,
-      reviewedAt: quote.reviewedAt,
-      contractorSnapshot: quote.contractorSnapshot,
+      notes: quote.notes,
+      sentAt: quote.sentAt,
+      respondedAt: quote.respondedAt,
       createdAt: quote.createdAt,
       updatedAt: quote.updatedAt,
     };
@@ -61,14 +52,15 @@ export function safeQuoteSummaryForActor(actor: AccessActor, quote: Quote) {
   return {
     id: quote.id,
     workOrderId: quote.workOrderId,
-    versionNumber: quote.versionNumber,
     status: quote.status,
+    subtotal: quote.subtotal,
+    taxAmount: quote.taxAmount,
     totalAmount: quote.totalAmount,
-    currency: quote.currency,
-    scopeSummary: quote.scopeSummary,
-    submittedAt: quote.submittedAt,
-    reviewedAt: quote.reviewedAt,
-    clientDecisionAt: quote.clientDecisionAt,
+    notes: quote.notes,
+    sentAt: quote.sentAt,
+    respondedAt: quote.respondedAt,
+    approvedAt: quote.approvedAt,
+    rejectedAt: quote.rejectedAt,
     createdAt: quote.createdAt,
     updatedAt: quote.updatedAt,
   };
@@ -84,18 +76,14 @@ export function filterVisibleActivityLogsForActor(
 export function canActorReadQuote(
   actor: AccessActor,
   workOrder: WorkOrder,
-  quote: Quote,
+  quote: ClientQuote,
 ): boolean {
   if (actor.actorType === "internal") {
     return true;
   }
 
   if (actor.actorType === "contractor") {
-    return (
-      isAssignedContractorActorForWorkOrder(actor, workOrder) &&
-      (quote.contractorOrganizationId === null ||
-        quote.contractorOrganizationId === actor.scope.contractorOrganizationId)
-    );
+    return isAssignedContractorActorForWorkOrder(actor, workOrder);
   }
 
   return (
@@ -108,29 +96,18 @@ export function canActorReadQuote(
 export function isAllowedQuoteTransitionForActor(
   actor: AccessActor,
   workOrder: WorkOrder,
-  quote: Quote,
-  toStatus: QuoteStatus,
+  quote: ClientQuote,
+  toStatus: ClientQuoteStatus,
 ): boolean {
   if (quote.id !== workOrder.currentQuoteId) {
     return false;
   }
 
-  if (quote.status === "draft" && toStatus === "submitted") {
+  if (quote.status === "draft" && toStatus === "sent") {
     return canActorEditDraftQuote(actor, workOrder, quote);
   }
 
-  if (quote.status === "submitted" && toStatus === "under_review") {
-    return actor.actorType === "internal" && isManagerialRole(actor.role);
-  }
-
-  if (quote.status === "under_review" && toStatus === "ready_for_client") {
-    return actor.actorType === "internal" && isManagerialRole(actor.role);
-  }
-
-  if (
-    quote.status === "ready_for_client" &&
-    (toStatus === "client_approved" || toStatus === "client_rejected")
-  ) {
+  if (quote.status === "sent" && (toStatus === "approved" || toStatus === "rejected")) {
     return actor.actorType === "client";
   }
 
@@ -140,7 +117,7 @@ export function isAllowedQuoteTransitionForActor(
 function canActorEditDraftQuote(
   actor: AccessActor,
   workOrder: WorkOrder,
-  quote: Quote,
+  quote: ClientQuote,
 ): boolean {
   if (actor.actorType === "internal") {
     return true;
@@ -148,9 +125,7 @@ function canActorEditDraftQuote(
 
   return (
     actor.actorType === "contractor" &&
-    isAssignedContractorActorForWorkOrder(actor, workOrder) &&
-    (quote.contractorOrganizationId === null ||
-      quote.contractorOrganizationId === actor.scope.contractorOrganizationId)
+    isAssignedContractorActorForWorkOrder(actor, workOrder)
   );
 }
 
@@ -160,17 +135,13 @@ function isAssignedContractorActorForWorkOrder(
 ): boolean {
   return (
     actor.actorType === "contractor" &&
-    workOrder.assignedContractorOrganizationId ===
+    workOrder.assignedContractorId ===
       actor.scope.contractorOrganizationId
   );
 }
 
-function canClientSeeQuoteStatus(status: QuoteStatus): boolean {
-  return (
-    status === "ready_for_client" ||
-    status === "client_approved" ||
-    status === "client_rejected"
-  );
+function canClientSeeQuoteStatus(status: ClientQuoteStatus): boolean {
+  return status === "sent" || status === "approved" || status === "rejected";
 }
 
 function canActorReadActivityLog(

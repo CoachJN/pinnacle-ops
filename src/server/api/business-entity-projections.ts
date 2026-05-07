@@ -7,13 +7,15 @@ export function safeLocationSummary(location: Location) {
   return {
     id: location.id,
     clientOrganizationId: location.clientOrganizationId,
-    clientSnapshot: location.clientSnapshot,
     name: location.name,
+    displayName: location.displayName,
     code: location.code,
+    storeNumber: location.storeNumber,
     status: location.status,
     city: location.city,
     region: location.region,
     countryCode: location.countryCode,
+    timeZone: location.timeZone,
     updatedAt: location.updatedAt,
   };
 }
@@ -28,10 +30,7 @@ export function safeLocationSummaryForActor(
     return summary;
   }
 
-  return {
-    ...summary,
-    clientSnapshot: undefined,
-  };
+  return summary;
 }
 
 export function safeLocationDetail(location: Location) {
@@ -40,10 +39,12 @@ export function safeLocationDetail(location: Location) {
     addressLine1: location.addressLine1,
     addressLine2: location.addressLine2,
     postalCode: location.postalCode,
-    locationContactName: location.locationContactName,
-    locationContactEmail: location.locationContactEmail,
-    locationContactPhone: location.locationContactPhone,
+    primaryContactId: location.primaryContactId,
+    siteContactId: location.siteContactId,
+    latitude: location.latitude,
+    longitude: location.longitude,
     accessNotes: location.accessNotes,
+    serviceNotes: location.serviceNotes,
     notes: location.notes,
     createdAt: location.createdAt,
     recordStatus: location.recordStatus,
@@ -62,7 +63,6 @@ export function safeLocationDetailForActor(
 
   return {
     ...detail,
-    clientSnapshot: undefined,
     notes: undefined,
     recordStatus: undefined,
   };

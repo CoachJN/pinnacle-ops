@@ -7,12 +7,14 @@ import type {
 import type { EntityId } from "@/types/entity";
 import type {
   ClientQuote,
-  ContractorQuote,
   ClientQuoteOwnershipReference,
+  ContractorQuote,
   ContractorQuoteOwnershipReference,
-  Invoice,
+} from "@/types/quote";
+import type {
+  ClientInvoice as Invoice,
   InvoiceOwnershipReference,
-} from "@/types/financial";
+} from "@/types/invoice";
 import {
   INVOICE_CONTROL_ACTIONS,
   QUOTE_CONTROL_ACTIONS,
@@ -20,11 +22,9 @@ import {
   roleCanControlContractorQuote,
   roleCanControlInvoice,
 } from "@/types/financial-controls";
-import type {
-  ClientOrganization,
-  ContractorOrganization,
-  Location,
-} from "@/types/organization";
+import type { ClientOrganization } from "@/types/client-organization";
+import type { ContractorOrganization } from "@/types/contractor";
+import type { Location } from "@/types/location";
 import type {
   Assignment,
   AssignmentOwnershipReference,
@@ -70,11 +70,10 @@ export type ClientQuoteAccessTarget = TenantScopedTarget &
   Partial<Pick<ClientQuote, "status">>;
 
 export type ClientQuoteTransformTarget = ClientQuoteAccessTarget &
-  Required<Pick<ClientQuote, "contractorQuoteId">>;
+  Required<Pick<ClientQuote, "sourceContractorQuoteId">>;
 
 export type InvoiceAccessTarget = TenantScopedTarget &
   InvoiceOwnershipReference &
-  Pick<Invoice, "contractorOrganizationId"> &
   Partial<Pick<Invoice, "status">>;
 
 export type ClientOrganizationAccessTarget = TenantScopedTarget &
@@ -512,7 +511,7 @@ export const clientQuotePolicy = {
       contractorQuote.status === "accepted" &&
       target.organizationId === contractorQuote.organizationId &&
       target.workOrderId === contractorQuote.workOrderId &&
-      target.contractorQuoteId === contractorQuote.id
+      target.sourceContractorQuoteId === contractorQuote.id
     );
   },
 
@@ -1324,13 +1323,16 @@ function isClientActorForLocation(
 
 function isContractorActorForOrganization(
   actor: AccessActor,
-  target: TenantScopedTarget & Pick<Assignment, "contractorOrganizationId">,
+  target: TenantScopedTarget & {
+    contractorOrganizationId: EntityId | null;
+  },
   entity: PermissionEntity,
   authority: AuthorityCategory,
 ): actor is ContractorAccessActor {
   return (
     actor.actorType === "contractor" &&
     actor.scope.organizationId === target.organizationId &&
+    target.contractorOrganizationId !== null &&
     actor.scope.contractorOrganizationId === target.contractorOrganizationId &&
     roleCanAccessEntity(actor.role, entity, authority)
   );
@@ -1338,8 +1340,10 @@ function isContractorActorForOrganization(
 
 function isContractorAssignedToWorkOrder(
   actor: AccessActor,
-  target: TenantScopedTarget &
-    Pick<Assignment, "workOrderId" | "contractorOrganizationId">,
+  target: TenantScopedTarget & {
+    workOrderId: EntityId;
+    contractorOrganizationId: EntityId | null;
+  },
   context: AssignmentRelationshipContext,
   entity: PermissionEntity,
   authority: AuthorityCategory,

@@ -9,7 +9,8 @@ export interface ContractorListQuery {
 
 export interface ContractorAssignmentReadiness {
   status: ContractorStatus;
-  serviceCategories: string[];
+  isAssignable?: boolean;
+  trades?: string[];
 }
 
 export interface ContractorAssignedWorkOrderSummary {

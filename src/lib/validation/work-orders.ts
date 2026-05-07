@@ -20,9 +20,9 @@ const createWorkOrderAllowedFields = [
   "priority",
   "clientOrganizationId",
   "locationId",
-  "requestedByUserId",
-  "assignedCoordinatorUserId",
-  "assignedManagerUserId",
+  "requestedByContactId",
+  "coordinatorUserId",
+  "managerUserId",
   "category",
   "requestedServiceDate",
 ] as const;
@@ -54,17 +54,17 @@ export const createWorkOrderSchema = createValidationSchema((value: unknown) => 
       "clientOrganizationId",
     ),
     locationId: requireString(payload.locationId, "locationId"),
-    requestedByUserId: parseNullableString(
-      payload.requestedByUserId,
-      "requestedByUserId",
+    requestedByContactId: parseNullableString(
+      payload.requestedByContactId,
+      "requestedByContactId",
     ),
-    assignedCoordinatorUserId: parseNullableString(
-      payload.assignedCoordinatorUserId,
-      "assignedCoordinatorUserId",
+    coordinatorUserId: parseNullableString(
+      payload.coordinatorUserId,
+      "coordinatorUserId",
     ),
-    assignedManagerUserId: parseNullableString(
-      payload.assignedManagerUserId,
-      "assignedManagerUserId",
+    managerUserId: parseNullableString(
+      payload.managerUserId,
+      "managerUserId",
     ),
     category: parseNullableString(payload.category, "category"),
     requestedServiceDate: parseNullableDateTime(

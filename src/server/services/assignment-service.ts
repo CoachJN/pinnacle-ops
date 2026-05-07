@@ -15,7 +15,7 @@ import type {
 } from "@/server/repositories";
 import type { EntityId, IsoDateTimeString } from "@/types/entity";
 import type { AssignmentStatus } from "@/types/work-order";
-import type { ActivityLogService } from "./activity-log-service";
+import type { DomainEventService } from "./domain-event-service";
 import type { NotificationService } from "./notification-service";
 import { createServiceLogger } from "./observability";
 import { conflictError, notFoundError, validationError } from "./errors";
@@ -75,7 +75,8 @@ export interface AssignableContractorOption {
   id: EntityId;
   label: string;
   status: ContractorOrganization["status"];
-  serviceCategories: string[];
+  parentContractorId: EntityId | null;
+  trades: string[];
   isAssignable: boolean;
   reason: string | null;
 }
@@ -86,7 +87,7 @@ export function createAssignmentService(
     "assignments" | "workOrders" | "contractorOrganizations" | "userProfiles"
   >,
   dependencies: {
-    activityLogs: ActivityLogService;
+    domainEvents: DomainEventService;
     notifications?: NotificationService;
   },
 ): AssignmentService {
@@ -100,7 +101,7 @@ class FirestoreAssignmentService implements AssignmentService {
   >;
 
   private readonly dependencies: {
-    activityLogs: ActivityLogService;
+    domainEvents: DomainEventService;
     notifications?: NotificationService;
   };
 
@@ -110,7 +111,7 @@ class FirestoreAssignmentService implements AssignmentService {
       "assignments" | "workOrders" | "contractorOrganizations" | "userProfiles"
     >,
     dependencies: {
-      activityLogs: ActivityLogService;
+      domainEvents: DomainEventService;
       notifications?: NotificationService;
     },
   ) {
@@ -136,7 +137,7 @@ class FirestoreAssignmentService implements AssignmentService {
       return authorization;
     }
 
-    if (isTerminalAssignmentWorkOrderStatus(workOrder.value.status)) {
+    if (isTerminalAssignmentWorkOrderStatus(workOrder.value.lifecycleStatus)) {
       return serviceFail(
         conflictError("Contractors cannot be assigned to terminal work orders."),
       );
@@ -153,7 +154,7 @@ class FirestoreAssignmentService implements AssignmentService {
 
     const contractor = await this.getEligibleContractor(
       input.contractorOrganizationId,
-      workOrder.value.category,
+      workOrder.value.category ?? null,
     );
     if (!contractor.ok) {
       return contractor;
@@ -168,24 +169,41 @@ class FirestoreAssignmentService implements AssignmentService {
 
     await this.repositories.assignments.create(assignment);
     await this.saveWorkOrderAssignmentSnapshot(workOrder.value, contractor.value, input);
-    await this.dependencies.activityLogs.record({
+    await this.dependencies.domainEvents.record({
       ...input,
       now: assignment.assignedAt,
       workOrderId: workOrder.value.id,
-      action: "assignment.created",
-      eventType: "contractor_assigned",
-      message: `Assigned ${assignment.contractorSnapshot?.name ?? contractor.value.id}.`,
-      entityType: "assignment",
-      entityId: assignment.id,
-      entityLabel: assignment.contractorSnapshot?.name ?? contractor.value.id,
+      type: "assignment_created",
       visibility: "internal",
-      changes: [
-        { field: "status", to: assignment.status },
-        { field: "contractorOrganizationId", to: assignment.contractorOrganizationId },
-      ],
-      metadata: {
+      lifecycleStatus: workOrder.value.lifecycleStatus,
+      entity: {
+        entityType: "assignment",
+        entityId: assignment.id,
+        label: assignment.contractorSnapshot?.name ?? contractor.value.id,
+      },
+      summary: `Assigned ${assignment.contractorSnapshot?.name ?? contractor.value.id}.`,
+      payload: {
+        assignmentId: assignment.id,
         contractorOrganizationId: assignment.contractorOrganizationId,
-        contractorName: assignment.contractorSnapshot?.name ?? contractor.value.id,
+        status: assignment.status,
+      },
+    });
+    await this.dependencies.domainEvents.record({
+      ...input,
+      now: assignment.assignedAt,
+      workOrderId: workOrder.value.id,
+      type: "contractor_contacted",
+      visibility: "contractor",
+      lifecycleStatus: workOrder.value.lifecycleStatus,
+      entity: {
+        entityType: "assignment",
+        entityId: assignment.id,
+        label: assignment.contractorSnapshot?.name ?? contractor.value.id,
+      },
+      summary: `Contacted ${assignment.contractorSnapshot?.name ?? contractor.value.id} for assignment.`,
+      payload: {
+        assignmentId: assignment.id,
+        contractorOrganizationId: assignment.contractorOrganizationId,
       },
     });
     logger.info("use_case.completed", {
@@ -227,7 +245,7 @@ class FirestoreAssignmentService implements AssignmentService {
       return authorization;
     }
 
-    if (isTerminalAssignmentWorkOrderStatus(workOrder.value.status)) {
+    if (isTerminalAssignmentWorkOrderStatus(workOrder.value.lifecycleStatus)) {
       return serviceFail(
         conflictError("Contractors cannot be reassigned on terminal work orders."),
       );
@@ -252,7 +270,7 @@ class FirestoreAssignmentService implements AssignmentService {
 
     const contractor = await this.getEligibleContractor(
       input.contractorOrganizationId,
-      workOrder.value.category,
+      workOrder.value.category ?? null,
     );
     if (!contractor.ok) {
       return contractor;
@@ -269,23 +287,6 @@ class FirestoreAssignmentService implements AssignmentService {
         { ...input, now },
       ),
     );
-    await this.dependencies.activityLogs.record({
-      ...input,
-      now,
-      workOrderId: input.workOrderId,
-      action: "assignment.reassigned",
-      eventType: "assignment_reassigned",
-      message: "Cancelled prior active assignment during reassignment.",
-      entityType: "assignment",
-      entityId: currentAssignment.id,
-      entityLabel: currentAssignment.contractorSnapshot?.name ?? currentAssignment.assigneeUserId,
-      visibility: "internal",
-      changes: [{ field: "status", from: currentAssignment.status, to: "cancelled" }],
-      metadata: {
-        replacementContractorOrganizationId: contractor.value.id,
-      },
-    });
-
     const created = await this.assignContractor({
       ...input,
       now,
@@ -325,17 +326,24 @@ class FirestoreAssignmentService implements AssignmentService {
       contractors.items
         .filter((contractor) => !contractor.isDeleted)
         .map((contractor) => {
+          const parent = contractor.parentContractorId
+            ? contractors.items.find(
+                (candidate) => candidate.id === contractor.parentContractorId,
+              ) ?? null
+            : null;
           const eligibility = getContractorAssignmentEligibility({
             status: contractor.status,
-            serviceCategories: contractor.serviceCategories,
+            isAssignable: contractor.isAssignable,
+            trades: contractor.trades,
             workOrderCategory: input.workOrderCategory,
           });
 
           return {
             id: contractor.id,
-            label: contractor.displayName ?? contractor.name,
+            label: buildContractorOptionLabel(contractor, parent),
             status: contractor.status,
-            serviceCategories: contractor.serviceCategories,
+            parentContractorId: contractor.parentContractorId ?? null,
+            trades: contractor.trades ?? [],
             isAssignable: eligibility.isAssignable,
             reason: eligibility.reason,
           };
@@ -399,23 +407,33 @@ class FirestoreAssignmentService implements AssignmentService {
     );
 
     await this.repositories.assignments.save(updated);
-    await this.dependencies.activityLogs.record({
-      ...input,
-      now: timestamp,
-      workOrderId: assignment.workOrderId,
-      action: "assignment.status_changed",
-      eventType: "assignment_status_changed",
-      message: `Changed assignment status from ${assignment.status} to ${input.status}.`,
-      entityType: "assignment",
-      entityId: assignment.id,
-      entityLabel: assignment.contractorSnapshot?.name ?? assignment.assigneeUserId,
-      visibility: input.actor.role === "contractor_user" ? "contractor" : "internal",
-      changes: [{ field: "status", from: assignment.status, to: input.status }],
-      metadata: {
-        fromStatus: assignment.status,
-        toStatus: input.status,
-      },
-    });
+    if (input.status === "accepted" || input.status === "declined") {
+      await this.dependencies.domainEvents.record({
+        ...input,
+        now: timestamp,
+        workOrderId: assignment.workOrderId,
+        type: input.status === "accepted" ? "assignment_accepted" : "assignment_declined",
+        visibility: input.actor.role === "contractor_user" ? "contractor" : "internal",
+        lifecycleStatus: null,
+        entity: {
+          entityType: "assignment",
+          entityId: assignment.id,
+          label: assignment.contractorSnapshot?.name ?? assignment.assigneeUserId,
+        },
+        summary: `Changed assignment status from ${assignment.status} to ${input.status}.`,
+        payload:
+          input.status === "accepted"
+            ? {
+                assignmentId: assignment.id,
+                status: input.status,
+              }
+            : {
+                assignmentId: assignment.id,
+                status: input.status,
+                notes: input.notes ?? null,
+              },
+      });
+    }
     logger.info("use_case.completed", {
       action: "assignment.status_changed",
       resource: {
@@ -486,7 +504,8 @@ class FirestoreAssignmentService implements AssignmentService {
 
     const eligibility = getContractorAssignmentEligibility({
       status: contractor.status,
-      serviceCategories: contractor.serviceCategories,
+      isAssignable: contractor.isAssignable,
+      trades: contractor.trades,
       workOrderCategory,
     });
     if (!eligibility.isAssignable) {
@@ -587,19 +606,42 @@ class FirestoreAssignmentService implements AssignmentService {
     contractor: ContractorOrganization,
     input: ServiceAuditContext,
   ) {
+    const normalizedWorkOrder = {
+      ...workOrder,
+      // Some existing work orders were created through a path that did not
+      // persist organizationId onto the legacy record shape.
+      organizationId: workOrder.organizationId ?? input.organizationId,
+    };
+
     await this.repositories.workOrders.save(
       touchAuditFields(
         {
-          ...workOrder,
-          assignedContractorOrganizationId: contractor.id,
+          ...normalizedWorkOrder,
+          assignedContractorOrgId: contractor.id,
           contractorSnapshot: {
             id: contractor.id,
             name: contractor.displayName ?? contractor.name,
           },
-          status: workOrder.status === "approved_to_proceed" ? "assigned" : workOrder.status,
+          lifecycleStatus:
+            normalizedWorkOrder.lifecycleStatus === "client_approved"
+              ? "assigned"
+              : normalizedWorkOrder.lifecycleStatus,
+          assignedAt: input.now ?? new Date().toISOString(),
         },
         input,
       ),
     );
   }
+}
+
+function buildContractorOptionLabel(
+  contractor: ContractorOrganization,
+  parent: ContractorOrganization | null,
+): string {
+  const contractorLabel = contractor.displayName ?? contractor.name;
+  if (!parent) {
+    return contractorLabel;
+  }
+
+  return `${parent.displayName ?? parent.name} - ${contractorLabel}`;
 }

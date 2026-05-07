@@ -23,50 +23,52 @@ import type {
 
 export const WORK_ORDER_ACTION_CATALOG = [
   action("move_to_triage", WORK_ORDER_STATUS.Triage, "Move to triage"),
-  action("request_quote", WORK_ORDER_STATUS.QuotingRequired, "Request quote"),
-  action("mark_quote_received", WORK_ORDER_STATUS.QuoteReceived, "Mark quote received"),
+  action("request_quote", WORK_ORDER_STATUS.QuoteRequired, "Request quote"),
+  action(
+    "mark_quote_received",
+    WORK_ORDER_STATUS.ContractorQuoteReceived,
+    "Mark quote received",
+  ),
+  action("send_to_qa", WORK_ORDER_STATUS.QuoteUnderReview, "Review quote"),
   action(
     "send_for_client_approval",
-    WORK_ORDER_STATUS.AwaitingClientApproval,
+    WORK_ORDER_STATUS.ClientApprovalRequested,
     "Send for client approval",
   ),
   action(
     "approve_to_proceed",
-    WORK_ORDER_STATUS.ApprovedToProceed,
-    "Approve to proceed",
+    WORK_ORDER_STATUS.ClientApproved,
+    "Mark client approved",
   ),
   action(
     "move_to_scheduling",
-    WORK_ORDER_STATUS.Scheduling,
-    "Move to scheduling",
+    WORK_ORDER_STATUS.Assigned,
+    "Assign work order",
   ),
-  action("mark_scheduled", WORK_ORDER_STATUS.Scheduled, "Mark scheduled"),
+  action("mark_scheduled", WORK_ORDER_STATUS.ContractorScheduled, "Mark scheduled"),
   action("start_work", WORK_ORDER_STATUS.InProgress, "Start work"),
   action(
     "mark_work_completed",
     WORK_ORDER_STATUS.WorkCompleted,
     "Mark work completed",
   ),
-  action("send_to_qa", WORK_ORDER_STATUS.QaReview, "Send to QA"),
+  action("send_to_qa", WORK_ORDER_STATUS.CompletionReview, "Start completion review"),
   action(
     "ready_for_invoicing",
     WORK_ORDER_STATUS.ReadyForInvoicing,
     "Ready for invoicing",
   ),
-  action(
-    "complete_work_order",
-    WORK_ORDER_STATUS.Completed,
-    "Complete work order",
-  ),
+  action("complete_work_order", WORK_ORDER_STATUS.Closed, "Close work order"),
   action("place_on_hold", WORK_ORDER_STATUS.OnHold, "Place on hold"),
   action("escalate_work_order", WORK_ORDER_STATUS.Escalated, "Escalate work order"),
   action("cancel_work_order", WORK_ORDER_STATUS.Cancelled, "Cancel work order"),
 ] as const satisfies readonly WorkOrderActionCatalogEntry[];
 
 const quoteApprovalGatedTargets = [
-  WORK_ORDER_STATUS.ApprovedToProceed,
-  WORK_ORDER_STATUS.Scheduling,
-  WORK_ORDER_STATUS.Scheduled,
+  WORK_ORDER_STATUS.ClientApproved,
+  WORK_ORDER_STATUS.Assigned,
+  WORK_ORDER_STATUS.AwaitingContractorResponse,
+  WORK_ORDER_STATUS.ContractorScheduled,
   WORK_ORDER_STATUS.InProgress,
 ] as const satisfies readonly WorkOrderLifecycleStatus[];
 

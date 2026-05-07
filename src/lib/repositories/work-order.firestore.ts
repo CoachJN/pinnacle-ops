@@ -38,16 +38,22 @@ interface WorkOrderDocument {
   description: string;
   clientOrganizationId: EntityId;
   locationId: EntityId;
+  requestedByContactId: EntityId | null;
+  siteContactId: EntityId | null;
+  assignedContractorId: EntityId | null;
   status: WorkOrderStatus;
   priority: WorkOrderPriority;
   category: WorkOrderCategory;
+  requestedServiceDate: Timestamp | null;
+  requiresQuote: boolean;
+  quoteRequiredThresholdCents: number | null;
   requestedByName: string;
   requestedByEmail: string | null;
   requestedByPhone: string | null;
   source: WorkOrderSource;
   createdByUserId: EntityId;
-  assignedCoordinatorUserId: EntityId | null;
-  assignedManagerUserId: EntityId | null;
+  coordinatorUserId: EntityId | null;
+  managerUserId: EntityId | null;
   dueDate: Timestamp | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
@@ -144,6 +150,18 @@ export function serializeWorkOrderForFirestore(
       "clientOrganizationId",
     ),
     locationId: normalizeEntityId(workOrder.locationId, "locationId"),
+    requestedByContactId: normalizeNullableEntityId(
+      workOrder.requestedByContactId,
+      "requestedByContactId",
+    ),
+    siteContactId: normalizeNullableEntityId(
+      workOrder.siteContactId,
+      "siteContactId",
+    ),
+    assignedContractorId: normalizeNullableEntityId(
+      workOrder.assignedContractorId,
+      "assignedContractorId",
+    ),
     status: parseEnumValue(
       workOrder.status,
       WORK_ORDER_STATUSES,
@@ -159,6 +177,17 @@ export function serializeWorkOrderForFirestore(
       WORK_ORDER_CATEGORIES,
       "category",
     ),
+    requestedServiceDate: toNullableFirestoreTimestamp(
+      workOrder.requestedServiceDate,
+    ),
+    requiresQuote: workOrder.requiresQuote,
+    quoteRequiredThresholdCents:
+      workOrder.quoteRequiredThresholdCents == null
+        ? null
+        : normalizeNonNegativeInteger(
+            workOrder.quoteRequiredThresholdCents,
+            "quoteRequiredThresholdCents",
+          ),
     requestedByName: normalizeRequiredString(
       workOrder.requestedByName,
       "requestedByName",
@@ -170,13 +199,13 @@ export function serializeWorkOrderForFirestore(
       workOrder.createdByUserId,
       "createdByUserId",
     ),
-    assignedCoordinatorUserId: normalizeNullableEntityId(
-      workOrder.assignedCoordinatorUserId,
-      "assignedCoordinatorUserId",
+    coordinatorUserId: normalizeNullableEntityId(
+      workOrder.coordinatorUserId,
+      "coordinatorUserId",
     ),
-    assignedManagerUserId: normalizeNullableEntityId(
-      workOrder.assignedManagerUserId,
-      "assignedManagerUserId",
+    managerUserId: normalizeNullableEntityId(
+      workOrder.managerUserId,
+      "managerUserId",
     ),
     dueDate: toNullableFirestoreTimestamp(workOrder.dueDate),
     createdAt: toFirestoreTimestamp(workOrder.createdAt),
@@ -241,21 +270,42 @@ export function parseWorkOrderDocument(
     description,
     clientOrganizationId,
     locationId,
+    requestedByContactId: parseNullableEntityId(
+      raw.requestedByContactId,
+      "requestedByContactId",
+    ),
+    siteContactId: parseNullableEntityId(raw.siteContactId, "siteContactId"),
+    assignedContractorId: parseNullableEntityId(
+      raw.assignedContractorId,
+      "assignedContractorId",
+    ),
     status: parseEnumValue(raw.status, WORK_ORDER_STATUSES, "status"),
     priority: parseEnumValue(raw.priority, WORK_ORDER_PRIORITIES, "priority"),
     category: parseEnumValue(raw.category, WORK_ORDER_CATEGORIES, "category"),
+    requestedServiceDate: parseNullableTimestamp(
+      raw.requestedServiceDate,
+      "requestedServiceDate",
+    ),
+    requiresQuote:
+      raw.requiresQuote === undefined || raw.requiresQuote === null
+        ? false
+        : parseBoolean(raw.requiresQuote, "requiresQuote"),
+    quoteRequiredThresholdCents: parseNullableNonNegativeInteger(
+      raw.quoteRequiredThresholdCents,
+      "quoteRequiredThresholdCents",
+    ),
     requestedByName,
     requestedByEmail,
     requestedByPhone,
     source: parseEnumValue(raw.source, WORK_ORDER_SOURCES, "source"),
     createdByUserId: parseEntityId(raw.createdByUserId, "createdByUserId"),
-    assignedCoordinatorUserId: parseNullableEntityId(
-      raw.assignedCoordinatorUserId,
-      "assignedCoordinatorUserId",
+    coordinatorUserId: parseNullableEntityId(
+      raw.coordinatorUserId,
+      "coordinatorUserId",
     ),
-    assignedManagerUserId: parseNullableEntityId(
-      raw.assignedManagerUserId,
-      "assignedManagerUserId",
+    managerUserId: parseNullableEntityId(
+      raw.managerUserId,
+      "managerUserId",
     ),
     dueDate: parseNullableTimestamp(raw.dueDate, "dueDate"),
     createdAt,
@@ -347,7 +397,7 @@ export function buildWorkOrderCreateModel(input: {
   closedAt?: IsoDateTimeString | null;
 }): WorkOrder {
   const workOrderNumber = input.workOrderNumber?.trim() || buildWorkOrderNumber(input.id);
-  const status = input.status ?? "NEW";
+  const status = input.status ?? "new";
 
   return {
     id: input.id,
@@ -356,26 +406,44 @@ export function buildWorkOrderCreateModel(input: {
     description: input.data.description.trim(),
     clientOrganizationId: input.data.clientOrganizationId.trim(),
     locationId: input.data.locationId.trim(),
+    requestedByContactId: normalizeNullableEntityId(
+      input.data.requestedByContactId,
+      "requestedByContactId",
+    ),
+    siteContactId: normalizeNullableEntityId(
+      input.data.siteContactId,
+      "siteContactId",
+    ),
+    assignedContractorId: null,
     status,
     priority: input.data.priority,
     category: input.data.category,
+    requestedServiceDate: input.data.requestedServiceDate ?? null,
+    requiresQuote: input.data.requiresQuote ?? false,
+    quoteRequiredThresholdCents:
+      input.data.quoteRequiredThresholdCents == null
+        ? null
+        : normalizeNonNegativeInteger(
+            input.data.quoteRequiredThresholdCents,
+            "quoteRequiredThresholdCents",
+          ),
     requestedByName: input.data.requestedByName.trim(),
     requestedByEmail: normalizeNullableString(input.data.requestedByEmail),
     requestedByPhone: normalizeNullableString(input.data.requestedByPhone),
     source: input.data.source,
     createdByUserId: input.data.createdByUserId.trim(),
-    assignedCoordinatorUserId: normalizeNullableEntityId(
-      input.data.assignedCoordinatorUserId,
-      "assignedCoordinatorUserId",
+    coordinatorUserId: normalizeNullableEntityId(
+      input.data.coordinatorUserId,
+      "coordinatorUserId",
     ),
-    assignedManagerUserId: normalizeNullableEntityId(
-      input.data.assignedManagerUserId,
-      "assignedManagerUserId",
+    managerUserId: normalizeNullableEntityId(
+      input.data.managerUserId,
+      "managerUserId",
     ),
     dueDate: input.data.dueDate ?? null,
     createdAt: input.now,
     updatedAt: input.now,
-    closedAt: status === "CLOSED" ? (input.closedAt ?? input.now) : null,
+    closedAt: status === "closed" ? (input.closedAt ?? input.now) : null,
     isArchived: false,
     searchText:
       input.searchText?.trim() ||
@@ -619,6 +687,29 @@ function parsePositiveInteger(value: unknown, fieldName: string): number {
 
 function normalizePositiveInteger(value: number, fieldName: string): number {
   return parsePositiveInteger(value, fieldName);
+}
+
+function parseNullableNonNegativeInteger(
+  value: unknown,
+  fieldName: string,
+): number | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  return parseNonNegativeInteger(value, fieldName);
+}
+
+function parseNonNegativeInteger(value: unknown, fieldName: string): number {
+  if (!Number.isInteger(value) || Number(value) < 0) {
+    throw new Error(`Field "${fieldName}" must be a non-negative integer.`);
+  }
+
+  return Number(value);
+}
+
+function normalizeNonNegativeInteger(value: number, fieldName: string): number {
+  return parseNonNegativeInteger(value, fieldName);
 }
 
 function parseEnumValue<TValue extends string>(

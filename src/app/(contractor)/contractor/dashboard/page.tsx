@@ -12,7 +12,10 @@ export default async function ContractorDashboardPage() {
   ]);
   const needsQuote = workOrders.filter((item) => item.quoteActionNeeded).slice(0, 5);
   const readyToPerform = workOrders.filter(
-    (item) => item.assignment.status === "accepted" && item.status !== "completed" && item.status !== "closed",
+    (item) =>
+      item.assignment.status === "accepted" &&
+      item.lifecycleStatus !== "work_completed" &&
+      item.lifecycleStatus !== "closed",
   ).slice(0, 5);
   const recentlyUpdated = workOrders.slice(0, 5);
   return (
@@ -36,8 +39,8 @@ export default async function ContractorDashboardPage() {
 
       <section className="grid gap-4 md:grid-cols-4">
         <SummaryCard label="Assigned work orders" value={summary.assignedWorkOrderCount} href="/contractor/work-orders" />
-        <SummaryCard label="Quote requested" value={summary.quoteRequestedCount} href="/contractor/work-orders?filter=quote_requested" />
-        <SummaryCard label="Ready to perform" value={summary.readyToPerformCount} href="/contractor/work-orders?filter=approved_to_proceed" />
+        <SummaryCard label="Quote required" value={summary.quoteRequestedCount} href="/contractor/work-orders?filter=quote_required" />
+        <SummaryCard label="Ready to perform" value={summary.readyToPerformCount} href="/contractor/work-orders?filter=client_approved" />
         <SummaryCard label="Recently updated" value={summary.recentlyUpdatedAssignments} href="/contractor/work-orders" />
       </section>
 

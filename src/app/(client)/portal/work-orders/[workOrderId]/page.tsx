@@ -29,7 +29,9 @@ export default async function ClientPortalWorkOrderDetailPage({
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
               {workOrder.workOrderNumber}
             </h1>
-            <p className="mt-2 text-sm text-slate-600">{workOrder.title}</p>
+            <p className="mt-2 text-sm text-slate-600">
+              {workOrder.shortDescription}
+            </p>
           </div>
           {workOrder.currentQuoteId ? (
             <Link
@@ -56,6 +58,26 @@ export default async function ClientPortalWorkOrderDetailPage({
               {workOrder.locationAddress ?? "Address details are not available in the portal."}
             </p>
           </section>
+
+          <section className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-950">Communications</h2>
+            <div className="mt-4 space-y-3">
+              {workOrder.communications && workOrder.communications.length > 0 ? (
+                workOrder.communications.map((entry) => (
+                  <article className="rounded-2xl border border-slate-200 bg-slate-50 p-4" key={entry.id}>
+                    <p className="text-sm font-medium text-slate-950">{entry.body}</p>
+                    <p className="mt-2 text-xs text-slate-500">
+                      {formatDate(entry.createdAt)} by {entry.actor.displayName ?? "System"}
+                    </p>
+                  </article>
+                ))
+              ) : (
+                <p className="text-sm text-slate-600">
+                  No client-visible communications yet.
+                </p>
+              )}
+            </div>
+          </section>
         </section>
 
         <aside className="space-y-6">
@@ -64,7 +86,7 @@ export default async function ClientPortalWorkOrderDetailPage({
             <dl className="mt-4 space-y-3 text-sm text-slate-600">
               <div className="flex items-center justify-between gap-4">
                 <dt>Current status</dt>
-                <dd className="font-medium text-slate-950">{workOrder.status}</dd>
+                <dd className="font-medium text-slate-950">{workOrder.lifecycleStatus}</dd>
               </div>
               <div className="flex items-center justify-between gap-4">
                 <dt>Priority</dt>

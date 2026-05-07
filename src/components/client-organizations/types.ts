@@ -1,16 +1,23 @@
+import type {
+  ContactLinkDetail,
+  ContactLinkInput,
+  ContactSummary,
+} from "@/types/contact";
+
 export interface ClientOrganizationSummary {
   id: string;
   name: string;
   displayName?: string;
   status: "active" | "inactive";
-  primaryContactName?: string;
-  primaryContactEmail?: string;
-  primaryContactPhone?: string;
+  primaryContactId?: string;
+  billingContactId?: string;
+  primaryContact?: ContactSummary | null;
+  billingContact?: ContactSummary | null;
+  linkedContacts?: ContactLinkDetail[];
   updatedAt: string;
 }
 
 export interface ClientOrganizationDetail extends ClientOrganizationSummary {
-  billingEmail?: string;
   notes?: string;
   createdAt: string;
   recordStatus: "active" | "archived";
@@ -19,16 +26,15 @@ export interface ClientOrganizationDetail extends ClientOrganizationSummary {
 export interface ClientOrganizationFormValues {
   name: string;
   displayName: string;
-  primaryContactName: string;
-  primaryContactEmail: string;
-  primaryContactPhone: string;
-  billingEmail: string;
+  primaryContactId: string;
+  billingContactId: string;
+  linkedContacts: ContactLinkInput[];
   notes: string;
   isActive: boolean;
 }
 
 export interface ClientOrganizationFormErrors {
   name?: string;
-  primaryContactEmail?: string;
-  billingEmail?: string;
+  primaryContactId?: string;
+  billingContactId?: string;
 }

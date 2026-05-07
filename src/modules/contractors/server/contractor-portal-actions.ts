@@ -60,24 +60,16 @@ export async function submitContractorQuoteAction(
     };
   }
 
-  const laborAmount = readMoney(formData, "laborAmount");
-  const materialAmount = readMoney(formData, "materialAmount");
-  const otherAmount = readMoney(formData, "otherAmount");
-  const scopeSummary = readRequiredString(formData, "scopeSummary");
-  const contractorNotes = readOptionalString(formData, "contractorNotes");
+  const lineItems = readQuoteLineItems(formData);
+  const taxAmount = readMoney(formData, "taxAmount");
+  const notes = readOptionalString(formData, "notes");
 
   const errors: Record<string, string> = {};
-  if (laborAmount === null) {
-    errors.laborAmount = "Enter a valid labor amount.";
+  if (lineItems.length < 1) {
+    errors.lineItems = "Add at least one valid line item.";
   }
-  if (materialAmount === null) {
-    errors.materialAmount = "Enter a valid material amount.";
-  }
-  if (otherAmount === null) {
-    errors.otherAmount = "Enter a valid other amount.";
-  }
-  if (!scopeSummary) {
-    errors.scopeSummary = "Scope summary is required.";
+  if (taxAmount === null) {
+    errors.taxAmount = "Enter a valid tax amount.";
   }
 
   if (Object.keys(errors).length > 0) {
@@ -88,41 +80,20 @@ export async function submitContractorQuoteAction(
     };
   }
 
-  const draftResult =
-    quote && quote.status === "draft"
-      ? await context.services.quotes.updateDraft({
-          ...context.audit,
-          workOrderId,
-          quoteId: quote.id,
-          contractorOrganizationId: context.actor.scope.contractorOrganizationId,
-          laborAmount: laborAmount!,
-          materialAmount: materialAmount!,
-          otherAmount: otherAmount!,
-          currency: quote.currency,
-          scopeSummary,
-          contractorNotes,
-        })
-      : await context.services.quotes.create({
-          ...context.audit,
-          workOrderId,
-          contractorOrganizationId: context.actor.scope.contractorOrganizationId,
-          laborAmount: laborAmount!,
-          materialAmount: materialAmount!,
-          otherAmount: otherAmount!,
-          currency: "USD",
-          scopeSummary,
-          contractorNotes,
-        });
-
-  if (!draftResult.ok) {
-    return { ok: false, message: draftResult.error.safeMessage };
-  }
-
-  const submittedResult = await context.services.quotes.transition({
+  const subtotal = roundMoney(
+    lineItems.reduce((sum, lineItem) => sum + lineItem.lineTotal, 0),
+  );
+  const submittedResult = await context.services.quoteWorkflow.submitContractorQuote({
     ...context.audit,
     workOrderId,
-    quoteId: draftResult.value.id,
-    toStatus: "submitted",
+    contractorQuoteId: quote?.status === "draft" ? quote.id : undefined,
+    contractorUserId: context.actor.userId,
+    contractorOrganizationId: context.actor.scope.contractorOrganizationId,
+    lineItems,
+    subtotal,
+    taxAmount: taxAmount!,
+    totalAmount: roundMoney(subtotal + taxAmount!),
+    notes,
   });
 
   if (!submittedResult.ok) {
@@ -207,5 +178,66 @@ function readMoney(formData: FormData, field: string): number | null {
     return null;
   }
 
-  return Math.round(amount * 100) / 100;
+  return roundMoney(amount);
+}
+
+function readQuoteLineItems(
+  formData: FormData,
+): Array<{
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+}> {
+  const value = formData.get("lineItemsJson");
+  if (typeof value !== "string" || !value.trim()) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed.flatMap((item) => {
+      if (!item || typeof item !== "object") {
+        return [];
+      }
+
+      const description =
+        typeof item.description === "string" ? item.description.trim() : "";
+      const quantity = typeof item.quantity === "number" ? item.quantity : Number.NaN;
+      const unitPrice =
+        typeof item.unitPrice === "number" ? item.unitPrice : Number.NaN;
+
+      if (
+        !description ||
+        !Number.isFinite(quantity) ||
+        quantity <= 0 ||
+        !Number.isFinite(unitPrice) ||
+        unitPrice < 0
+      ) {
+        return [];
+      }
+
+      const normalizedQuantity = roundMoney(quantity);
+      const normalizedUnitPrice = roundMoney(unitPrice);
+
+      return [
+        {
+          description,
+          quantity: normalizedQuantity,
+          unitPrice: normalizedUnitPrice,
+          lineTotal: roundMoney(normalizedQuantity * normalizedUnitPrice),
+        },
+      ];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function roundMoney(value: number): number {
+  return Math.round(value * 100) / 100;
 }

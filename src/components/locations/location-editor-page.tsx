@@ -10,12 +10,15 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { ActionFeedback } from "@/components/shared/action-feedback";
+import { ContactLinkManager } from "@/components/shared/contact-link-manager";
 import type { ClientOrganizationSummary } from "@/components/client-organizations/types";
 import type {
   LocationDetail,
   LocationFormErrors,
   LocationFormValues,
 } from "@/components/locations/types";
+import type { ContactSummary } from "@/types/contact";
+import type { ContactRoleSlotAssignment } from "@/lib/contact-linking";
 
 interface LocationEditorPageProps {
   mode: "create" | "edit";
@@ -38,6 +41,10 @@ interface ApiErrorResponse {
   };
 }
 
+interface ContactsResponse {
+  contacts: ContactSummary[];
+}
+
 const EMPTY_FORM: LocationFormValues = {
   clientOrganizationId: "",
   name: "",
@@ -48,10 +55,11 @@ const EMPTY_FORM: LocationFormValues = {
   province: "",
   postalCode: "",
   country: "",
-  contactName: "",
-  contactEmail: "",
-  contactPhone: "",
+  primaryContactId: "",
+  siteContactId: "",
+  linkedContacts: [],
   accessInstructions: "",
+  serviceNotes: "",
   notes: "",
   isActive: true,
 };
@@ -66,6 +74,7 @@ export function LocationEditorPage({
   const [clientOrganizations, setClientOrganizations] = useState<
     ClientOrganizationSummary[]
   >([]);
+  const [contacts, setContacts] = useState<ContactSummary[]>([]);
   const [formValues, setFormValues] = useState<LocationFormValues>({
     ...EMPTY_FORM,
     clientOrganizationId: defaultClientOrganizationId ?? "",
@@ -86,6 +95,8 @@ export function LocationEditorPage({
       try {
         const requests: Promise<Response>[] = [];
 
+        requests.push(fetch("/api/contacts", { cache: "no-store" }));
+
         if (!portalMode) {
           requests.push(fetch("/api/client-organizations?limit=100", { cache: "no-store" }));
         }
@@ -95,14 +106,26 @@ export function LocationEditorPage({
         }
 
         const responses = await Promise.all(requests);
+        const contactsPayload = (await responses[0].json()) as
+          | ContactsResponse
+          | ApiErrorResponse;
+        if (!responses[0]?.ok) {
+          throw new Error(
+            getApiErrorMessage(
+              contactsPayload as ApiErrorResponse,
+              "Unable to load contacts.",
+            ),
+          );
+        }
+
         let organizationsSuccessPayload: ClientOrganizationsResponse | null = null;
 
         if (!portalMode) {
-          const organizationsPayload = (await responses[0].json()) as
+          const organizationsPayload = (await responses[1].json()) as
             | ClientOrganizationsResponse
             | ApiErrorResponse;
 
-          if (!responses[0]?.ok) {
+          if (!responses[1]?.ok) {
             const errorPayload = organizationsPayload as ApiErrorResponse;
             throw new Error(
               getApiErrorMessage(
@@ -117,7 +140,7 @@ export function LocationEditorPage({
         }
 
         let nextLocation: LocationDetail | null = null;
-        const locationResponse = portalMode ? responses[0] : responses[1];
+        const locationResponse = portalMode ? responses[1] : responses[2];
         if (locationResponse) {
           const locationPayload = (await locationResponse.json()) as
             | LocationResponse
@@ -135,8 +158,16 @@ export function LocationEditorPage({
         }
 
         if (!isCancelled) {
+          setContacts((contactsPayload as ContactsResponse).contacts);
           if (organizationsSuccessPayload) {
             setClientOrganizations(organizationsSuccessPayload.clientOrganizations);
+          }
+          if (defaultClientOrganizationId) {
+            setFormValues((current) => ({
+              ...current,
+              clientOrganizationId:
+                current.clientOrganizationId || defaultClientOrganizationId,
+            }));
           }
           if (nextLocation) {
             setInitialLocation(nextLocation);
@@ -385,32 +416,6 @@ export function LocationEditorPage({
             value={formValues.country}
           />
 
-          <TextField
-            label="Contact name"
-            onChange={(value) =>
-              setFormValues((current) => ({ ...current, contactName: value }))
-            }
-            value={formValues.contactName}
-          />
-
-          <TextField
-            error={errors.contactEmail}
-            label="Contact email"
-            onChange={(value) =>
-              setFormValues((current) => ({ ...current, contactEmail: value }))
-            }
-            type="email"
-            value={formValues.contactEmail}
-          />
-
-          <TextField
-            label="Contact phone"
-            onChange={(value) =>
-              setFormValues((current) => ({ ...current, contactPhone: value }))
-            }
-            value={formValues.contactPhone}
-          />
-
           <TextareaField
             className="md:col-span-2"
             label="Access instructions"
@@ -425,11 +430,41 @@ export function LocationEditorPage({
 
           <TextareaField
             className="md:col-span-2"
-            label="Notes"
+            label="Service notes"
             onChange={(value) =>
-              setFormValues((current) => ({ ...current, notes: value }))
+              setFormValues((current) => ({ ...current, serviceNotes: value }))
             }
-            value={formValues.notes}
+            value={formValues.serviceNotes}
+          />
+
+          {portalMode ? null : (
+            <TextareaField
+              className="md:col-span-2"
+              label="Notes"
+              onChange={(value) =>
+                setFormValues((current) => ({ ...current, notes: value }))
+              }
+              value={formValues.notes}
+            />
+          )}
+        </div>
+
+        <div className="mt-6">
+          <ContactLinkManager
+            contacts={contacts}
+            description="Keep site role assignments and linked membership in sync while still allowing additional operational contacts."
+            linkedContacts={formValues.linkedContacts}
+            onLinkedContactsChange={(linkedContacts) =>
+              setFormValues((current) => ({ ...current, linkedContacts }))
+            }
+            onRoleSlotsChange={(roleSlots) =>
+              setFormValues((current) => ({
+                ...current,
+                ...mapLocationRoleSlotsToFormValues(roleSlots),
+              }))
+            }
+            roleSlots={toLocationRoleSlots(formValues)}
+            title="Linked contacts"
           />
         </div>
 
@@ -585,10 +620,16 @@ function mapLocationToFormValues(location: LocationDetail): LocationFormValues {
     province: location.region ?? "",
     postalCode: location.postalCode ?? "",
     country: location.countryCode ?? "",
-    contactName: location.locationContactName ?? "",
-    contactEmail: location.locationContactEmail ?? "",
-    contactPhone: location.locationContactPhone ?? "",
+    primaryContactId: location.primaryContactId ?? "",
+    siteContactId: location.siteContactId ?? "",
+    linkedContacts:
+      location.linkedContacts?.map((link) => ({
+        contactId: link.contactId,
+        relationshipType: link.relationshipType,
+        notes: link.notes ?? null,
+      })) ?? [],
     accessInstructions: location.accessNotes ?? "",
+    serviceNotes: location.serviceNotes ?? "",
     notes: location.notes ?? "",
     isActive: location.status === "active",
   };
@@ -600,16 +641,17 @@ function toApiPayload(values: LocationFormValues) {
     name: values.name,
     code: values.locationCode || null,
     status: values.isActive ? "active" : "inactive",
+    primaryContactId: values.primaryContactId || null,
+    siteContactId: values.siteContactId || null,
+    linkedContacts: values.linkedContacts,
     addressLine1: values.addressLine1 || null,
     addressLine2: values.addressLine2 || null,
     city: values.city || null,
     region: values.province || null,
     postalCode: values.postalCode || null,
     countryCode: values.country || null,
-    locationContactName: values.contactName || null,
-    locationContactEmail: values.contactEmail || null,
-    locationContactPhone: values.contactPhone || null,
     accessNotes: values.accessInstructions || null,
+    serviceNotes: values.serviceNotes || null,
     notes: values.notes || null,
   };
 }
@@ -625,13 +667,6 @@ function validateForm(values: LocationFormValues): LocationFormErrors {
     errors.name = "Location name is required.";
   }
 
-  if (
-    values.contactEmail.trim() &&
-    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.contactEmail.trim())
-  ) {
-    errors.contactEmail = "Enter a valid contact email.";
-  }
-
   return errors;
 }
 
@@ -640,4 +675,35 @@ function getApiErrorMessage(
   fallback: string,
 ): string {
   return payload.error?.message ?? fallback;
+}
+
+function toLocationRoleSlots(
+  values: Pick<LocationFormValues, "primaryContactId" | "siteContactId">,
+): ContactRoleSlotAssignment<"primaryContactId" | "siteContactId">[] {
+  return [
+    {
+      key: "primaryContactId",
+      label: "Primary",
+      relationshipType: "primary",
+      contactId: values.primaryContactId || null,
+      isPrimary: true,
+    },
+    {
+      key: "siteContactId",
+      label: "Site",
+      relationshipType: "site",
+      contactId: values.siteContactId || null,
+    },
+  ];
+}
+
+function mapLocationRoleSlotsToFormValues(
+  roleSlots: ContactRoleSlotAssignment<"primaryContactId" | "siteContactId">[],
+): Pick<LocationFormValues, "primaryContactId" | "siteContactId"> {
+  return {
+    primaryContactId:
+      roleSlots.find((slot) => slot.key === "primaryContactId")?.contactId ?? "",
+    siteContactId:
+      roleSlots.find((slot) => slot.key === "siteContactId")?.contactId ?? "",
+  };
 }

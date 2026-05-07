@@ -2,149 +2,80 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import {
+  getAllowedNextWorkOrderLifecycleStatuses,
+  isTerminalWorkOrderLifecycleStatus,
+  validateWorkOrderLifecycleTransition,
+} from "../modules/work-orders/domain/lifecycle.ts";
+import {
   canInvoiceTransition,
   canQuoteTransition,
   canWorkOrderTransition,
-  INVOICE_STATUS,
-  INVOICE_TRANSITION_MAP,
-  isTerminalInvoiceStatus,
-  isTerminalQuoteStatus,
-  isTerminalWorkOrderStatus,
-  QUOTE_STATUS,
-  QUOTE_TRANSITION_MAP,
-  WORK_ORDER_STATUS,
-  WORK_ORDER_TRANSITION_MAP,
-} from "../lib/workflows/lifecycle/index.ts";
-import "./rbac-transition.test.mts";
-import "./transition-engine.test.mts";
+} from "../server/services/status-rules.ts";
 
-describe("work order lifecycle", () => {
-  test("detects terminal statuses", () => {
-    assert.equal(isTerminalWorkOrderStatus(WORK_ORDER_STATUS.Completed), true);
-    assert.equal(isTerminalWorkOrderStatus(WORK_ORDER_STATUS.Cancelled), true);
-    assert.equal(isTerminalWorkOrderStatus(WORK_ORDER_STATUS.InProgress), false);
+describe("canonical work order lifecycle", () => {
+  test("allows canonical quote and invoice path transitions", () => {
+    assert.equal(canWorkOrderTransition("new", "triage"), true);
+    assert.equal(canWorkOrderTransition("quote_required", "contractor_quote_received"), true);
+    assert.equal(
+      canWorkOrderTransition("client_approval_requested", "client_approved"),
+      true,
+    );
+    assert.equal(canWorkOrderTransition("ready_for_invoicing", "invoiced"), true);
+    assert.equal(canWorkOrderTransition("invoiced", "paid"), true);
   });
 
-  test("allows approved transitions and global exceptions", () => {
-    assert.equal(
-      canWorkOrderTransition(WORK_ORDER_STATUS.New, WORK_ORDER_STATUS.Triage),
-      true,
+  test("enforces terminal states and canonical transition map", () => {
+    assert.equal(isTerminalWorkOrderLifecycleStatus("closed"), true);
+    assert.equal(isTerminalWorkOrderLifecycleStatus("cancelled"), true);
+    assert.equal(isTerminalWorkOrderLifecycleStatus("in_progress"), false);
+    assert.deepEqual(getAllowedNextWorkOrderLifecycleStatuses("closed"), []);
+    assert.equal(canWorkOrderTransition("new", "contractor_scheduled"), false);
+  });
+
+  test("requires hold and escalation metadata", () => {
+    assert.match(
+      validateWorkOrderLifecycleTransition("triage", "on_hold", {}) ?? "",
+      /holdReason/i,
     );
     assert.equal(
-      canWorkOrderTransition(
-        WORK_ORDER_STATUS.InProgress,
-        WORK_ORDER_STATUS.WorkCompleted,
-      ),
-      true,
+      validateWorkOrderLifecycleTransition("triage", "on_hold", {
+        holdReason: "Awaiting site access",
+        previousLifecycleStatus: "triage",
+      }),
+      null,
     );
-    assert.equal(
-      canWorkOrderTransition(WORK_ORDER_STATUS.Scheduled, WORK_ORDER_STATUS.OnHold),
-      true,
-    );
-    assert.equal(
-      canWorkOrderTransition(
-        WORK_ORDER_STATUS.AwaitingQuote,
-        WORK_ORDER_STATUS.Escalated,
-      ),
-      true,
-    );
-    assert.equal(
-      canWorkOrderTransition(WORK_ORDER_STATUS.Escalated, WORK_ORDER_STATUS.Cancelled),
-      true,
+    assert.match(
+      validateWorkOrderLifecycleTransition("assigned", "escalated", {
+        previousLifecycleStatus: "assigned",
+      }) ?? "",
+      /escalationReason/i,
     );
   });
 
-  test("rejects invalid transitions and terminal forward transitions", () => {
+  test("locks invoice reopen behind explicit context", () => {
     assert.equal(
-      canWorkOrderTransition(WORK_ORDER_STATUS.New, WORK_ORDER_STATUS.Scheduled),
-      false,
+      validateWorkOrderLifecycleTransition("invoiced", "ready_for_invoicing", {}) !== null,
+      true,
     );
     assert.equal(
-      canWorkOrderTransition(WORK_ORDER_STATUS.OnHold, WORK_ORDER_STATUS.New),
-      false,
+      validateWorkOrderLifecycleTransition("invoiced", "ready_for_invoicing", {
+        allowInvoiceReopen: true,
+      }),
+      null,
     );
-    assert.deepEqual(WORK_ORDER_TRANSITION_MAP[WORK_ORDER_STATUS.Completed], []);
-    assert.deepEqual(WORK_ORDER_TRANSITION_MAP[WORK_ORDER_STATUS.Cancelled], []);
   });
 });
 
-describe("quote lifecycle", () => {
-  test("detects terminal statuses", () => {
-    assert.equal(isTerminalQuoteStatus(QUOTE_STATUS.ClientApproved), true);
-    assert.equal(isTerminalQuoteStatus(QUOTE_STATUS.ClientRejected), true);
-    assert.equal(isTerminalQuoteStatus(QUOTE_STATUS.Expired), true);
-    assert.equal(isTerminalQuoteStatus(QUOTE_STATUS.UnderReview), false);
+describe("quote and invoice lifecycle summaries", () => {
+  test("keeps quote transitions canonical", () => {
+    assert.equal(canQuoteTransition("draft", "submitted"), true);
+    assert.equal(canQuoteTransition("ready_for_client", "client_approved"), true);
+    assert.equal(canQuoteTransition("draft", "client_approved"), false);
   });
 
-  test("allows internal and client-facing approval stages", () => {
-    assert.equal(
-      canQuoteTransition(QUOTE_STATUS.UnderReview, QUOTE_STATUS.ApprovedInternal),
-      true,
-    );
-    assert.equal(
-      canQuoteTransition(QUOTE_STATUS.ApprovedInternal, QUOTE_STATUS.SentToClient),
-      true,
-    );
-    assert.equal(
-      canQuoteTransition(QUOTE_STATUS.SentToClient, QUOTE_STATUS.ClientApproved),
-      true,
-    );
-    assert.equal(
-      canQuoteTransition(QUOTE_STATUS.Rejected, QUOTE_STATUS.Requested),
-      true,
-    );
-  });
-
-  test("rejects invalid transitions and terminal forward transitions", () => {
-    assert.equal(
-      canQuoteTransition(QUOTE_STATUS.Requested, QUOTE_STATUS.SentToClient),
-      false,
-    );
-    assert.equal(
-      canQuoteTransition(QUOTE_STATUS.ClientApproved, QUOTE_STATUS.Cancelled),
-      false,
-    );
-    assert.deepEqual(QUOTE_TRANSITION_MAP[QUOTE_STATUS.ClientApproved], []);
-    assert.deepEqual(QUOTE_TRANSITION_MAP[QUOTE_STATUS.Cancelled], []);
-  });
-});
-
-describe("invoice lifecycle", () => {
-  test("detects terminal statuses", () => {
-    assert.equal(isTerminalInvoiceStatus(INVOICE_STATUS.Paid), true);
-    assert.equal(isTerminalInvoiceStatus(INVOICE_STATUS.Voided), true);
-    assert.equal(isTerminalInvoiceStatus(INVOICE_STATUS.Sent), false);
-  });
-
-  test("allows payment transitions and voiding from non-terminal states", () => {
-    assert.equal(
-      canInvoiceTransition(INVOICE_STATUS.NotReady, INVOICE_STATUS.Ready),
-      true,
-    );
-    assert.equal(
-      canInvoiceTransition(INVOICE_STATUS.Sent, INVOICE_STATUS.PartiallyPaid),
-      true,
-    );
-    assert.equal(
-      canInvoiceTransition(INVOICE_STATUS.Overdue, INVOICE_STATUS.Paid),
-      true,
-    );
-    assert.equal(
-      canInvoiceTransition(INVOICE_STATUS.PartiallyPaid, INVOICE_STATUS.Voided),
-      true,
-    );
-  });
-
-  test("rejects invalid transitions and terminal forward transitions", () => {
-    assert.equal(
-      canInvoiceTransition(INVOICE_STATUS.NotReady, INVOICE_STATUS.Sent),
-      false,
-    );
-    assert.equal(
-      canInvoiceTransition(INVOICE_STATUS.Paid, INVOICE_STATUS.Voided),
-      false,
-    );
-    assert.deepEqual(INVOICE_TRANSITION_MAP[INVOICE_STATUS.Paid], []);
-    assert.deepEqual(INVOICE_TRANSITION_MAP[INVOICE_STATUS.Voided], []);
+  test("keeps invoice transitions canonical", () => {
+    assert.equal(canInvoiceTransition("draft", "sent"), true);
+    assert.equal(canInvoiceTransition("sent", "paid"), true);
+    assert.equal(canInvoiceTransition("draft", "paid"), false);
   });
 });

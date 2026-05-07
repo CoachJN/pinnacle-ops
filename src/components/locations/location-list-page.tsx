@@ -41,6 +41,12 @@ export function LocationListPage({
   const deferredSearch = useDeferredValue(search);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const organizationNameById = new Map(
+    clientOrganizations.map((organization) => [
+      organization.id,
+      organization.displayName ?? organization.name,
+    ]),
+  );
 
   useEffect(() => {
     if (portalMode) {
@@ -285,7 +291,8 @@ export function LocationListPage({
                     </td>
                     {portalMode ? null : (
                       <td className="px-4 py-4 text-neutral-700">
-                        {location.clientSnapshot?.name ?? "Unknown organization"}
+                        {organizationNameById.get(location.clientOrganizationId) ??
+                          location.clientOrganizationId}
                       </td>
                     )}
                     <td className="px-4 py-4 text-neutral-700">

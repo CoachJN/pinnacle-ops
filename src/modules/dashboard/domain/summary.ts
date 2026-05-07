@@ -16,7 +16,7 @@ const SUMMARY_CARD_CONFIG: Record<
   },
   awaitingAssignment: {
     label: "Awaiting assignment",
-    href: `${APP_PATHS.workOrders}?status=approved_to_proceed`,
+    href: `${APP_PATHS.workOrders}?status=client_approved`,
     tone: "attention",
   },
   awaitingContractorResponse: {
@@ -26,12 +26,12 @@ const SUMMARY_CARD_CONFIG: Record<
   },
   awaitingQuoteReview: {
     label: "Awaiting quote review",
-    href: `${APP_PATHS.workOrders}?status=quote_received`,
+    href: `${APP_PATHS.workOrders}?status=contractor_quote_received`,
     tone: "attention",
   },
   awaitingClientAction: {
     label: "Awaiting client action",
-    href: `${APP_PATHS.workOrders}?status=pending_client_approval`,
+    href: `${APP_PATHS.workOrders}?status=client_approval_requested`,
     tone: "attention",
   },
   readyForInvoicing: {

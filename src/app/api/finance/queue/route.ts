@@ -15,7 +15,7 @@ import {
   type FinanceQueueInvoiceRecord,
   type FinanceQueueWorkOrderRecord,
 } from "@/modules/finance";
-import type { Invoice, WorkOrder } from "@/server/repositories";
+import type { ClientInvoice, WorkOrder } from "@/server/repositories";
 
 export async function GET(request: NextRequest) {
   try {
@@ -112,20 +112,20 @@ function toFinanceQueueWorkOrderRecord(
     id: workOrder.id,
     workOrderNumber: workOrder.workOrderNumber,
     title: workOrder.title,
-    status: workOrder.status,
+    lifecycleStatus: workOrder.lifecycleStatus,
     priority: workOrder.priority,
     clientOrganizationId: workOrder.clientOrganizationId,
     locationId: workOrder.locationId,
     currentInvoiceId: workOrder.currentInvoiceId,
     clientSnapshot: workOrder.clientSnapshot,
     locationSnapshot: workOrder.locationSnapshot,
-    completedAt: workOrder.completedAt,
+    completedAt: workOrder.completedAt ?? workOrder.workCompletedAt ?? null,
     updatedAt: workOrder.updatedAt,
   };
 }
 
 function toFinanceQueueInvoiceRecord(
-  invoice: Invoice,
+  invoice: ClientInvoice,
 ): FinanceQueueInvoiceRecord {
   return {
     id: invoice.id,

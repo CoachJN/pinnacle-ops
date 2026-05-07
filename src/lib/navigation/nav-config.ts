@@ -1,6 +1,7 @@
 import type { NavigationItem } from "@/types/navigation";
 import {
   APP_ROLE_VALUES,
+  INTERNAL_APP_ROLES,
   APP_ROLES,
   type AppRole,
 } from "@/lib/rbac/roles";
@@ -15,6 +16,14 @@ const FINANCE_NAV_ROLES: readonly AppRole[] = [
   APP_ROLES.Owner,
 ] as const;
 
+const CLIENT_PORTAL_NAV_ROLES: readonly AppRole[] = [
+  APP_ROLES.ClientUser,
+] as const;
+
+const CONTRACTOR_PORTAL_NAV_ROLES: readonly AppRole[] = [
+  APP_ROLES.ContractorUser,
+] as const;
+
 export const APP_PRIMARY_NAV_ITEMS: readonly NavigationItem[] = [
   {
     id: "dashboard",
@@ -24,10 +33,17 @@ export const APP_PRIMARY_NAV_ITEMS: readonly NavigationItem[] = [
     match: "exact",
   },
   {
-    id: "locations",
-    label: "Locations",
-    href: APP_PATHS.locations,
+    id: "work-orders",
+    label: "Work Orders",
+    href: APP_PATHS.workOrders,
     allowedRoles: WORK_ORDER_NAV_ROLES,
+    match: "prefix",
+  },
+  {
+    id: "intake",
+    label: "Intake",
+    href: APP_PATHS.intakeReview,
+    allowedRoles: INTERNAL_APP_ROLES,
     match: "prefix",
   },
   {
@@ -38,24 +54,45 @@ export const APP_PRIMARY_NAV_ITEMS: readonly NavigationItem[] = [
     match: "prefix",
   },
   {
-    id: "finance",
-    label: "Finance",
-    href: APP_PATHS.finance,
-    allowedRoles: FINANCE_NAV_ROLES,
+    id: "client-organizations",
+    label: "Clients",
+    href: APP_PATHS.clientOrganizations,
+    allowedRoles: WORK_ORDER_NAV_ROLES,
+    match: "prefix",
+  },
+  {
+    id: "locations",
+    label: "Locations",
+    href: APP_PATHS.locations,
+    allowedRoles: WORK_ORDER_NAV_ROLES,
+    match: "prefix",
+  },
+  {
+    id: "contacts",
+    label: "Contacts",
+    href: APP_PATHS.contacts,
+    allowedRoles: INTERNAL_APP_ROLES,
     match: "prefix",
   },
   {
     id: "client-portal",
     label: "Client Portal",
-    href: "/portal",
-    allowedRoles: ALL_APP_ROLES,
+    href: APP_PATHS.clientPortal,
+    allowedRoles: CLIENT_PORTAL_NAV_ROLES,
     match: "prefix",
   },
   {
     id: "contractor-portal",
     label: "Contractor Portal",
-    href: "/contractor/dashboard",
-    allowedRoles: ALL_APP_ROLES,
+    href: APP_PATHS.contractorPortal,
+    allowedRoles: CONTRACTOR_PORTAL_NAV_ROLES,
+    match: "prefix",
+  },
+  {
+    id: "finance",
+    label: "Finance",
+    href: APP_PATHS.finance,
+    allowedRoles: FINANCE_NAV_ROLES,
     match: "prefix",
   },
 ] as const;

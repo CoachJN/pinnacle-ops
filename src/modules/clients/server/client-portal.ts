@@ -5,7 +5,6 @@ import {
   getWorkOrderApiContext,
   listScopeForActor,
 } from "@/server/api/work-orders";
-import { createGetWorkOrderDetailService } from "@/server/services/work-order-service";
 import { toClientPortalLocationDetail, toClientPortalLocationSummary } from "@/modules/locations/client-portal";
 import { toClientPortalQuoteDetail } from "@/modules/quotes/client-portal";
 import {
@@ -13,7 +12,7 @@ import {
   toClientPortalWorkOrderSummary,
 } from "@/modules/work-orders/client-portal";
 import type { ClientAccessActor } from "@/types/auth";
-import type { ClientPortalLandingSummary } from "@/types/client";
+import type { ClientPortalLandingSummary } from "@/types/client-portal";
 import type {
   ClientPortalLocationDetail,
   ClientPortalLocationSummary,
@@ -53,7 +52,8 @@ export async function getClientPortalLandingSummary(): Promise<ClientPortalLandi
     organizationName: client.value.displayName ?? client.value.name,
     locationCount: locations.length,
     activeWorkOrderCount: workOrders.filter((workOrder) =>
-      workOrder.status !== "closed" && workOrder.status !== "cancelled"
+      workOrder.lifecycleStatus !== "closed" &&
+      workOrder.lifecycleStatus !== "cancelled"
     ).length,
     quotesAwaitingResponseCount: workOrders.filter(
       (workOrder) => workOrder.currentQuoteStatus === "sent",
@@ -142,7 +142,7 @@ export async function listClientPortalWorkOrders(
       return false;
     }
 
-    if (filters.status && workOrder.status !== filters.status) {
+    if (filters.status && workOrder.lifecycleStatus !== filters.status) {
       return false;
     }
 
@@ -179,32 +179,31 @@ export async function getClientPortalWorkOrder(
   workOrderId: string,
 ): Promise<ClientPortalWorkOrderDetail> {
   const context = await requireClientPortalContext();
-  const [legacyWorkOrder, detailResult] = await Promise.all([
-    context.services.workOrders.getById(workOrderId),
-    createGetWorkOrderDetailService().getWorkOrderDetail({ workOrderId }),
-  ]);
+  const workOrder = await context.services.workOrders.getById(workOrderId);
 
-  if (!legacyWorkOrder.ok) {
-    throw legacyWorkOrder.error;
-  }
-
-  if (!detailResult.ok) {
-    throw detailResult.error;
+  if (!workOrder.ok) {
+    throw workOrder.error;
   }
 
   assertClientLocationScope(
     context.actor,
-    legacyWorkOrder.value.clientOrganizationId,
-    legacyWorkOrder.value.locationId,
+    workOrder.value.clientOrganizationId,
+    workOrder.value.locationId,
   );
 
-  const currentQuote = legacyWorkOrder.value.currentQuoteId
-    ? await context.repositories.clientQuotes.getById(legacyWorkOrder.value.currentQuoteId)
-    : null;
+  const [currentQuote, communications] = await Promise.all([
+    workOrder.value.currentQuoteId
+      ? context.repositories.clientQuotes.getById(workOrder.value.currentQuoteId)
+      : Promise.resolve(null),
+    context.services.communications.query.listTimelineForWorkOrder(workOrderId, context.actor),
+  ]);
 
   return toClientPortalWorkOrderDetail(
-    detailResult.value,
-    legacyWorkOrder.value,
+    {
+      dueDate: workOrder.value.dueDate ?? null,
+      communications: communications.ok ? communications.value : [],
+    },
+    workOrder.value,
     currentQuote && !currentQuote.isDeleted ? currentQuote : null,
   );
 }

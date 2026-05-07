@@ -1,11 +1,15 @@
 import "server-only";
 
+import { resolveContactsById } from "@/server/api/contact-projections";
 import { createAccessDeniedError } from "@/server/authorization";
 import { getWorkOrderApiContext } from "@/server/api/work-orders";
-import { filterVisibleActivityLogsForActor } from "@/lib/work-orders/quote-api-helpers";
 import type { ContractorAccessActor } from "@/types/auth";
 import type { EntityId } from "@/types/entity";
-import type { Assignment, Quote, WorkOrder } from "@/server/repositories";
+import type {
+  Assignment,
+  ContractorQuote,
+  WorkOrder,
+} from "@/server/repositories";
 import type { ContractorPortalWorkOrderDetail, ContractorPortalWorkOrderListItem, ContractorWorkOrderFilter } from "@/modules/work-orders/contractor-portal";
 import {
   isRelevantContractorPortalAssignment,
@@ -26,7 +30,7 @@ export interface ContractorPortalLandingSummary {
 interface ContractorPortalRecord {
   workOrder: WorkOrder;
   assignment: Assignment;
-  quote: Quote | null;
+  quote: ContractorQuote | null;
 }
 
 export async function requireContractorPortalContext() {
@@ -50,9 +54,9 @@ export async function getContractorPortalLandingSummary(): Promise<ContractorPor
     quoteRequestedCount: records.filter((record) => record.quoteActionNeeded).length,
     readyToPerformCount: records.filter((record) =>
       record.assignment.status === "accepted" &&
-      record.status !== "completed" &&
-      record.status !== "closed" &&
-      record.status !== "cancelled"
+      record.lifecycleStatus !== "work_completed" &&
+      record.lifecycleStatus !== "closed" &&
+      record.lifecycleStatus !== "cancelled"
     ).length,
     completedCount: records.filter((record) => record.assignment.status === "completed").length,
     recentlyUpdatedAssignments: records.filter((record) => {
@@ -81,20 +85,28 @@ export async function getContractorPortalWorkOrder(
     return null;
   }
 
-  const [location, activityLogs] = await Promise.all([
+  const [location, timeline, communications] = await Promise.all([
     context.repositories.locations.getById(record.workOrder.locationId),
-    context.repositories.activityLogs.listByWorkOrderId(workOrderId, { limit: 50 }),
+    context.services.timeline.listForWorkOrder(workOrderId, context.actor),
+    context.services.communications.query.listTimelineForWorkOrder(workOrderId, context.actor),
+  ]);
+  const contactsById = await resolveContactsById(context.repositories, [
+    location?.siteContactId,
   ]);
 
-  const visibleActivity = filterVisibleActivityLogsForActor(
-    context.actor,
-    activityLogs.items,
-  ).map(toContractorPortalActivityEntry);
+  const visibleActivity = (timeline.ok ? timeline.value : []).map(
+    toContractorPortalActivityEntry,
+  );
 
   return toContractorPortalWorkOrderDetail({
     ...record,
     location: location && !location.isDeleted ? location : null,
+    siteContact:
+      location?.siteContactId == null
+        ? null
+        : contactsById[location.siteContactId] ?? null,
     visibleActivity,
+    communications: communications.ok ? communications.value : [],
   });
 }
 
@@ -128,7 +140,7 @@ async function getContractorPortalRecord(
   if (
     !workOrder ||
     workOrder.isDeleted ||
-    workOrder.assignedContractorOrganizationId !== context.actor.scope.contractorOrganizationId
+    workOrder.assignedContractorOrgId !== context.actor.scope.contractorOrganizationId
   ) {
     return null;
   }
@@ -199,24 +211,22 @@ async function getAllContractorPortalRecords(
 async function getScopedCurrentQuote(
   context: Awaited<ReturnType<typeof requireContractorPortalContext>>,
   workOrder: WorkOrder,
-): Promise<Quote | null> {
-  if (!workOrder.currentQuoteId) {
-    return null;
-  }
+): Promise<ContractorQuote | null> {
+  const quotes = await context.repositories.contractorQuotes.listByWorkOrderId(workOrder.id, {
+    limit: 25,
+  });
 
-  const quote = await context.repositories.quotes.getById(workOrder.currentQuoteId);
-  if (!quote || quote.isDeleted) {
-    return null;
-  }
-
-  if (
-    quote.contractorOrganizationId !== null &&
-    quote.contractorOrganizationId !== context.actor.scope.contractorOrganizationId
-  ) {
-    return null;
-  }
-
-  return quote;
+  return (
+    quotes.items
+      .filter(
+        (quote) =>
+          !quote.isDeleted &&
+          (quote.contractorOrganizationId === null ||
+            quote.contractorOrganizationId ===
+              context.actor.scope.contractorOrganizationId),
+      )
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null
+  );
 }
 
 function selectLatestRelevantAssignment(

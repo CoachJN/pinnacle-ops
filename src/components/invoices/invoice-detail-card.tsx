@@ -1,9 +1,9 @@
-import type { Invoice } from "@/types/invoice";
+import type { ClientInvoice } from "@/types/invoice";
 import { formatInvoiceCurrency } from "@/lib/invoices/money";
 import { InvoiceStatusBadge } from "@/components/invoices/invoice-status-badge";
 import { formatDate, formatDateTime } from "@/components/work-orders/formatting";
 
-export function InvoiceDetailCard({ invoice }: { invoice: Invoice }) {
+export function InvoiceDetailCard({ invoice }: { invoice: ClientInvoice }) {
   return (
     <div className="rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm">
       <div className="flex flex-col gap-3 border-b border-neutral-200 pb-4 sm:flex-row sm:items-start sm:justify-between">

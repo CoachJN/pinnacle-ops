@@ -3,8 +3,8 @@ import type { EntityId, IsoDateTimeString } from "@/types/entity";
 import type {
   ClientQuoteStatus,
   ContractorQuoteStatus,
-  InvoiceStatus,
-} from "@/types/financial";
+} from "@/types/quote";
+import type { InvoiceStatus } from "@/types/invoice";
 import type { AssignmentStatus, WorkOrderStatus } from "@/types/work-order";
 
 export type AuditEntityType =

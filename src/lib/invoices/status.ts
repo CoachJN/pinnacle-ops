@@ -2,17 +2,24 @@ import type { InvoiceStatus } from "@/types/invoice";
 
 export const INVOICE_STATUSES = [
   "draft",
+  "issued",
   "sent",
   "viewed",
+  "disputed",
+  "resolved",
   "paid",
   "overdue",
   "void",
+  "cancelled",
 ] as const satisfies readonly InvoiceStatus[];
 
 export const ACTIVE_INVOICE_STATUSES = [
   "draft",
+  "issued",
   "sent",
   "viewed",
+  "disputed",
+  "resolved",
   "overdue",
   "paid",
 ] as const satisfies readonly InvoiceStatus[];
@@ -27,27 +34,31 @@ export const INVOICE_STATUS_LABELS = {
   issued: "Issued",
   sent: "Sent",
   viewed: "Viewed",
+  disputed: "Disputed",
+  resolved: "Resolved",
   paid: "Paid",
   overdue: "Overdue",
   void: "Void",
+  cancelled: "Cancelled",
 } as const satisfies Record<InvoiceStatus, string>;
 
 export const INVOICE_TRANSITIONS = {
-  draft: ["sent", "void"],
-  issued: ["viewed", "overdue", "paid", "void"],
-  sent: ["viewed", "overdue", "paid", "void"],
-  viewed: ["overdue", "paid", "void"],
-  overdue: ["paid"],
+  draft: ["sent", "void", "cancelled"],
+  issued: ["viewed", "overdue", "paid", "void", "disputed", "cancelled"],
+  sent: ["viewed", "overdue", "paid", "void", "disputed", "cancelled"],
+  viewed: ["overdue", "paid", "void", "disputed"],
+  overdue: ["paid", "disputed"],
+  disputed: ["resolved", "void", "sent"],
+  resolved: ["sent", "paid", "void", "disputed"],
   paid: [],
   void: [],
+  cancelled: [],
 } as const satisfies Record<InvoiceStatus, readonly InvoiceStatus[]>;
 
 export function getAllowedInvoiceTransitions(
   status: InvoiceStatus,
 ): readonly InvoiceStatus[] {
-  return status === "issued"
-    ? INVOICE_TRANSITIONS.issued
-    : INVOICE_TRANSITIONS[status as Exclude<InvoiceStatus, "issued">];
+  return INVOICE_TRANSITIONS[status];
 }
 
 export function canTransitionInvoiceStatus(
@@ -70,7 +81,7 @@ export function getDisplayInvoiceStatus(
   dueDate: string,
   now = new Date(),
 ): InvoiceStatus {
-  if (status !== "sent" && status !== "viewed") {
+  if (status !== "sent" && status !== "viewed" && status !== "issued") {
     return status;
   }
 

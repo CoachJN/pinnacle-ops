@@ -1,5 +1,5 @@
-import type { Invoice } from "@/types/financial";
 import type { EntityId } from "@/types/entity";
+import type { ClientInvoice as Invoice } from "@/types/invoice";
 import type { WorkOrder } from "@/types/work-order";
 import type {
   InvoiceLifecycleStatus,

@@ -36,9 +36,9 @@ import {
   createFirestoreRepositories,
   type ActivityLog,
   type Assignment,
+  type ClientInvoice,
+  type ClientQuote,
   type FirestoreRepositories,
-  type Invoice,
-  type Quote,
   type UserProfile,
   type WorkOrder,
 } from "@/server/repositories";
@@ -80,25 +80,24 @@ const WORK_ORDER_PRIORITIES = [
 
 const WORK_ORDER_STATUSES = [
   "new",
-  "in_review",
-  "draft",
-  "submitted",
-  "quote_requested",
-  "quote_received",
-  "pending_client_approval",
-  "approved_to_proceed",
-  "dispatched",
+  "triage",
   "assigned",
+  "awaiting_contractor_response",
+  "quote_required",
+  "contractor_quote_received",
+  "quote_under_review",
+  "client_approval_requested",
+  "client_approved",
+  "contractor_scheduled",
   "in_progress",
-  "waiting_on_contractor",
-  "waiting_on_customer",
-  "quoted",
-  "approved",
-  "scheduled",
-  "completed",
+  "work_completed",
+  "completion_review",
+  "ready_for_invoicing",
   "invoiced",
   "paid",
   "closed",
+  "on_hold",
+  "escalated",
   "cancelled",
 ] as const satisfies readonly WorkOrderStatus[];
 
@@ -300,13 +299,13 @@ export function parseUpdateWorkOrderPayload(input: Record<string, unknown>) {
 
 export function parseAssignInternalPayload(input: Record<string, unknown>) {
   assertAllowedFields(input, [
-    "assignedCoordinatorUserId",
-    "assignedManagerUserId",
+    "coordinatorUserId",
+    "managerUserId",
   ]);
 
   if (
-    input.assignedCoordinatorUserId === undefined &&
-    input.assignedManagerUserId === undefined
+    input.coordinatorUserId === undefined &&
+    input.managerUserId === undefined
   ) {
     throw validationError(
       "At least one internal staff assignment field is required.",
@@ -314,13 +313,13 @@ export function parseAssignInternalPayload(input: Record<string, unknown>) {
   }
 
   return pruneUndefined({
-    assignedCoordinatorUserId: optionalNullableString(
-      input.assignedCoordinatorUserId,
-      "assignedCoordinatorUserId",
+    coordinatorUserId: optionalNullableString(
+      input.coordinatorUserId,
+      "coordinatorUserId",
     ),
-    assignedManagerUserId: optionalNullableString(
-      input.assignedManagerUserId,
-      "assignedManagerUserId",
+    managerUserId: optionalNullableString(
+      input.managerUserId,
+      "managerUserId",
     ),
   });
 }
@@ -561,7 +560,7 @@ export async function authorizeWorkOrderRead(
     actor: context.actor,
     entity: "work_order",
     action: "read",
-    target: toWorkOrderAuthTarget(workOrder),
+    target: toResolvedWorkOrderAuthTarget(context, workOrder),
     context: {
       assignments: assignmentRelationships,
     },
@@ -586,7 +585,7 @@ export function authorizeWorkOrderEdit(
       actor: context.actor,
       entity: "work_order",
       action: "edit",
-      target: toWorkOrderAuthTarget(workOrder),
+      target: toResolvedWorkOrderAuthTarget(context, workOrder),
     }),
   );
 }
@@ -601,7 +600,7 @@ export function authorizeWorkOrderTransition(
       actor: context.actor,
       entity: "work_order",
       action: "transition",
-      target: toWorkOrderAuthTarget(workOrder),
+      target: toResolvedWorkOrderAuthTarget(context, workOrder),
       nextStatus: toStatus,
     }),
   );
@@ -659,7 +658,7 @@ export async function authorizeQuoteCreate(
 export async function authorizeQuoteRead(
   context: WorkOrderApiContext,
   workOrder: WorkOrder,
-  quote: Quote,
+  quote: ClientQuote,
 ): Promise<void> {
   if (!canActorReadQuote(context.actor, workOrder, quote)) {
     throw createAccessDeniedError();
@@ -669,7 +668,7 @@ export async function authorizeQuoteRead(
 export async function authorizeQuoteDraftEdit(
   context: WorkOrderApiContext,
   workOrder: WorkOrder,
-  quote: Quote,
+  quote: ClientQuote,
 ): Promise<void> {
   await authorizeQuoteRead(context, workOrder, quote);
 
@@ -687,8 +686,8 @@ export async function authorizeQuoteDraftEdit(
 export async function authorizeQuoteTransition(
   context: WorkOrderApiContext,
   workOrder: WorkOrder,
-  quote: Quote,
-  toStatus: QuoteStatus,
+  quote: ClientQuote,
+  toStatus: ClientQuote["status"],
 ): Promise<void> {
   await authorizeQuoteRead(context, workOrder, quote);
 
@@ -711,7 +710,7 @@ export async function authorizeQuoteTransition(
 export async function authorizeInvoiceRead(
   context: WorkOrderApiContext,
   workOrder: WorkOrder,
-  invoice: Invoice,
+  invoice: ClientInvoice,
 ): Promise<void> {
   await authorizeWorkOrderRead(context, workOrder);
 
@@ -720,7 +719,7 @@ export async function authorizeInvoiceRead(
       actor: context.actor,
       entity: "invoice",
       action: "read",
-      target: toInvoiceAuthTarget(workOrder, invoice),
+      target: toResolvedInvoiceAuthTarget(context, workOrder, invoice),
     }),
   );
 }
@@ -736,7 +735,7 @@ export async function authorizeInvoiceCreate(
       actor: context.actor,
       entity: "invoice",
       action: "create",
-      target: toInvoiceAuthTarget(workOrder),
+      target: toResolvedInvoiceAuthTarget(context, workOrder),
     }),
   );
 }
@@ -744,7 +743,7 @@ export async function authorizeInvoiceCreate(
 export async function authorizeInvoiceEdit(
   context: WorkOrderApiContext,
   workOrder: WorkOrder,
-  invoice: Invoice,
+  invoice: ClientInvoice,
 ): Promise<void> {
   await authorizeInvoiceRead(context, workOrder, invoice);
 
@@ -753,7 +752,7 @@ export async function authorizeInvoiceEdit(
       actor: context.actor,
       entity: "invoice",
       action: "edit",
-      target: toInvoiceAuthTarget(workOrder, invoice),
+      target: toResolvedInvoiceAuthTarget(context, workOrder, invoice),
     }),
   );
 }
@@ -761,7 +760,7 @@ export async function authorizeInvoiceEdit(
 export async function authorizeInvoiceTransition(
   context: WorkOrderApiContext,
   workOrder: WorkOrder,
-  invoice: Invoice,
+  invoice: ClientInvoice,
   toStatus: InvoiceStatus,
 ): Promise<void> {
   await authorizeInvoiceRead(context, workOrder, invoice);
@@ -800,9 +799,9 @@ export function safeWorkOrderSummary(workOrder: WorkOrder) {
     clientSnapshot: workOrder.clientSnapshot,
     locationSnapshot: workOrder.locationSnapshot,
     contractorSnapshot: workOrder.contractorSnapshot,
-    assignedCoordinatorUserId: workOrder.assignedCoordinatorUserId,
-    assignedManagerUserId: workOrder.assignedManagerUserId,
-    assignedContractorOrganizationId: workOrder.assignedContractorOrganizationId,
+    coordinatorUserId: workOrder.coordinatorUserId,
+    managerUserId: workOrder.managerUserId,
+    assignedContractorId: workOrder.assignedContractorId,
     category: workOrder.category,
     requestedServiceDate: workOrder.requestedServiceDate,
     updatedAt: workOrder.updatedAt,
@@ -813,7 +812,7 @@ export function safeWorkOrderDetail(workOrder: WorkOrder) {
   return {
     ...safeWorkOrderSummary(workOrder),
     description: workOrder.description,
-    requestedByUserId: workOrder.requestedByUserId,
+    requestedByContactId: workOrder.requestedByContactId,
     currentQuoteId: workOrder.currentQuoteId,
     currentInvoiceId: workOrder.currentInvoiceId,
     submittedAt: workOrder.submittedAt,
@@ -844,7 +843,7 @@ export function safeActivityLog(activityLog: ActivityLog) {
   };
 }
 
-export function safeInvoiceSummary(invoice: Invoice) {
+export function safeInvoiceSummary(invoice: ClientInvoice) {
   return {
     id: invoice.id,
     workOrderId: invoice.workOrderId,
@@ -969,6 +968,28 @@ function toWorkOrderAuthTarget(workOrder: WorkOrder) {
   };
 }
 
+function resolveWorkOrderOrganizationId(
+  context: WorkOrderApiContext,
+  workOrder: WorkOrder,
+): EntityId {
+  return (
+    workOrder.organizationId ??
+    (context.actor.actorType === "internal"
+      ? context.actor.scope.organizationId
+      : undefined)
+  ) as EntityId;
+}
+
+function toResolvedWorkOrderAuthTarget(
+  context: WorkOrderApiContext,
+  workOrder: WorkOrder,
+) {
+  return {
+    ...toWorkOrderAuthTarget(workOrder),
+    organizationId: resolveWorkOrderOrganizationId(context, workOrder),
+  };
+}
+
 function toAssignmentRelationships(assignments: Assignment[]) {
   return assignments
     .filter((assignment) => Boolean(assignment.contractorOrganizationId))
@@ -979,14 +1000,25 @@ function toAssignmentRelationships(assignments: Assignment[]) {
     }));
 }
 
-export function toInvoiceAuthTarget(workOrder: WorkOrder, invoice?: Invoice) {
+export function toInvoiceAuthTarget(workOrder: WorkOrder, invoice?: ClientInvoice) {
   return {
     organizationId: workOrder.organizationId,
     workOrderId: workOrder.id,
     clientOrganizationId: workOrder.clientOrganizationId,
     locationId: workOrder.locationId,
-    contractorOrganizationId: workOrder.assignedContractorOrganizationId ?? undefined,
+    contractorOrganizationId: workOrder.assignedContractorId ?? undefined,
     status: invoice?.status,
+  };
+}
+
+function toResolvedInvoiceAuthTarget(
+  context: WorkOrderApiContext,
+  workOrder: WorkOrder,
+  invoice?: ClientInvoice,
+) {
+  return {
+    ...toInvoiceAuthTarget(workOrder, invoice),
+    organizationId: resolveWorkOrderOrganizationId(context, workOrder),
   };
 }
 
@@ -996,7 +1028,7 @@ function isAssignedContractorActorForWorkOrder(
 ): boolean {
   return (
     actor.actorType === "contractor" &&
-    workOrder.assignedContractorOrganizationId ===
+    workOrder.assignedContractorId ===
       actor.scope.contractorOrganizationId
   );
 }
@@ -1024,7 +1056,7 @@ async function assertContractorQuoteAssignmentScope(
 function canActorEditDraftQuote(
   actor: AccessActor,
   workOrder: WorkOrder,
-  quote: Quote,
+  quote: ClientQuote,
 ): boolean {
   if (actor.actorType === "internal") {
     return true;
@@ -1032,9 +1064,7 @@ function canActorEditDraftQuote(
 
   return (
     actor.actorType === "contractor" &&
-    isAssignedContractorActorForWorkOrder(actor, workOrder) &&
-    (quote.contractorOrganizationId === null ||
-      quote.contractorOrganizationId === actor.scope.contractorOrganizationId)
+    isAssignedContractorActorForWorkOrder(actor, workOrder)
   );
 }
 

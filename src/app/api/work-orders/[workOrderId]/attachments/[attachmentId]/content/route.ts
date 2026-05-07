@@ -1,20 +1,22 @@
 import { NextRequest } from "next/server";
 import {
-  accessPhaseThreeWorkOrderAttachmentContent,
-  withPhaseThreeWorkOrderRoute,
-} from "@/server/api/work-order-core";
+  getWorkOrderApiContext,
+  withApiRoute,
+} from "@/server/api/work-orders";
+import { accessRuntimeWorkOrderAttachmentContent } from "@/server/api/work-order-runtime";
 
 interface RouteContext {
   params: Promise<{ workOrderId: string; attachmentId: string }>;
 }
 
 export async function GET(request: NextRequest, { params }: RouteContext) {
-  return withPhaseThreeWorkOrderRoute(
+  return withApiRoute(
     request,
     "/api/work-orders/[workOrderId]/attachments/[attachmentId]/content",
-    async (context) => {
+    async (requestContext) => {
+      const context = await getWorkOrderApiContext(requestContext);
       const { workOrderId, attachmentId } = await params;
-      return accessPhaseThreeWorkOrderAttachmentContent(
+      return accessRuntimeWorkOrderAttachmentContent(
         context,
         workOrderId,
         attachmentId,

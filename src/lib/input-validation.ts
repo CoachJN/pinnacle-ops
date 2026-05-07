@@ -5,8 +5,8 @@ import type {
 import type {
   ClientQuoteStatus,
   ContractorQuoteStatus,
-  InvoiceStatus,
-} from "@/types/financial";
+} from "@/types/quote";
+import type { InvoiceStatus } from "@/types/invoice";
 import {
   INVOICE_CONTROL_ACTIONS,
   QUOTE_CONTROL_ACTIONS,
@@ -107,8 +107,8 @@ const timestampFields = [
   "assignedAt",
   "respondedAt",
   "sentAt",
-  "issuedAt",
-  "dueAt",
+  "issuedDate",
+  "dueDate",
   "overdueAt",
   "disputedAt",
   "resolvedAt",
@@ -122,17 +122,15 @@ const ownershipFields = [
   "contractorOrganizationId",
   "locationId",
   "workOrderId",
-  "requestedByUserId",
   "assignedByUserId",
-  "clientQuoteId",
-  "contractorQuoteId",
+  "sourceContractorQuoteId",
 ] as const;
 
 const financialFields = [
-  "currencyCode",
-  "subtotalAmountCents",
-  "taxAmountCents",
-  "totalAmountCents",
+  "currency",
+  "subtotal",
+  "taxAmount",
+  "totalAmount",
 ] as const;
 
 const commonRejectedUpdateFields = [
@@ -164,7 +162,6 @@ const rejectedUpdateFieldsByEntity = {
   client_quote: [
     "status",
     ...commonRejectedUpdateFields,
-    "quoteNumber",
   ],
   invoice: [
     "status",

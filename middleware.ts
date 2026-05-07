@@ -5,7 +5,7 @@ import { APP_PATHS, AUTH_QUERY_PARAMS, SESSION_COOKIE_NAME } from "@/lib/utils/c
 const PROTECTED_APP_PATHS = [
   APP_PATHS.dashboard,
   APP_PATHS.workOrders,
-  APP_PATHS.clients,
+  APP_PATHS.clientOrganizations,
   APP_PATHS.locations,
   APP_PATHS.contractors,
   APP_PATHS.finance,
@@ -36,7 +36,7 @@ export const config = {
   matcher: [
     "/dashboard/:path*",
     "/work-orders/:path*",
-    "/clients/:path*",
+    "/client-organizations/:path*",
     "/locations/:path*",
     "/contractors/:path*",
     "/finance/:path*",

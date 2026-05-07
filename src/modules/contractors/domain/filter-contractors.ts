@@ -1,13 +1,13 @@
 import type { ContractorStatus } from "./constants.ts";
 
 export interface ContractorFilterable {
-  name: string;
-  company?: string | null;
-  email?: string | null;
-  phone?: string | null;
+  legalName: string;
+  displayName?: string | null;
+  businessEmail?: string | null;
+  mainPhone?: string | null;
   status: ContractorStatus;
-  serviceCategories: string[];
-  serviceAreas: string[];
+  trades: string[];
+  serviceArea?: string | null;
 }
 
 export interface ContractorFilterInput {
@@ -31,12 +31,12 @@ export function filterContractors<T extends ContractorFilterable>(
     }
 
     return [
-      contractor.name,
-      contractor.company,
-      contractor.email,
-      contractor.phone,
-      ...contractor.serviceCategories,
-      ...contractor.serviceAreas,
+      contractor.legalName,
+      contractor.displayName,
+      contractor.businessEmail,
+      contractor.mainPhone,
+      ...contractor.trades,
+      contractor.serviceArea,
     ]
       .filter((value): value is string => Boolean(value))
       .some((value) => value.toLowerCase().includes(search));

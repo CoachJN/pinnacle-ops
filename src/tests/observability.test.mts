@@ -4,6 +4,7 @@ import test from "node:test";
 import { AppError } from "../lib/errors/app-error.ts";
 import { ERROR_CODES } from "../lib/errors/codes.ts";
 import { toSafeErrorResponse } from "../lib/errors/safe-error.ts";
+import { ValidationError } from "../lib/utils/errors.ts";
 import { createActivityLogService } from "../server/services/activity-log-service.ts";
 import type { ActivityLogRepository } from "../server/repositories/index.ts";
 
@@ -22,6 +23,23 @@ test("safe error responses include request ids without leaking raw details", () 
     message: "A required service is temporarily unavailable.",
     statusCode: 503,
     requestId: "req-123",
+  });
+});
+
+test("safe error responses preserve safe messages from legacy validation errors", () => {
+  const response = toSafeErrorResponse(
+    new ValidationError("postalCode must be a non-empty string.", {
+      safeMessage: "postalCode must be a non-empty string.",
+      statusCode: 422,
+    }),
+    { requestId: "req-legacy-1" },
+  );
+
+  assert.deepEqual(response, {
+    code: ERROR_CODES.ValidationFailed,
+    message: "postalCode must be a non-empty string.",
+    statusCode: 422,
+    requestId: "req-legacy-1",
   });
 });
 

@@ -11,6 +11,10 @@ import {
   revalidateLocationPaths,
   safeLocationDetailForActor,
 } from "@/server/api/business-entities";
+import {
+  resolveContactsById,
+  resolveLocationContactLinks,
+} from "@/server/api/contact-projections";
 import { normalizePhaseTwoRouteError } from "@/app/api/_utils/phase-two";
 
 interface RouteContext {
@@ -29,8 +33,27 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
 
     authorizeLocationRead(context, result.value);
 
+    const [contactsById, linkedContacts] = await Promise.all([
+      resolveContactsById(context.repositories, [
+        result.value.primaryContactId,
+        result.value.siteContactId,
+      ]),
+      resolveLocationContactLinks(context.repositories, result.value.id),
+    ]);
+
     return jsonOk({
-      location: safeLocationDetailForActor(context.actor, result.value),
+      location: {
+        ...safeLocationDetailForActor(context.actor, result.value),
+        primaryContact:
+          result.value.primaryContactId == null
+            ? null
+            : contactsById[result.value.primaryContactId] ?? null,
+        siteContact:
+          result.value.siteContactId == null
+            ? null
+            : contactsById[result.value.siteContactId] ?? null,
+        linkedContacts,
+      },
     });
   } catch (error) {
     return jsonError(normalizePhaseTwoRouteError(error));
@@ -65,8 +88,27 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
     revalidateLocationPaths(result.value.id);
 
+    const [contactsById, linkedContacts] = await Promise.all([
+      resolveContactsById(context.repositories, [
+        result.value.primaryContactId,
+        result.value.siteContactId,
+      ]),
+      resolveLocationContactLinks(context.repositories, result.value.id),
+    ]);
+
     return jsonOk({
-      location: safeLocationDetailForActor(context.actor, result.value),
+      location: {
+        ...safeLocationDetailForActor(context.actor, result.value),
+        primaryContact:
+          result.value.primaryContactId == null
+            ? null
+            : contactsById[result.value.primaryContactId] ?? null,
+        siteContact:
+          result.value.siteContactId == null
+            ? null
+            : contactsById[result.value.siteContactId] ?? null,
+        linkedContacts,
+      },
     });
   } catch (error) {
     return jsonError(normalizePhaseTwoRouteError(error));
@@ -97,8 +139,27 @@ export async function DELETE(_request: NextRequest, { params }: RouteContext) {
 
     revalidateLocationPaths(result.value.id);
 
+    const [contactsById, linkedContacts] = await Promise.all([
+      resolveContactsById(context.repositories, [
+        result.value.primaryContactId,
+        result.value.siteContactId,
+      ]),
+      resolveLocationContactLinks(context.repositories, result.value.id),
+    ]);
+
     return jsonOk({
-      location: safeLocationDetailForActor(context.actor, result.value),
+      location: {
+        ...safeLocationDetailForActor(context.actor, result.value),
+        primaryContact:
+          result.value.primaryContactId == null
+            ? null
+            : contactsById[result.value.primaryContactId] ?? null,
+        siteContact:
+          result.value.siteContactId == null
+            ? null
+            : contactsById[result.value.siteContactId] ?? null,
+        linkedContacts,
+      },
     });
   } catch (error) {
     return jsonError(normalizePhaseTwoRouteError(error));

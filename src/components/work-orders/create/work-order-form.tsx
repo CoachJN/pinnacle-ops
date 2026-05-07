@@ -17,8 +17,10 @@ import {
   workOrderCategorySchema,
   workOrderPrioritySchema,
 } from "@/modules/work-orders";
+import type { ContactSummary } from "@/types/contact";
 import { CategorySelector } from "./category-selector";
 import { ClientSelector } from "./client-selector";
+import { syncSelectedContacts } from "./contact-selection";
 import { LocationSelector } from "./location-selector";
 import { PrioritySelector } from "./priority-selector";
 import type {
@@ -41,8 +43,16 @@ const workOrderFormSchema = z.object({
     .min(10, "Description must be at least 10 characters."),
   clientOrganizationId: z.string().trim().min(1, "Client organization is required."),
   locationId: z.string().trim().min(1, "Location is required."),
+  requestedByContactId: z.string().trim(),
+  siteContactId: z.string().trim(),
   priority: workOrderPrioritySchema,
   category: workOrderCategorySchema,
+  requestedServiceDate: z.union([
+    z.literal(""),
+    z.iso.date("Enter a valid requested service date."),
+  ]),
+  requiresQuote: z.boolean(),
+  quoteRequiredThreshold: z.string().trim(),
   requestedByName: z.string().trim().min(1, "Requester name is required."),
   requestedByEmail: z.union([
     z.literal(""),
@@ -57,8 +67,20 @@ const workOrderCreatePayloadSchema = z.object({
   description: z.string().trim().min(10),
   clientOrganizationId: z.string().trim().min(1),
   locationId: z.string().trim().min(1),
+  requestedByContactId: z.string().trim().optional(),
+  siteContactId: z.string().trim().optional(),
   priority: workOrderPrioritySchema,
   category: workOrderCategorySchema,
+  requestedServiceDate: z
+    .string()
+    .trim()
+    .refine(
+      (value) => !Number.isNaN(Date.parse(value)),
+      "Enter a valid requested service date.",
+    )
+    .optional(),
+  requiresQuote: z.boolean().optional(),
+  quoteRequiredThresholdCents: z.number().int().nonnegative().nullable().optional(),
   requestedByName: z.string().trim().min(1),
   requestedByEmail: z.string().trim().email().optional(),
   requestedByPhone: z.string().trim().min(1).optional(),
@@ -78,8 +100,13 @@ const INITIAL_VALUES: WorkOrderFormValues = {
   description: "",
   clientOrganizationId: "",
   locationId: "",
+  requestedByContactId: "",
+  siteContactId: "",
   priority: "MEDIUM",
   category: "GENERAL_REPAIR",
+  requestedServiceDate: "",
+  requiresQuote: false,
+  quoteRequiredThreshold: "",
   requestedByName: "",
   requestedByEmail: "",
   requestedByPhone: "",
@@ -90,6 +117,10 @@ interface WorkOrderFormProps {
   clients: ClientOrganizationSummary[];
   defaultClientOrganizationId?: string;
   locations: LocationSummary[];
+}
+
+interface ContactsResponse {
+  contacts: ContactSummary[];
 }
 
 export function WorkOrderForm({
@@ -105,6 +136,7 @@ export function WorkOrderForm({
   const [errors, setErrors] = useState<WorkOrderFormErrors>(EMPTY_ERRORS);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [contacts, setContacts] = useState<ContactSummary[]>([]);
 
   const activeClientIds = useMemo(
     () => new Set(clients.map((client) => client.id)),
@@ -137,6 +169,56 @@ export function WorkOrderForm({
 
     setValues((current) => ({ ...current, locationId: "" }));
   }, [availableLocations, values.clientOrganizationId, values.locationId]);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const params = new URLSearchParams();
+    if (values.locationId) {
+      params.set("locationId", values.locationId);
+    } else if (values.clientOrganizationId) {
+      params.set("clientOrganizationId", values.clientOrganizationId);
+    }
+
+    if (!params.size) {
+      setContacts([]);
+      return;
+    }
+
+    void (async () => {
+      const response = await fetch(`/api/contacts?${params.toString()}`, {
+        cache: "no-store",
+      });
+      const payload = (await response.json()) as ContactsResponse;
+      if (response.ok && !isCancelled) {
+        setContacts(payload.contacts);
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [values.clientOrganizationId, values.locationId]);
+
+  useEffect(() => {
+    const nextValues = syncSelectedContacts({ contacts, values });
+    if (!nextValues) {
+      return;
+    }
+
+    setValues(nextValues);
+  }, [contacts, values]);
+
+  useEffect(() => {
+    if (values.requiresQuote || !values.quoteRequiredThreshold) {
+      return;
+    }
+
+    setValues((current) => ({
+      ...current,
+      quoteRequiredThreshold: "",
+    }));
+  }, [values.quoteRequiredThreshold, values.requiresQuote]);
 
   function updateField<Key extends keyof WorkOrderFormValues>(
     key: Key,
@@ -316,10 +398,33 @@ export function WorkOrderForm({
             value={values.locationId}
           />
 
+          <ContactSelector
+            contacts={contacts}
+            label="Requester contact"
+            onChange={(value) => updateField("requestedByContactId", value)}
+            value={values.requestedByContactId}
+          />
+
+          <ContactSelector
+            contacts={contacts}
+            label="Site contact"
+            onChange={(value) => updateField("siteContactId", value)}
+            value={values.siteContactId}
+          />
+
           <CategorySelector
             error={errors.category}
             onChange={(value) => updateField("category", value)}
             value={values.category}
+          />
+
+          <TextField
+            error={errors.requestedServiceDate}
+            label="Requested service date"
+            name="requestedServiceDate"
+            onChange={(event) => updateField("requestedServiceDate", event.target.value)}
+            type="date"
+            value={values.requestedServiceDate}
           />
 
           <TextField
@@ -360,6 +465,40 @@ export function WorkOrderForm({
             type="tel"
             value={values.requestedByPhone}
           />
+
+          <fieldset className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4 md:col-span-2">
+            <legend className="px-1 text-sm font-semibold text-neutral-900">
+              Quote requirements
+            </legend>
+            <div className="mt-3 grid gap-4 md:grid-cols-[minmax(0,1fr)_16rem]">
+              <label className="flex items-start gap-3 text-sm text-neutral-700">
+                <input
+                  checked={values.requiresQuote}
+                  className="mt-1 size-4 rounded border-neutral-300 text-neutral-950 focus:ring-neutral-500"
+                  onChange={(event) => updateField("requiresQuote", event.target.checked)}
+                  type="checkbox"
+                />
+                <span>
+                  <span className="font-medium text-neutral-900">
+                    Require a quote before work proceeds
+                  </span>
+                  <span className="mt-1 block text-neutral-600">
+                    Keep quote handling referenced to the work order without embedding quote entities.
+                  </span>
+                </span>
+              </label>
+
+              <TextField
+                error={errors.quoteRequiredThreshold}
+                label="Quote threshold"
+                name="quoteRequiredThreshold"
+                onChange={(event) => updateField("quoteRequiredThreshold", event.target.value)}
+                placeholder="Optional cents"
+                type="number"
+                value={values.quoteRequiredThreshold}
+              />
+            </div>
+          </fieldset>
         </div>
 
         <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-4 text-sm text-neutral-600">
@@ -393,6 +532,18 @@ function validateForm(
   const errors = parsed.success ? {} : toFieldErrors(parsed.error.issues);
 
   if (
+    values.quoteRequiredThreshold &&
+    !/^\d+$/.test(values.quoteRequiredThreshold)
+  ) {
+    errors.quoteRequiredThreshold = "Enter the quote threshold in cents.";
+  }
+
+  if (!values.requiresQuote && values.quoteRequiredThreshold) {
+    errors.quoteRequiredThreshold =
+      "Enable quote requirements before setting a quote threshold.";
+  }
+
+  if (
     values.locationId &&
     !availableLocations.some((location) => location.id === values.locationId)
   ) {
@@ -409,8 +560,17 @@ function parsePayload(values: WorkOrderFormValues): WorkOrderCreatePayload | nul
     description: values.description.trim(),
     clientOrganizationId: values.clientOrganizationId.trim(),
     locationId: values.locationId.trim(),
+    requestedByContactId: values.requestedByContactId.trim() || undefined,
+    siteContactId: values.siteContactId.trim() || undefined,
     priority: values.priority,
     category: values.category,
+    requestedServiceDate: values.requestedServiceDate
+      ? new Date(`${values.requestedServiceDate}T00:00:00.000Z`).toISOString()
+      : undefined,
+    requiresQuote: values.requiresQuote || undefined,
+    quoteRequiredThresholdCents: values.quoteRequiredThreshold
+      ? Number.parseInt(values.quoteRequiredThreshold, 10)
+      : undefined,
     requestedByName: values.requestedByName.trim(),
     requestedByEmail: values.requestedByEmail.trim() || undefined,
     requestedByPhone: values.requestedByPhone.trim() || undefined,
@@ -492,7 +652,7 @@ function TextField({
   onChange: (event: ChangeEvent<HTMLInputElement>) => void;
   placeholder?: string;
   required?: boolean;
-  type?: "date" | "email" | "tel" | "text";
+  type?: "date" | "email" | "number" | "tel" | "text";
   value: string;
 }) {
   return (
@@ -510,6 +670,36 @@ function TextField({
       {error ? (
         <span className="mt-1 block text-xs text-rose-700">{error}</span>
       ) : null}
+    </label>
+  );
+}
+
+function ContactSelector({
+  contacts,
+  label,
+  onChange,
+  value,
+}: {
+  contacts: ContactSummary[];
+  label: string;
+  onChange: (value: string) => void;
+  value: string;
+}) {
+  return (
+    <label className="block text-sm font-medium text-neutral-700">
+      {label}
+      <select
+        className="mt-1 w-full rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm text-neutral-950 shadow-sm outline-none transition focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
+        onChange={(event) => onChange(event.target.value)}
+        value={value}
+      >
+        <option value="">No linked contact</option>
+        {contacts.map((contact) => (
+          <option key={contact.id} value={contact.id}>
+            {contact.displayName}
+          </option>
+        ))}
+      </select>
     </label>
   );
 }

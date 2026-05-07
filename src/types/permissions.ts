@@ -45,13 +45,17 @@ export const PERMISSION_ENTITIES = {
   Contractors: "contractors",
   Assignments: "assignments",
   ContractorQuotes: "contractor_quotes",
-  ClientFacingQuotes: "client_facing_quotes",
-  Invoices: "invoices",
+  ClientQuotes: "client_quotes",
+  ClientFacingQuotes: "client_quotes",
+  ContractorInvoices: "contractor_invoices",
+  ClientInvoices: "client_invoices",
+  Invoices: "client_invoices",
   ActivityLogs: "activity_logs",
   DashboardAccess: "dashboard_access",
   InternalNotes: "internal_notes",
   PaymentStatus: "payment_status",
   BillingData: "billing_data",
+  ProfitabilityData: "profitability_data",
 } as const;
 
 export type PermissionEntity =
@@ -113,11 +117,26 @@ const clientQuoteControlRoles = [
   USER_ROLES.FinanceAdmin,
   USER_ROLES.Owner,
 ] as const satisfies readonly UserRole[];
+const clientCommercialViewRoles = [
+  USER_ROLES.Manager,
+  USER_ROLES.FinanceAdmin,
+  USER_ROLES.Owner,
+] as const satisfies readonly UserRole[];
+const contractorCommercialViewRoles = [
+  USER_ROLES.Coordinator,
+  USER_ROLES.Manager,
+  USER_ROLES.FinanceAdmin,
+  USER_ROLES.Owner,
+] as const satisfies readonly UserRole[];
 const operationsApprovalRoles = [
   USER_ROLES.Manager,
   USER_ROLES.Owner,
 ] as const satisfies readonly UserRole[];
 const financialRoles = [
+  USER_ROLES.FinanceAdmin,
+  USER_ROLES.Owner,
+] as const satisfies readonly UserRole[];
+const profitabilityRoles = [
   USER_ROLES.FinanceAdmin,
   USER_ROLES.Owner,
 ] as const satisfies readonly UserRole[];
@@ -224,9 +243,9 @@ export const ROLE_PERMISSION_MATRIX = {
       USER_ROLES.ContractorUser,
     ],
   },
-  [PERMISSION_ENTITIES.ClientFacingQuotes]: {
+  [PERMISSION_ENTITIES.ClientQuotes]: {
     [AUTHORITY_CATEGORIES.View]: [
-      ...internalVisibilityRoles,
+      ...clientCommercialViewRoles,
       USER_ROLES.ClientUser,
     ],
     [AUTHORITY_CATEGORIES.Create]: clientQuoteControlRoles,
@@ -240,12 +259,18 @@ export const ROLE_PERMISSION_MATRIX = {
       USER_ROLES.ClientUser,
     ],
   },
-  [PERMISSION_ENTITIES.Invoices]: {
+  [PERMISSION_ENTITIES.ContractorInvoices]: {
+    [AUTHORITY_CATEGORIES.View]: contractorCommercialViewRoles,
+    [AUTHORITY_CATEGORIES.Create]: financialRoles,
+    [AUTHORITY_CATEGORIES.Edit]: financialRoles,
+    [AUTHORITY_CATEGORIES.Approve]: financialRoles,
+    [AUTHORITY_CATEGORIES.Transition]: financialRoles,
+  },
+  [PERMISSION_ENTITIES.ClientInvoices]: {
     [AUTHORITY_CATEGORIES.View]: [
-      USER_ROLES.Coordinator,
-      USER_ROLES.Manager,
       USER_ROLES.FinanceAdmin,
       USER_ROLES.Owner,
+      USER_ROLES.ClientUser,
     ],
     [AUTHORITY_CATEGORIES.Create]: financialRoles,
     [AUTHORITY_CATEGORIES.Edit]: financialRoles,
@@ -290,6 +315,13 @@ export const ROLE_PERMISSION_MATRIX = {
     [AUTHORITY_CATEGORIES.Edit]: financialRoles,
     [AUTHORITY_CATEGORIES.Approve]: financialRoles,
     [AUTHORITY_CATEGORIES.Transition]: financialRoles,
+  },
+  [PERMISSION_ENTITIES.ProfitabilityData]: {
+    [AUTHORITY_CATEGORIES.View]: profitabilityRoles,
+    [AUTHORITY_CATEGORIES.Create]: profitabilityRoles,
+    [AUTHORITY_CATEGORIES.Edit]: profitabilityRoles,
+    [AUTHORITY_CATEGORIES.Approve]: profitabilityRoles,
+    [AUTHORITY_CATEGORIES.Transition]: profitabilityRoles,
   },
 } as const satisfies PermissionMatrix;
 

@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import {
-  getPhaseThreeWorkOrderApiContext,
-  getSerializedPhaseThreeWorkOrderDetail,
-} from "@/server/api/work-order-core";
-import { revalidateWorkOrderPaths, withApiRoute } from "@/server/api/work-orders";
+  getWorkOrderApiContext,
+  revalidateWorkOrderPaths,
+  withApiRoute,
+} from "@/server/api/work-orders";
+import {
+  getRuntimeWorkOrderDetail,
+  getRuntimeWorkOrderDetailData,
+} from "@/server/api/work-order-runtime";
 
 interface RouteContext {
   params: Promise<{ workOrderId: string; assignmentId: string }>;
@@ -15,9 +19,9 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     request,
     "/api/work-orders/[workOrderId]/assignments/[assignmentId]/accept",
     async (requestContext) => {
-      const context = await getPhaseThreeWorkOrderApiContext(requestContext);
+      const context = await getWorkOrderApiContext(requestContext);
       const { workOrderId, assignmentId } = await params;
-      await getSerializedPhaseThreeWorkOrderDetail(context, workOrderId);
+      await getRuntimeWorkOrderDetail(context, workOrderId);
 
       const result = await context.services.assignments.updateStatus({
         ...context.audit,
@@ -34,7 +38,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
 
       return NextResponse.json({
         data: {
-          workOrder: await getSerializedPhaseThreeWorkOrderDetail(context, workOrderId),
+          workOrder: await getRuntimeWorkOrderDetailData(context, workOrderId),
         },
       });
     },

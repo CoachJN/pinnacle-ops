@@ -119,9 +119,9 @@ function buildStatusPrioritySignals(
   if (context.lifecycle === "work-order") {
     const weights: Partial<Record<string, [number, OptimizationSignalSeverity, string]>> = {
       [WORK_ORDER_STATUS.Triage]: [10, "LOW", "Work order is waiting for triage."],
-      [WORK_ORDER_STATUS.AwaitingQuote]: [20, "MEDIUM", "Work order is waiting for quote follow-up."],
-      [WORK_ORDER_STATUS.AwaitingClientApproval]: [25, "MEDIUM", "Work order is waiting for client approval."],
-      [WORK_ORDER_STATUS.ApprovedToProceed]: [30, "MEDIUM", "Work order is approved and needs scheduling."],
+      [WORK_ORDER_STATUS.QuoteRequired]: [20, "MEDIUM", "Work order is waiting for quote follow-up."],
+      [WORK_ORDER_STATUS.ClientApprovalRequested]: [25, "MEDIUM", "Work order is waiting for client approval."],
+      [WORK_ORDER_STATUS.ClientApproved]: [30, "MEDIUM", "Work order is approved and needs scheduling."],
       [WORK_ORDER_STATUS.ReadyForInvoicing]: [35, "HIGH", "Work order is ready for invoicing."],
       [WORK_ORDER_STATUS.Escalated]: [45, "HIGH", "Work order is escalated."],
       [WORK_ORDER_STATUS.OnHold]: [10, "LOW", "Work order is on hold."],
@@ -353,9 +353,9 @@ function isInvoiceTerminal(status: string | null | undefined): boolean {
 }
 
 function getInvoiceDueAt(entity: OptimizationEntity | null | undefined): string | undefined {
-  if (!entity || !("dueAt" in entity)) {
+  if (!entity || !("dueDate" in entity) || typeof entity.dueDate !== "string") {
     return undefined;
   }
 
-  return entity.dueAt;
+  return entity.dueDate;
 }

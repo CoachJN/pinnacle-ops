@@ -1,0 +1,32 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAllowedAttachmentContentType() {
+      return request.resource != null
+        && request.resource.contentType.matches('application/pdf|image/jpeg|image/png');
+    }
+
+    function isAllowedAttachmentSize() {
+      return request.resource != null
+        && request.resource.size <= 10 * 1024 * 1024;
+    }
+
+    match /work-orders/{workOrderId}/attachments/{fileName} {
+      // The client uploads attachment binaries directly, while the server validates
+      // the work order relationship before persisting attachment metadata.
+      allow create: if isSignedIn()
+        && isAllowedAttachmentContentType()
+        && isAllowedAttachmentSize();
+      allow read, update, delete: if false;
+    }
+
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

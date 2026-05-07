@@ -1,4 +1,4 @@
-import type { Invoice } from "@/types/financial";
+import type { ClientInvoice as Invoice } from "@/types/invoice";
 import type { WorkOrder } from "@/types/work-order";
 import {
   QUOTE_STATUS,

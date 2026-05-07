@@ -45,7 +45,7 @@ export default async function ClientPortalWorkOrdersPage({
             className="mt-1 w-full rounded-2xl border border-slate-300 px-3 py-2.5 text-sm text-slate-950 outline-none transition focus:border-emerald-500"
             defaultValue={filters.search ?? ""}
             name="search"
-            placeholder="Search by work order number, title, or location"
+            placeholder="Search by work order number, summary, or location"
             type="search"
           />
         </label>
@@ -123,10 +123,12 @@ export default async function ClientPortalWorkOrdersPage({
                       >
                         {workOrder.workOrderNumber}
                       </Link>
-                      <p className="mt-1 text-slate-600">{workOrder.title}</p>
+                      <p className="mt-1 text-slate-600">
+                        {workOrder.shortDescription}
+                      </p>
                     </td>
                     <td className="px-4 py-4 text-slate-600">{workOrder.locationName}</td>
-                    <td className="px-4 py-4 text-slate-600">{workOrder.status}</td>
+                    <td className="px-4 py-4 text-slate-600">{workOrder.lifecycleStatus}</td>
                     <td className="px-4 py-4 text-slate-600">{workOrder.priority}</td>
                     <td className="px-4 py-4 text-slate-600">
                       {workOrder.currentQuoteStatus ?? "No active quote"}

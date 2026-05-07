@@ -4,14 +4,14 @@ import type {
   ClientQuoteOwnershipReference,
   ContractorQuote,
   ContractorQuoteOwnershipReference,
-  Invoice,
-  InvoiceOwnershipReference,
-} from "@/types/financial";
+} from "@/types/quote";
 import type {
-  ClientOrganization,
-  ContractorOrganization,
-  Location,
-} from "@/types/organization";
+  ClientInvoice as Invoice,
+  InvoiceOwnershipReference,
+} from "@/types/invoice";
+import type { ClientOrganization } from "@/types/client-organization";
+import type { ContractorOrganization } from "@/types/contractor";
+import type { Location } from "@/types/location";
 import type {
   Assignment,
   AssignmentOwnershipReference,
@@ -43,11 +43,10 @@ type RelationshipContractorQuote = RelationshipEntity<ContractorQuote> &
 
 type RelationshipClientQuote = RelationshipEntity<ClientQuote> &
   ClientQuoteOwnershipReference &
-  Pick<ClientQuote, "contractorQuoteId">;
+  Pick<ClientQuote, "sourceContractorQuoteId">;
 
 type RelationshipInvoice = RelationshipEntity<Invoice> &
-  InvoiceOwnershipReference &
-  Pick<Invoice, "clientQuoteId" | "contractorOrganizationId">;
+  InvoiceOwnershipReference;
 
 export interface CoreRelationshipGraph {
   clientOrganizations: Array<RelationshipEntity<ClientOrganization>>;
@@ -148,9 +147,10 @@ export function validateCoreRelationshipIntegrity(
 
   for (const contractorQuote of graph.contractorQuotes ?? []) {
     const workOrder = workOrders.get(contractorQuote.workOrderId);
-    const contractorOrganization = contractorOrganizations.get(
-      contractorQuote.contractorOrganizationId,
-    );
+    const contractorOrganization =
+      contractorQuote.contractorOrganizationId == null
+        ? undefined
+        : contractorOrganizations.get(contractorQuote.contractorOrganizationId);
 
     if (!workOrder) {
       issues.push({
@@ -182,8 +182,8 @@ export function validateCoreRelationshipIntegrity(
 
   for (const clientQuote of graph.clientQuotes ?? []) {
     const workOrder = workOrders.get(clientQuote.workOrderId);
-    const contractorQuote = clientQuote.contractorQuoteId
-      ? contractorQuotes.get(clientQuote.contractorQuoteId)
+    const contractorQuote = clientQuote.sourceContractorQuoteId
+      ? contractorQuotes.get(clientQuote.sourceContractorQuoteId)
       : undefined;
 
     if (!workOrder) {
@@ -204,7 +204,7 @@ export function validateCoreRelationshipIntegrity(
       );
     }
 
-    if (clientQuote.contractorQuoteId) {
+    if (clientQuote.sourceContractorQuoteId) {
       validateClientQuoteContractorQuoteOwnership(
         clientQuote,
         contractorQuote,
@@ -216,12 +216,6 @@ export function validateCoreRelationshipIntegrity(
   for (const invoice of graph.invoices ?? []) {
     const workOrder = workOrders.get(invoice.workOrderId);
     const clientOrganization = clientOrganizations.get(invoice.clientOrganizationId);
-    const clientQuote = invoice.clientQuoteId
-      ? clientQuotes.get(invoice.clientQuoteId)
-      : undefined;
-    const contractorOrganization = invoice.contractorOrganizationId
-      ? contractorOrganizations.get(invoice.contractorOrganizationId)
-      : undefined;
 
     if (!workOrder) {
       issues.push({
@@ -239,26 +233,6 @@ export function validateCoreRelationshipIntegrity(
         field: "clientOrganizationId",
         message: "Invoice must belong to an existing ClientOrganization.",
       });
-    }
-
-    if (invoice.clientQuoteId) {
-      validateInvoiceClientQuoteOwnership(invoice, clientQuote, issues);
-    }
-
-    if (invoice.contractorOrganizationId) {
-      validateInvoiceContractorOrganizationOwnership(
-        invoice,
-        contractorOrganization,
-        issues,
-      );
-    }
-
-    if (invoice.clientQuoteId && invoice.contractorOrganizationId && clientQuote) {
-      const contractorQuote = clientQuote.contractorQuoteId
-        ? contractorQuotes.get(clientQuote.contractorQuoteId)
-        : undefined;
-
-      validateInvoiceContractorQuoteOwnership(invoice, contractorQuote, issues);
     }
 
     if (workOrder) {
@@ -365,9 +339,9 @@ function validateClientQuoteContractorQuoteOwnership(
     issues.push({
       entityType: "ClientQuote",
       entityId: clientQuote.id,
-      field: "contractorQuoteId",
+      field: "sourceContractorQuoteId",
       message:
-        "ClientQuote contractorQuoteId must reference an existing ContractorQuote.",
+        "ClientQuote sourceContractorQuoteId must reference an existing ContractorQuote.",
     });
     return;
   }
@@ -376,100 +350,13 @@ function validateClientQuoteContractorQuoteOwnership(
     issues.push({
       entityType: "ClientQuote",
       entityId: clientQuote.id,
-      field: "contractorQuoteId",
+      field: "sourceContractorQuoteId",
       message:
-        "ClientQuote contractorQuoteId must belong to the same WorkOrder as the ClientQuote.",
+        "ClientQuote sourceContractorQuoteId must belong to the same WorkOrder as the ClientQuote.",
     });
   }
 
   validateTenantMatch("ClientQuote", clientQuote, contractorQuote, issues);
-}
-
-function validateInvoiceClientQuoteOwnership(
-  invoice: RelationshipInvoice,
-  clientQuote: RelationshipClientQuote | undefined,
-  issues: RelationshipIntegrityIssue[],
-): void {
-  if (!clientQuote) {
-    issues.push({
-      entityType: "Invoice",
-      entityId: invoice.id,
-      field: "clientQuoteId",
-      message: "Invoice clientQuoteId must reference an existing ClientQuote.",
-    });
-    return;
-  }
-
-  if (invoice.workOrderId !== clientQuote.workOrderId) {
-    issues.push({
-      entityType: "Invoice",
-      entityId: invoice.id,
-      field: "clientQuoteId",
-      message:
-        "Invoice clientQuoteId must belong to the same WorkOrder as the Invoice.",
-    });
-  }
-
-  if (invoice.clientOrganizationId !== clientQuote.clientOrganizationId) {
-    issues.push({
-      entityType: "Invoice",
-      entityId: invoice.id,
-      field: "clientQuoteId",
-      message:
-        "Invoice clientQuoteId must belong to the same ClientOrganization as the Invoice.",
-    });
-  }
-
-  if (invoice.locationId !== clientQuote.locationId) {
-    issues.push({
-      entityType: "Invoice",
-      entityId: invoice.id,
-      field: "clientQuoteId",
-      message:
-        "Invoice clientQuoteId must belong to the same Location as the Invoice.",
-    });
-  }
-
-  validateTenantMatch("Invoice", invoice, clientQuote, issues);
-}
-
-function validateInvoiceContractorOrganizationOwnership(
-  invoice: RelationshipInvoice,
-  contractorOrganization: RelationshipEntity<ContractorOrganization> | undefined,
-  issues: RelationshipIntegrityIssue[],
-): void {
-  if (!contractorOrganization) {
-    issues.push({
-      entityType: "Invoice",
-      entityId: invoice.id,
-      field: "contractorOrganizationId",
-      message:
-        "Invoice contractorOrganizationId must reference an existing ContractorOrganization.",
-    });
-    return;
-  }
-
-  validateTenantMatch("Invoice", invoice, contractorOrganization, issues);
-}
-
-function validateInvoiceContractorQuoteOwnership(
-  invoice: RelationshipInvoice,
-  contractorQuote: RelationshipContractorQuote | undefined,
-  issues: RelationshipIntegrityIssue[],
-): void {
-  if (!contractorQuote) {
-    return;
-  }
-
-  if (invoice.contractorOrganizationId !== contractorQuote.contractorOrganizationId) {
-    issues.push({
-      entityType: "Invoice",
-      entityId: invoice.id,
-      field: "contractorOrganizationId",
-      message:
-        "Invoice contractorOrganizationId must match the ContractorQuote linked through its ClientQuote.",
-    });
-  }
 }
 
 function validateTenantMatch(

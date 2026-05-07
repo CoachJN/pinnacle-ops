@@ -31,13 +31,13 @@ export interface LocationListFilters {
 
 export interface CreateLocationRepositoryInput extends RepositoryMutationContext {
   data: CreateLocationSchemaOutput;
-  clientOrganization: Pick<ClientOrganization, "id" | "name" | "displayName">;
+  clientOrganization: Pick<ClientOrganization, "id">;
 }
 
 export interface UpdateLocationRepositoryInput extends RepositoryMutationContext {
   locationId: EntityId;
   data: UpdateLocationSchemaOutput;
-  clientOrganization?: Pick<ClientOrganization, "id" | "name" | "displayName">;
+  clientOrganization?: Pick<ClientOrganization, "id">;
 }
 
 export interface SetLocationActiveStateInput extends RepositoryMutationContext {
@@ -87,24 +87,24 @@ class FirestoreLocationRepository implements LocationRepository {
       deletedAt: null,
       deletedByUserId: null,
       clientOrganizationId: input.clientOrganization.id,
-      clientSnapshot: {
-        id: input.clientOrganization.id,
-        name:
-          input.clientOrganization.displayName ?? input.clientOrganization.name,
-      },
       name: input.data.name,
+      displayName: input.data.displayName ?? null,
       code: input.data.code ?? null,
+      storeNumber: input.data.storeNumber ?? null,
       status: input.data.status ?? "active",
+      primaryContactId: input.data.primaryContactId ?? null,
+      siteContactId: input.data.siteContactId ?? null,
       addressLine1: input.data.addressLine1 ?? null,
       addressLine2: input.data.addressLine2 ?? null,
       city: input.data.city ?? null,
       region: input.data.region ?? null,
       postalCode: input.data.postalCode ?? null,
       countryCode: input.data.countryCode ?? null,
-      locationContactName: input.data.locationContactName ?? null,
-      locationContactEmail: input.data.locationContactEmail ?? null,
-      locationContactPhone: input.data.locationContactPhone ?? null,
+      latitude: input.data.latitude ?? null,
+      longitude: input.data.longitude ?? null,
+      timeZone: input.data.timeZone ?? null,
       accessNotes: input.data.accessNotes ?? null,
+      serviceNotes: input.data.serviceNotes ?? null,
       notes: input.data.notes ?? null,
     };
 
@@ -124,17 +124,25 @@ class FirestoreLocationRepository implements LocationRepository {
       updatedByUserId: input.actorUserId,
       clientOrganizationId:
         input.clientOrganization?.id ?? existing.clientOrganizationId,
-      clientSnapshot: input.clientOrganization
-        ? {
-            id: input.clientOrganization.id,
-            name:
-              input.clientOrganization.displayName ??
-              input.clientOrganization.name,
-          }
-        : existing.clientSnapshot,
       name: input.data.name ?? existing.name,
+      displayName:
+        input.data.displayName === undefined
+          ? existing.displayName
+          : input.data.displayName ?? null,
       code: input.data.code === undefined ? existing.code : input.data.code ?? null,
+      storeNumber:
+        input.data.storeNumber === undefined
+          ? existing.storeNumber
+          : input.data.storeNumber ?? null,
       status: input.data.status ?? existing.status,
+      primaryContactId:
+        input.data.primaryContactId === undefined
+          ? existing.primaryContactId
+          : input.data.primaryContactId ?? null,
+      siteContactId:
+        input.data.siteContactId === undefined
+          ? existing.siteContactId
+          : input.data.siteContactId ?? null,
       addressLine1:
         input.data.addressLine1 === undefined
           ? existing.addressLine1
@@ -154,22 +162,26 @@ class FirestoreLocationRepository implements LocationRepository {
         input.data.countryCode === undefined
           ? existing.countryCode
           : input.data.countryCode ?? null,
-      locationContactName:
-        input.data.locationContactName === undefined
-          ? existing.locationContactName
-          : input.data.locationContactName ?? null,
-      locationContactEmail:
-        input.data.locationContactEmail === undefined
-          ? existing.locationContactEmail
-          : input.data.locationContactEmail ?? null,
-      locationContactPhone:
-        input.data.locationContactPhone === undefined
-          ? existing.locationContactPhone
-          : input.data.locationContactPhone ?? null,
+      latitude:
+        input.data.latitude === undefined
+          ? existing.latitude
+          : input.data.latitude ?? null,
+      longitude:
+        input.data.longitude === undefined
+          ? existing.longitude
+          : input.data.longitude ?? null,
+      timeZone:
+        input.data.timeZone === undefined
+          ? existing.timeZone
+          : input.data.timeZone ?? null,
       accessNotes:
         input.data.accessNotes === undefined
           ? existing.accessNotes
           : input.data.accessNotes ?? null,
+      serviceNotes:
+        input.data.serviceNotes === undefined
+          ? existing.serviceNotes
+          : input.data.serviceNotes ?? null,
       notes:
         input.data.notes === undefined ? existing.notes : input.data.notes ?? null,
     };
@@ -271,18 +283,23 @@ function mapLocation(entity: FirestoreLocation): Location {
     deletedByUserId: entity.deletedByUserId ?? undefined,
     clientOrganizationId: entity.clientOrganizationId,
     name: entity.name,
+    displayName: entity.displayName ?? undefined,
     code: entity.code ?? undefined,
+    storeNumber: entity.storeNumber ?? undefined,
     status: entity.status,
+    primaryContactId: entity.primaryContactId ?? undefined,
+    siteContactId: entity.siteContactId ?? undefined,
     addressLine1: entity.addressLine1 ?? undefined,
     addressLine2: entity.addressLine2 ?? undefined,
     city: entity.city ?? undefined,
     region: entity.region ?? undefined,
     postalCode: entity.postalCode ?? undefined,
     countryCode: entity.countryCode ?? undefined,
-    locationContactName: entity.locationContactName ?? undefined,
-    locationContactEmail: entity.locationContactEmail ?? undefined,
-    locationContactPhone: entity.locationContactPhone ?? undefined,
+    latitude: entity.latitude ?? undefined,
+    longitude: entity.longitude ?? undefined,
+    timeZone: entity.timeZone ?? undefined,
     accessNotes: entity.accessNotes ?? undefined,
+    serviceNotes: entity.serviceNotes ?? undefined,
     notes: entity.notes ?? undefined,
   };
 }
@@ -304,7 +321,9 @@ function applyLocationFilters(
       normalizedSearch
         ? [
             location.name,
+            location.displayName,
             location.code,
+            location.storeNumber,
             location.addressLine1,
             location.city,
             location.region,

@@ -4,38 +4,64 @@ import Link from "next/link";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { ActionFeedback } from "@/components/shared/action-feedback";
+import { ContactLinkManager } from "@/components/shared/contact-link-manager";
 import {
   CONTRACTOR_STATUS_LABELS,
   CONTRACTOR_STATUS_VALUES,
+  CONTRACTOR_TRADE_VALUES,
   type Contractor,
+  type ContractorTrade,
   type CreateContractorInput,
 } from "@/types/contractor";
+import type { ContactLinkInput, ContactSummary } from "@/types/contact";
 import type {
   ContractorApiErrorResponse,
   ContractorDetailResponse,
+  ContractorListResponse,
 } from "@/components/contractors/types";
+import type { ContactRoleSlotAssignment } from "@/lib/contact-linking";
 
 interface FormState {
-  name: string;
-  company: string;
-  email: string;
-  phone: string;
+  legalName: string;
+  displayName: string;
+  parentContractorId: string;
+  businessEmail: string;
+  mainPhone: string;
+  altPhone: string;
+  fax: string;
+  primaryContactId: string;
+  billingContactId: string;
+  dispatchContactId: string;
+  linkedContacts: ContactLinkInput[];
   status: CreateContractorInput["status"];
-  serviceCategories: string;
-  serviceAreas: string;
+  trades: ContractorTrade[];
+  serviceArea: string;
+  isAssignable: boolean;
   notes: string;
 }
 
 const emptyFormState: FormState = {
-  name: "",
-  company: "",
-  email: "",
-  phone: "",
+  legalName: "",
+  displayName: "",
+  parentContractorId: "",
+  businessEmail: "",
+  mainPhone: "",
+  altPhone: "",
+  fax: "",
+  primaryContactId: "",
+  billingContactId: "",
+  dispatchContactId: "",
+  linkedContacts: [],
   status: "onboarding",
-  serviceCategories: "",
-  serviceAreas: "",
+  trades: [],
+  serviceArea: "",
+  isAssignable: false,
   notes: "",
 };
+
+interface ContactsResponse {
+  contacts: ContactSummary[];
+}
 
 export function ContractorEditorPage({
   mode,
@@ -46,46 +72,73 @@ export function ContractorEditorPage({
 }) {
   const router = useRouter();
   const [formState, setFormState] = useState<FormState>(emptyFormState);
+  const [contacts, setContacts] = useState<ContactSummary[]>([]);
+  const [contractors, setContractors] = useState<Contractor[]>([]);
   const [isLoading, setIsLoading] = useState(mode === "edit");
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    if (mode !== "edit" || !contractorId) {
-      return;
-    }
-
     let isCancelled = false;
 
-    async function loadContractor() {
-      setIsLoading(true);
+    async function loadPageData() {
+      setIsLoading(mode === "edit");
       setErrorMessage(null);
 
       try {
-        const response = await fetch(`/api/contractors/${contractorId}`, {
-          cache: "no-store",
-        });
-        const payload = (await response.json()) as
-          | ContractorDetailResponse
-          | ContractorApiErrorResponse;
+        const [contactsResponse, contractorsResponse, contractorResponse] =
+          await Promise.all([
+            fetch("/api/contacts", { cache: "no-store" }),
+            fetch("/api/contractors?limit=100", { cache: "no-store" }),
+            mode === "edit" && contractorId
+              ? fetch(`/api/contractors/${contractorId}`, {
+                  cache: "no-store",
+                })
+              : Promise.resolve(null),
+          ]);
 
-        if (!response.ok) {
-          const errorPayload = payload as ContractorApiErrorResponse;
+        const contactsPayload = (await contactsResponse.json()) as ContactsResponse;
+        if (!contactsResponse.ok) {
+          throw new Error("Unable to load contacts.");
+        }
+
+        const contractorsPayload = (await contractorsResponse.json()) as
+          | ContractorListResponse
+          | ContractorApiErrorResponse;
+        if (!contractorsResponse.ok) {
+          const errorPayload = contractorsPayload as ContractorApiErrorResponse;
           throw new Error(
-            errorPayload.error?.message ?? "Unable to load contractor.",
+            errorPayload.error?.message ?? "Unable to load contractors.",
           );
         }
 
         if (!isCancelled) {
-          const contractor = (payload as ContractorDetailResponse).contractor;
-          setFormState(toFormState(contractor));
+          setContacts(contactsPayload.contacts);
+          setContractors((contractorsPayload as ContractorListResponse).contractors);
+        }
+
+        if (contractorResponse) {
+          const payload = (await contractorResponse.json()) as
+            | ContractorDetailResponse
+            | ContractorApiErrorResponse;
+
+          if (!contractorResponse.ok) {
+            const errorPayload = payload as ContractorApiErrorResponse;
+            throw new Error(
+              errorPayload.error?.message ?? "Unable to load contractor.",
+            );
+          }
+
+          if (!isCancelled) {
+            setFormState(toFormState((payload as ContractorDetailResponse).contractor));
+          }
         }
       } catch (error) {
         if (!isCancelled) {
           setErrorMessage(
             error instanceof Error
               ? error.message
-              : "Unable to load contractor.",
+              : "Unable to load contractor setup.",
           );
         }
       } finally {
@@ -95,7 +148,7 @@ export function ContractorEditorPage({
       }
     }
 
-    void loadContractor();
+    void loadPageData();
 
     return () => {
       isCancelled = true;
@@ -106,6 +159,10 @@ export function ContractorEditorPage({
     () => (mode === "create" ? "Create contractor" : "Edit contractor"),
     [mode],
   );
+  const availableParentContractors = useMemo(
+    () => contractors.filter((contractor) => contractor.id !== contractorId),
+    [contractorId, contractors],
+  );
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -114,13 +171,21 @@ export function ContractorEditorPage({
 
     try {
       const payload: CreateContractorInput = {
-        name: formState.name.trim(),
-        company: formState.company.trim() || null,
-        email: formState.email.trim(),
-        phone: formState.phone.trim(),
+        legalName: formState.legalName.trim(),
+        displayName: formState.displayName.trim() || null,
+        parentContractorId: formState.parentContractorId.trim() || null,
+        businessEmail: formState.businessEmail.trim() || null,
+        mainPhone: formState.mainPhone.trim() || null,
+        altPhone: formState.altPhone.trim() || null,
+        fax: formState.fax.trim() || null,
+        primaryContactId: formState.primaryContactId.trim() || null,
+        billingContactId: formState.billingContactId.trim() || null,
+        dispatchContactId: formState.dispatchContactId.trim() || null,
+        linkedContacts: formState.linkedContacts,
         status: formState.status,
-        serviceCategories: splitList(formState.serviceCategories),
-        serviceAreas: splitList(formState.serviceAreas),
+        trades: formState.trades,
+        serviceArea: formState.serviceArea.trim() || null,
+        isAssignable: formState.isAssignable,
         notes: formState.notes.trim() || null,
       };
 
@@ -196,28 +261,69 @@ export function ContractorEditorPage({
       >
         <div className="grid gap-4 md:grid-cols-2">
           <Field
-            label="Name"
-            onChange={(value) => setFormState((current) => ({ ...current, name: value }))}
+            label="Legal name"
+            onChange={(value) =>
+              setFormState((current) => ({ ...current, legalName: value }))
+            }
             required
-            value={formState.name}
+            value={formState.legalName}
           />
           <Field
-            label="Company"
-            onChange={(value) => setFormState((current) => ({ ...current, company: value }))}
-            value={formState.company}
+            label="Display name"
+            onChange={(value) =>
+              setFormState((current) => ({ ...current, displayName: value }))
+            }
+            value={formState.displayName}
           />
+          <label className="text-sm font-medium text-neutral-700">
+            Parent contractor
+            <select
+              className="mt-1 w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-950 shadow-sm outline-none transition focus:border-neutral-500"
+              onChange={(event) =>
+                setFormState((current) => ({
+                  ...current,
+                  parentContractorId: event.target.value,
+                }))
+              }
+              value={formState.parentContractorId}
+            >
+              <option value="">No parent contractor</option>
+              {availableParentContractors.map((contractor) => (
+                <option key={contractor.id} value={contractor.id}>
+                  {formatContractorOptionLabel(contractor, contractors)}
+                </option>
+              ))}
+            </select>
+          </label>
           <Field
-            label="Email"
-            onChange={(value) => setFormState((current) => ({ ...current, email: value }))}
-            required
+            label="Business email"
+            onChange={(value) =>
+              setFormState((current) => ({ ...current, businessEmail: value }))
+            }
             type="email"
-            value={formState.email}
+            value={formState.businessEmail}
           />
           <Field
-            label="Phone"
-            onChange={(value) => setFormState((current) => ({ ...current, phone: value }))}
+            label="Main phone"
+            onChange={(value) =>
+              setFormState((current) => ({ ...current, mainPhone: value }))
+            }
             required
-            value={formState.phone}
+            value={formState.mainPhone}
+          />
+          <Field
+            label="Alternate phone"
+            onChange={(value) =>
+              setFormState((current) => ({ ...current, altPhone: value }))
+            }
+            value={formState.altPhone}
+          />
+          <Field
+            label="Fax"
+            onChange={(value) =>
+              setFormState((current) => ({ ...current, fax: value }))
+            }
+            value={formState.fax}
           />
           <label className="text-sm font-medium text-neutral-700">
             Status
@@ -239,24 +345,52 @@ export function ContractorEditorPage({
             </select>
           </label>
           <Field
-            label="Service categories"
+            label="Service area"
             onChange={(value) =>
-              setFormState((current) => ({ ...current, serviceCategories: value }))
+              setFormState((current) => ({ ...current, serviceArea: value }))
             }
-            placeholder="HVAC, Plumbing, Electrical"
-            required
-            value={formState.serviceCategories}
-          />
-          <Field
-            label="Service areas"
-            onChange={(value) => setFormState((current) => ({ ...current, serviceAreas: value }))}
             placeholder="Toronto, Mississauga, Remote"
-            value={formState.serviceAreas}
+            value={formState.serviceArea}
+          />
+          <TradeMultiSelect
+            onChange={(trades) =>
+              setFormState((current) => ({ ...current, trades }))
+            }
+            required
+            value={formState.trades}
+          />
+          <ToggleField
+            checked={formState.isAssignable}
+            description="Assignment selectors still require active status and matching trade coverage."
+            label="Assignable"
+            onChange={(checked) =>
+              setFormState((current) => ({ ...current, isAssignable: checked }))
+            }
           />
           <TextareaField
             label="Notes"
-            onChange={(value) => setFormState((current) => ({ ...current, notes: value }))}
+            onChange={(value) =>
+              setFormState((current) => ({ ...current, notes: value }))
+            }
             value={formState.notes}
+          />
+        </div>
+        <div className="mt-6">
+          <ContactLinkManager
+            contacts={contacts}
+            description="Keep primary, billing, and dispatch role assignments distinct from the full contractor contact membership list."
+            linkedContacts={formState.linkedContacts}
+            onLinkedContactsChange={(linkedContacts) =>
+              setFormState((current) => ({ ...current, linkedContacts }))
+            }
+            onRoleSlotsChange={(roleSlots) =>
+              setFormState((current) => ({
+                ...current,
+                ...mapContractorRoleSlotsToFormState(roleSlots),
+              }))
+            }
+            roleSlots={toContractorRoleSlots(formState)}
+            title="Linked contacts"
           />
         </div>
         <div className="mt-6 flex flex-wrap gap-3">
@@ -314,6 +448,76 @@ function Field({
   );
 }
 
+function TradeMultiSelect({
+  onChange,
+  required = false,
+  value,
+}: {
+  onChange: (value: ContractorTrade[]) => void;
+  required?: boolean;
+  value: ContractorTrade[];
+}) {
+  return (
+    <fieldset className="rounded-2xl border border-neutral-200 p-4 md:col-span-2">
+      <legend className="px-2 text-sm font-medium text-neutral-700">
+        Trades
+        {required ? <span className="text-rose-700"> *</span> : null}
+      </legend>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {CONTRACTOR_TRADE_VALUES.map((trade) => (
+          <label
+            className="flex items-center gap-3 rounded-xl border border-neutral-200 px-3 py-2 text-sm text-neutral-700"
+            key={trade}
+          >
+            <input
+              checked={value.includes(trade)}
+              onChange={(event) => {
+                const nextValue = event.target.checked
+                  ? [...value, trade]
+                  : value.filter((selectedTrade) => selectedTrade !== trade);
+                onChange(nextValue);
+              }}
+              type="checkbox"
+            />
+            <span>{formatTradeLabel(trade)}</span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+function ToggleField({
+  checked,
+  description,
+  label,
+  onChange,
+}: {
+  checked: boolean;
+  description: string;
+  label: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="rounded-2xl border border-neutral-200 p-4 text-sm font-medium text-neutral-700 md:col-span-2">
+      <span className="flex items-start gap-3">
+        <input
+          checked={checked}
+          className="mt-1"
+          onChange={(event) => onChange(event.target.checked)}
+          type="checkbox"
+        />
+        <span>
+          <span className="block text-neutral-950">{label}</span>
+          <span className="mt-1 block font-normal text-neutral-600">
+            {description}
+          </span>
+        </span>
+      </span>
+    </label>
+  );
+}
+
 function TextareaField({
   label,
   onChange,
@@ -336,26 +540,96 @@ function TextareaField({
   );
 }
 
-function splitList(value: string): string[] {
-  return Array.from(
-    new Set(
-      value
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean),
-    ),
-  );
-}
-
 function toFormState(contractor: Contractor): FormState {
   return {
-    name: contractor.name,
-    company: contractor.company ?? "",
-    email: contractor.email,
-    phone: contractor.phone,
+    legalName: contractor.legalName,
+    displayName: contractor.displayName ?? "",
+    parentContractorId: contractor.parentContractorId ?? "",
+    businessEmail: contractor.businessEmail ?? "",
+    mainPhone: contractor.mainPhone ?? "",
+    altPhone: contractor.altPhone ?? "",
+    fax: contractor.fax ?? "",
+    primaryContactId: contractor.primaryContactId ?? "",
+    billingContactId: contractor.billingContactId ?? "",
+    dispatchContactId: contractor.dispatchContactId ?? "",
+    linkedContacts:
+      contractor.linkedContacts?.map((link) => ({
+        contactId: link.contactId,
+        relationshipType: link.relationshipType,
+        notes: link.notes ?? null,
+      })) ?? [],
     status: contractor.status,
-    serviceCategories: contractor.serviceCategories.join(", "),
-    serviceAreas: contractor.serviceAreas.join(", "),
+    trades: contractor.trades,
+    serviceArea: contractor.serviceArea ?? "",
+    isAssignable: contractor.isAssignable,
     notes: contractor.notes ?? "",
+  };
+}
+
+function formatTradeLabel(value: ContractorTrade): string {
+  return value
+    .split("_")
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+}
+
+function formatContractorOptionLabel(
+  contractor: Contractor,
+  contractors: Contractor[],
+): string {
+  const parent = contractor.parentContractorId
+    ? contractors.find((candidate) => candidate.id === contractor.parentContractorId)
+    : null;
+
+  if (!parent) {
+    return contractor.displayName ?? contractor.legalName;
+  }
+
+  return `${parent.displayName ?? parent.legalName} - ${contractor.displayName ?? contractor.legalName}`;
+}
+
+function toContractorRoleSlots(
+  formState: Pick<
+    FormState,
+    "primaryContactId" | "billingContactId" | "dispatchContactId"
+  >,
+): ContactRoleSlotAssignment<
+  "primaryContactId" | "billingContactId" | "dispatchContactId"
+>[] {
+  return [
+    {
+      key: "primaryContactId",
+      label: "Primary",
+      relationshipType: "primary",
+      contactId: formState.primaryContactId || null,
+      isPrimary: true,
+    },
+    {
+      key: "billingContactId",
+      label: "Billing",
+      relationshipType: "billing",
+      contactId: formState.billingContactId || null,
+    },
+    {
+      key: "dispatchContactId",
+      label: "Dispatch",
+      relationshipType: "dispatch",
+      contactId: formState.dispatchContactId || null,
+    },
+  ];
+}
+
+function mapContractorRoleSlotsToFormState(
+  roleSlots: ContactRoleSlotAssignment<
+    "primaryContactId" | "billingContactId" | "dispatchContactId"
+  >[],
+): Pick<FormState, "primaryContactId" | "billingContactId" | "dispatchContactId"> {
+  return {
+    primaryContactId:
+      roleSlots.find((slot) => slot.key === "primaryContactId")?.contactId ?? "",
+    billingContactId:
+      roleSlots.find((slot) => slot.key === "billingContactId")?.contactId ?? "",
+    dispatchContactId:
+      roleSlots.find((slot) => slot.key === "dispatchContactId")?.contactId ?? "",
   };
 }

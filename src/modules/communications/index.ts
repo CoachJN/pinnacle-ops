@@ -1,0 +1,18 @@
+export {
+  canActorReadCommunicationVisibility,
+  COMMUNICATION_CHANNELS,
+  COMMUNICATION_DIRECTIONS,
+  COMMUNICATION_VISIBILITIES,
+  type CommunicationActorReference,
+  type CommunicationAttachment,
+  type CommunicationChannel,
+  type CommunicationDirection,
+  type CommunicationLink,
+  type CommunicationLinkEntityType,
+  type CommunicationMatchSuggestion,
+  type CommunicationMessage,
+  type CommunicationParticipant,
+  type CommunicationThread,
+  type CommunicationTimelineEntry,
+  type CommunicationVisibility,
+} from "./domain/types";

@@ -1,109 +1,73 @@
-import { canTransition, includesStatus, type LifecycleTransitionMap } from "./types.ts";
 import {
-  ACTIVE_WORK_ORDER_STATUSES,
+  canTransition,
+  includesStatus,
+  type LifecycleTransitionMap,
+} from "./types.ts";
+import {
   NON_TERMINAL_WORK_ORDER_STATUSES,
   TERMINAL_WORK_ORDER_STATUSES,
   WORK_ORDER_STATUS,
   type WorkOrderLifecycleStatus,
 } from "./work-order-status.ts";
 
-const workOrderOnHoldReturnStatuses = [
-  WORK_ORDER_STATUS.Triage,
-  WORK_ORDER_STATUS.AwaitingQuote,
-  WORK_ORDER_STATUS.QuoteReview,
-  WORK_ORDER_STATUS.AwaitingClientApproval,
-  WORK_ORDER_STATUS.ApprovedToProceed,
-  WORK_ORDER_STATUS.Scheduling,
-  WORK_ORDER_STATUS.Scheduled,
-  WORK_ORDER_STATUS.InProgress,
-  WORK_ORDER_STATUS.WorkCompleted,
-  WORK_ORDER_STATUS.QaReview,
-] as const satisfies readonly WorkOrderLifecycleStatus[];
-
-// Phase 1 does not persist the previous active state, so ON_HOLD can return
-// only to the approved logical resume points.
-function withWorkOrderExceptions(
-  status: WorkOrderLifecycleStatus,
-  next: readonly WorkOrderLifecycleStatus[],
-): readonly WorkOrderLifecycleStatus[] {
-  if (!includesStatus<WorkOrderLifecycleStatus>(ACTIVE_WORK_ORDER_STATUSES, status)) {
-    return next;
-  }
-
-  return [
-    ...next,
-    WORK_ORDER_STATUS.OnHold,
-    WORK_ORDER_STATUS.Escalated,
-    WORK_ORDER_STATUS.Cancelled,
-  ];
-}
-
 export const WORK_ORDER_TRANSITION_MAP = {
-  [WORK_ORDER_STATUS.New]: withWorkOrderExceptions(WORK_ORDER_STATUS.New, [
-    WORK_ORDER_STATUS.Triage,
-  ]),
-  [WORK_ORDER_STATUS.Triage]: withWorkOrderExceptions(WORK_ORDER_STATUS.Triage, [
-    WORK_ORDER_STATUS.QuotingRequired,
-    WORK_ORDER_STATUS.ApprovedToProceed,
-  ]),
-  [WORK_ORDER_STATUS.QuotingRequired]: withWorkOrderExceptions(
-    WORK_ORDER_STATUS.QuotingRequired,
-    [WORK_ORDER_STATUS.AwaitingQuote],
-  ),
-  [WORK_ORDER_STATUS.AwaitingQuote]: withWorkOrderExceptions(
-    WORK_ORDER_STATUS.AwaitingQuote,
-    [WORK_ORDER_STATUS.QuoteReceived],
-  ),
-  [WORK_ORDER_STATUS.QuoteReceived]: withWorkOrderExceptions(
-    WORK_ORDER_STATUS.QuoteReceived,
-    [WORK_ORDER_STATUS.QuoteReview],
-  ),
-  [WORK_ORDER_STATUS.QuoteReview]: withWorkOrderExceptions(
-    WORK_ORDER_STATUS.QuoteReview,
-    [WORK_ORDER_STATUS.AwaitingClientApproval],
-  ),
-  [WORK_ORDER_STATUS.AwaitingClientApproval]: withWorkOrderExceptions(
-    WORK_ORDER_STATUS.AwaitingClientApproval,
-    [WORK_ORDER_STATUS.ApprovedToProceed],
-  ),
-  [WORK_ORDER_STATUS.ApprovedToProceed]: withWorkOrderExceptions(
-    WORK_ORDER_STATUS.ApprovedToProceed,
-    [WORK_ORDER_STATUS.Scheduling],
-  ),
-  [WORK_ORDER_STATUS.Scheduling]: withWorkOrderExceptions(
-    WORK_ORDER_STATUS.Scheduling,
-    [WORK_ORDER_STATUS.Scheduled],
-  ),
-  [WORK_ORDER_STATUS.Scheduled]: withWorkOrderExceptions(
-    WORK_ORDER_STATUS.Scheduled,
-    [WORK_ORDER_STATUS.InProgress],
-  ),
-  [WORK_ORDER_STATUS.InProgress]: withWorkOrderExceptions(
-    WORK_ORDER_STATUS.InProgress,
-    [WORK_ORDER_STATUS.WorkCompleted],
-  ),
-  [WORK_ORDER_STATUS.WorkCompleted]: withWorkOrderExceptions(
-    WORK_ORDER_STATUS.WorkCompleted,
-    [WORK_ORDER_STATUS.QaReview],
-  ),
-  [WORK_ORDER_STATUS.QaReview]: withWorkOrderExceptions(
-    WORK_ORDER_STATUS.QaReview,
-    [WORK_ORDER_STATUS.ReadyForInvoicing],
-  ),
-  [WORK_ORDER_STATUS.ReadyForInvoicing]: withWorkOrderExceptions(
-    WORK_ORDER_STATUS.ReadyForInvoicing,
-    [WORK_ORDER_STATUS.Completed],
-  ),
-  [WORK_ORDER_STATUS.Completed]: [],
-  [WORK_ORDER_STATUS.OnHold]: [
-    ...workOrderOnHoldReturnStatuses,
-    WORK_ORDER_STATUS.Cancelled,
+  new: ["triage", "cancelled"],
+  triage: ["assigned", "quote_required", "on_hold", "escalated", "cancelled"],
+  assigned: [
+    "awaiting_contractor_response",
+    "quote_required",
+    "contractor_scheduled",
+    "on_hold",
+    "escalated",
+    "cancelled",
   ],
-  [WORK_ORDER_STATUS.Escalated]: [
-    WORK_ORDER_STATUS.Triage,
-    WORK_ORDER_STATUS.Cancelled,
+  awaiting_contractor_response: [
+    "assigned",
+    "quote_required",
+    "contractor_scheduled",
+    "on_hold",
+    "escalated",
+    "cancelled",
   ],
-  [WORK_ORDER_STATUS.Cancelled]: [],
+  quote_required: ["contractor_quote_received", "on_hold", "escalated", "cancelled"],
+  contractor_quote_received: [
+    "quote_under_review",
+    "on_hold",
+    "escalated",
+    "cancelled",
+  ],
+  quote_under_review: [
+    "client_approval_requested",
+    "quote_required",
+    "on_hold",
+    "escalated",
+    "cancelled",
+  ],
+  client_approval_requested: [
+    "client_approved",
+    "quote_required",
+    "on_hold",
+    "escalated",
+    "cancelled",
+  ],
+  client_approved: [
+    "assigned",
+    "contractor_scheduled",
+    "on_hold",
+    "escalated",
+    "cancelled",
+  ],
+  contractor_scheduled: ["in_progress", "on_hold", "escalated", "cancelled"],
+  in_progress: ["work_completed", "on_hold", "escalated", "cancelled"],
+  work_completed: ["completion_review", "on_hold", "escalated"],
+  completion_review: ["ready_for_invoicing", "assigned", "on_hold", "escalated"],
+  ready_for_invoicing: ["invoiced", "on_hold", "escalated"],
+  invoiced: ["ready_for_invoicing", "paid", "on_hold", "escalated"],
+  paid: ["closed"],
+  closed: [],
+  on_hold: ["escalated", "cancelled"],
+  escalated: ["on_hold", "cancelled"],
+  cancelled: [],
 } as const satisfies LifecycleTransitionMap<WorkOrderLifecycleStatus>;
 
 export function isTerminalWorkOrderStatus(
@@ -115,7 +79,7 @@ export function isTerminalWorkOrderStatus(
 export function isActiveWorkOrderStatus(
   status: WorkOrderLifecycleStatus,
 ): boolean {
-  return includesStatus(ACTIVE_WORK_ORDER_STATUSES, status);
+  return includesStatus(NON_TERMINAL_WORK_ORDER_STATUSES, status);
 }
 
 export function isNonTerminalWorkOrderStatus(
@@ -128,5 +92,9 @@ export function canWorkOrderTransition(
   from: WorkOrderLifecycleStatus,
   to: WorkOrderLifecycleStatus,
 ): boolean {
+  if (from === WORK_ORDER_STATUS.Paid && to !== WORK_ORDER_STATUS.Closed) {
+    return false;
+  }
+
   return canTransition(WORK_ORDER_TRANSITION_MAP, from, to);
 }

@@ -1,13 +1,22 @@
 import "server-only";
 
 import { AppError } from "@/lib/errors/app-error";
+import {
+  ensureRoleSlotContactsAreLinked,
+  isContactAssignedToPrimaryRole,
+  type ContactRoleSlotAssignment,
+} from "@/lib/contact-linking";
 import { assertValidWorkOrderLocationSelection } from "@/lib/permissions/work-orders";
 import type {
   ClientOrganization,
+  ClientOrganizationContactLink,
+  Contact,
   FirestoreOrganizationStatus,
   FirestoreRepositories,
   Location,
+  LocationContactLink,
 } from "@/server/repositories";
+import type { ContactLinkInput } from "@/types/contact";
 import type { EntityId } from "@/types/entity";
 import { conflictError, notFoundError, validationError } from "./errors";
 import {
@@ -44,10 +53,9 @@ export interface CreateClientOrganizationInput extends ServiceAuditContext {
   name: string;
   displayName?: string | null;
   status?: FirestoreOrganizationStatus;
-  primaryContactName?: string | null;
-  primaryContactEmail?: string | null;
-  primaryContactPhone?: string | null;
-  billingEmail?: string | null;
+  primaryContactId?: EntityId | null;
+  billingContactId?: EntityId | null;
+  linkedContacts?: ContactLinkInput[];
   notes?: string | null;
 }
 
@@ -56,10 +64,9 @@ export interface UpdateClientOrganizationInput extends ServiceAuditContext {
   name?: string;
   displayName?: string | null;
   status?: FirestoreOrganizationStatus;
-  primaryContactName?: string | null;
-  primaryContactEmail?: string | null;
-  primaryContactPhone?: string | null;
-  billingEmail?: string | null;
+  primaryContactId?: EntityId | null;
+  billingContactId?: EntityId | null;
+  linkedContacts?: ContactLinkInput[];
   notes?: string | null;
 }
 
@@ -87,18 +94,24 @@ export type ListLocationsInput =
 export interface CreateLocationInput extends ServiceAuditContext {
   clientOrganizationId: EntityId;
   name: string;
+  displayName?: string | null;
   code?: string | null;
+  storeNumber?: string | null;
   status?: FirestoreOrganizationStatus;
+  primaryContactId?: EntityId | null;
+  siteContactId?: EntityId | null;
+  linkedContacts?: ContactLinkInput[];
   addressLine1?: string | null;
   addressLine2?: string | null;
   city?: string | null;
   region?: string | null;
   postalCode?: string | null;
   countryCode?: string | null;
-  locationContactName?: string | null;
-  locationContactEmail?: string | null;
-  locationContactPhone?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  timeZone?: string | null;
   accessNotes?: string | null;
+  serviceNotes?: string | null;
   notes?: string | null;
 }
 
@@ -106,18 +119,24 @@ export interface UpdateLocationInput extends ServiceAuditContext {
   locationId: EntityId;
   clientOrganizationId?: EntityId;
   name?: string;
+  displayName?: string | null;
   code?: string | null;
+  storeNumber?: string | null;
   status?: FirestoreOrganizationStatus;
+  primaryContactId?: EntityId | null;
+  siteContactId?: EntityId | null;
+  linkedContacts?: ContactLinkInput[];
   addressLine1?: string | null;
   addressLine2?: string | null;
   city?: string | null;
   region?: string | null;
   postalCode?: string | null;
   countryCode?: string | null;
-  locationContactName?: string | null;
-  locationContactEmail?: string | null;
-  locationContactPhone?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  timeZone?: string | null;
   accessNotes?: string | null;
+  serviceNotes?: string | null;
   notes?: string | null;
 }
 
@@ -139,7 +158,12 @@ export interface ClientLocationContext {
 export function createClientLocationService(
   repositories: Pick<
     FirestoreRepositories,
-    "clientOrganizations" | "locations" | "workOrders"
+    | "clientOrganizations"
+    | "clientOrganizationContactLinks"
+    | "contacts"
+    | "locations"
+    | "locationContactLinks"
+    | "workOrders"
   >,
 ): ClientLocationService {
   return new FirestoreClientLocationService(repositories);
@@ -149,7 +173,12 @@ class FirestoreClientLocationService implements ClientLocationService {
   constructor(
     private readonly repositories: Pick<
       FirestoreRepositories,
-      "clientOrganizations" | "locations" | "workOrders"
+      | "clientOrganizations"
+      | "clientOrganizationContactLinks"
+      | "contacts"
+      | "locations"
+      | "locationContactLinks"
+      | "workOrders"
     >,
   ) {}
 
@@ -185,20 +214,47 @@ class FirestoreClientLocationService implements ClientLocationService {
       return name;
     }
 
+    const primaryContactId = normalizeNullableText(input.primaryContactId);
+    const billingContactId = normalizeNullableText(input.billingContactId);
+    const linkedContacts = resolveNormalizedLinks({
+      requestedLinks: input.linkedContacts ?? [],
+      roleSlots: toClientRoleSlots({
+        primaryContactId,
+        billingContactId,
+      }),
+    });
+    const clientContactValidation = await validateContactsExist(
+      this.repositories.contacts,
+      linkedContacts.map((link) => link.contactId),
+    );
+    if (!clientContactValidation.ok) {
+      return clientContactValidation;
+    }
+
     const client: ClientOrganization = {
       id: this.repositories.clientOrganizations.newId(),
       ...createAuditFields(input),
       name: name.value,
       displayName: normalizeNullableText(input.displayName),
       status: input.status ?? "active",
-      primaryContactName: normalizeNullableText(input.primaryContactName),
-      primaryContactEmail: normalizeNullableText(input.primaryContactEmail),
-      primaryContactPhone: normalizeNullableText(input.primaryContactPhone),
-      billingEmail: normalizeNullableText(input.billingEmail),
+      primaryContactId,
+      billingContactId,
       notes: normalizeNullableText(input.notes),
     };
 
     await this.repositories.clientOrganizations.create(client);
+    await this.repositories.clientOrganizationContactLinks.replaceForClientOrganizationId(
+      client.id,
+      buildClientOrganizationContactLinks({
+        client,
+        linkedContacts,
+        roleSlots: toClientRoleSlots({
+          primaryContactId,
+          billingContactId,
+        }),
+        audit: input,
+      }),
+    );
     return serviceOk(client);
   }
 
@@ -220,6 +276,36 @@ class FirestoreClientLocationService implements ClientLocationService {
       return name;
     }
 
+    const primaryContactId =
+      input.primaryContactId === undefined
+        ? existing.primaryContactId
+        : normalizeNullableText(input.primaryContactId);
+    const billingContactId =
+      input.billingContactId === undefined
+        ? existing.billingContactId
+        : normalizeNullableText(input.billingContactId);
+    const existingLinks =
+      await this.repositories.clientOrganizationContactLinks.listByClientOrganizationId(
+        existing.id,
+        { limit: 100 },
+      );
+    const roleSlots = toClientRoleSlots({
+      primaryContactId: primaryContactId ?? null,
+      billingContactId: billingContactId ?? null,
+    });
+    const linkedContacts = resolveNormalizedLinks({
+      existingLinks: existingLinks.items,
+      requestedLinks: input.linkedContacts,
+      roleSlots,
+    });
+    const clientContactValidation = await validateContactsExist(
+      this.repositories.contacts,
+      linkedContacts.map((link) => link.contactId),
+    );
+    if (!clientContactValidation.ok) {
+      return clientContactValidation;
+    }
+
     const updated = touchAuditFields(
       {
         ...existing,
@@ -229,22 +315,8 @@ class FirestoreClientLocationService implements ClientLocationService {
             ? existing.displayName
             : normalizeNullableText(input.displayName),
         status: input.status ?? existing.status,
-        primaryContactName:
-          input.primaryContactName === undefined
-            ? existing.primaryContactName
-            : normalizeNullableText(input.primaryContactName),
-        primaryContactEmail:
-          input.primaryContactEmail === undefined
-            ? existing.primaryContactEmail
-            : normalizeNullableText(input.primaryContactEmail),
-        primaryContactPhone:
-          input.primaryContactPhone === undefined
-            ? existing.primaryContactPhone
-            : normalizeNullableText(input.primaryContactPhone),
-        billingEmail:
-          input.billingEmail === undefined
-            ? existing.billingEmail
-            : normalizeNullableText(input.billingEmail),
+        primaryContactId,
+        billingContactId,
         notes:
           input.notes === undefined
             ? existing.notes
@@ -254,6 +326,15 @@ class FirestoreClientLocationService implements ClientLocationService {
     );
 
     await this.repositories.clientOrganizations.save(updated);
+    await this.repositories.clientOrganizationContactLinks.replaceForClientOrganizationId(
+      updated.id,
+      buildClientOrganizationContactLinks({
+        client: updated,
+        linkedContacts,
+        roleSlots,
+        audit: input,
+      }),
+    );
     return serviceOk(updated);
   }
 
@@ -347,31 +428,61 @@ class FirestoreClientLocationService implements ClientLocationService {
       return client;
     }
 
+    const primaryContactId = normalizeNullableText(input.primaryContactId);
+    const siteContactId = normalizeNullableText(input.siteContactId);
+    const linkedContacts = resolveNormalizedLinks({
+      requestedLinks: input.linkedContacts ?? [],
+      roleSlots: toLocationRoleSlots({
+        primaryContactId,
+        siteContactId,
+      }),
+    });
+    const locationContactValidation = await validateContactsExist(
+      this.repositories.contacts,
+      linkedContacts.map((link) => link.contactId),
+    );
+    if (!locationContactValidation.ok) {
+      return locationContactValidation;
+    }
+
     const location: Location = {
       id: this.repositories.locations.newId(),
       ...createAuditFields(input),
       clientOrganizationId: client.value.id,
-      clientSnapshot: {
-        id: client.value.id,
-        name: client.value.displayName ?? client.value.name,
-      },
       name: name.value,
+      displayName: normalizeNullableText(input.displayName),
       code: normalizeNullableText(input.code),
+      storeNumber: normalizeNullableText(input.storeNumber),
       status: input.status ?? "active",
+      primaryContactId,
+      siteContactId,
       addressLine1: normalizeNullableText(input.addressLine1),
       addressLine2: normalizeNullableText(input.addressLine2),
       city: normalizeNullableText(input.city),
       region: normalizeNullableText(input.region),
       postalCode: normalizeNullableText(input.postalCode),
       countryCode: normalizeNullableText(input.countryCode),
-      locationContactName: normalizeNullableText(input.locationContactName),
-      locationContactEmail: normalizeNullableText(input.locationContactEmail),
-      locationContactPhone: normalizeNullableText(input.locationContactPhone),
+      latitude: input.latitude ?? null,
+      longitude: input.longitude ?? null,
+      timeZone: normalizeNullableText(input.timeZone),
       accessNotes: normalizeNullableText(input.accessNotes),
+      serviceNotes: normalizeNullableText(input.serviceNotes),
       notes: normalizeNullableText(input.notes),
     };
 
     await this.repositories.locations.create(location);
+    await this.repositories.locationContactLinks.replaceForLocationId(
+      location.id,
+      buildLocationContactLinks({
+        location,
+        linkedContacts,
+        roleSlots: toLocationRoleSlots({
+          primaryContactId,
+          siteContactId,
+        }),
+        audit: input,
+      }),
+    );
     return serviceOk(location);
   }
 
@@ -406,18 +517,53 @@ class FirestoreClientLocationService implements ClientLocationService {
       );
     }
 
+    const primaryContactId =
+      input.primaryContactId === undefined
+        ? existing.primaryContactId
+        : normalizeNullableText(input.primaryContactId);
+    const siteContactId =
+      input.siteContactId === undefined
+        ? existing.siteContactId
+        : normalizeNullableText(input.siteContactId);
+    const existingLinks = await this.repositories.locationContactLinks.listByLocationId(
+      existing.id,
+      { limit: 100 },
+    );
+    const roleSlots = toLocationRoleSlots({
+      primaryContactId: primaryContactId ?? null,
+      siteContactId: siteContactId ?? null,
+    });
+    const linkedContacts = resolveNormalizedLinks({
+      existingLinks: existingLinks.items,
+      requestedLinks: input.linkedContacts,
+      roleSlots,
+    });
+    const locationContactValidation = await validateContactsExist(
+      this.repositories.contacts,
+      linkedContacts.map((link) => link.contactId),
+    );
+    if (!locationContactValidation.ok) {
+      return locationContactValidation;
+    }
+
     const updated = touchAuditFields(
       {
         ...existing,
         clientOrganizationId: client.value.id,
-        clientSnapshot: {
-          id: client.value.id,
-          name: client.value.displayName ?? client.value.name,
-        },
         name: name.value,
+        displayName:
+          input.displayName === undefined
+            ? existing.displayName
+            : normalizeNullableText(input.displayName),
         code:
           input.code === undefined ? existing.code : normalizeNullableText(input.code),
+        storeNumber:
+          input.storeNumber === undefined
+            ? existing.storeNumber
+            : normalizeNullableText(input.storeNumber),
         status: input.status ?? existing.status,
+        primaryContactId,
+        siteContactId,
         addressLine1:
           input.addressLine1 === undefined
             ? existing.addressLine1
@@ -440,22 +586,24 @@ class FirestoreClientLocationService implements ClientLocationService {
           input.countryCode === undefined
             ? existing.countryCode
             : normalizeNullableText(input.countryCode),
-        locationContactName:
-          input.locationContactName === undefined
-            ? existing.locationContactName
-            : normalizeNullableText(input.locationContactName),
-        locationContactEmail:
-          input.locationContactEmail === undefined
-            ? existing.locationContactEmail
-            : normalizeNullableText(input.locationContactEmail),
-        locationContactPhone:
-          input.locationContactPhone === undefined
-            ? existing.locationContactPhone
-            : normalizeNullableText(input.locationContactPhone),
+        latitude:
+          input.latitude === undefined ? existing.latitude : input.latitude ?? null,
+        longitude:
+          input.longitude === undefined
+            ? existing.longitude
+            : input.longitude ?? null,
+        timeZone:
+          input.timeZone === undefined
+            ? existing.timeZone
+            : normalizeNullableText(input.timeZone),
         accessNotes:
           input.accessNotes === undefined
             ? existing.accessNotes
             : normalizeNullableText(input.accessNotes),
+        serviceNotes:
+          input.serviceNotes === undefined
+            ? existing.serviceNotes
+            : normalizeNullableText(input.serviceNotes),
         notes:
           input.notes === undefined ? existing.notes : normalizeNullableText(input.notes),
       },
@@ -463,6 +611,15 @@ class FirestoreClientLocationService implements ClientLocationService {
     );
 
     await this.repositories.locations.save(updated);
+    await this.repositories.locationContactLinks.replaceForLocationId(
+      updated.id,
+      buildLocationContactLinks({
+        location: updated,
+        linkedContacts,
+        roleSlots,
+        audit: input,
+      }),
+    );
     return serviceOk(updated);
   }
 
@@ -576,4 +733,125 @@ function normalizeRequiredText(
 function normalizeNullableText(value: string | null | undefined): string | null {
   const normalized = value?.trim();
   return normalized ? normalized : null;
+}
+
+async function validateContactsExist(
+  repository: Pick<FirestoreRepositories, "contacts">["contacts"],
+  contactIds: Array<EntityId | null | undefined>,
+): Promise<ServiceResult<void>> {
+  const normalizedIds = [...new Set(contactIds.filter(Boolean).map((contactId) => contactId!.trim()))];
+  if (normalizedIds.length === 0) {
+    return serviceOk(undefined);
+  }
+
+  const contacts = await repository.listByIds(normalizedIds);
+  const foundIds = new Set(contacts.items.map((contact) => contact.id));
+  const missingId = normalizedIds.find((contactId) => !foundIds.has(contactId));
+  if (missingId) {
+    return serviceFail(validationError(`Contact ${missingId} could not be found.`));
+  }
+
+  return serviceOk(undefined);
+}
+
+function buildClientOrganizationContactLinks(input: {
+  client: ClientOrganization;
+  linkedContacts: ContactLinkInput[];
+  roleSlots: ContactRoleSlotAssignment<"primaryContactId" | "billingContactId">[];
+  audit: ServiceAuditContext;
+}): ClientOrganizationContactLink[] {
+  return input.linkedContacts.map((link) => ({
+    id: `${input.client.id}:${link.contactId}`,
+    ...createAuditFields({
+      ...input.audit,
+      organizationId: input.client.organizationId,
+    }),
+    clientOrganizationId: input.client.id,
+    contactId: link.contactId,
+    relationshipType: link.relationshipType,
+    isPrimary: isContactAssignedToPrimaryRole(link.contactId, input.roleSlots),
+    notes: normalizeNullableText(link.notes),
+  }));
+}
+
+function buildLocationContactLinks(input: {
+  location: Location;
+  linkedContacts: ContactLinkInput[];
+  roleSlots: ContactRoleSlotAssignment<"primaryContactId" | "siteContactId">[];
+  audit: ServiceAuditContext;
+}): LocationContactLink[] {
+  return input.linkedContacts.map((link) => ({
+    id: `${input.location.id}:${link.contactId}`,
+    ...createAuditFields({
+      ...input.audit,
+      organizationId: input.location.organizationId,
+    }),
+    locationId: input.location.id,
+    contactId: link.contactId,
+    relationshipType: link.relationshipType,
+    isPrimary: isContactAssignedToPrimaryRole(link.contactId, input.roleSlots),
+    notes: normalizeNullableText(link.notes),
+  }));
+}
+
+function resolveNormalizedLinks(input: {
+  existingLinks?: Array<
+    Pick<ClientOrganizationContactLink, "contactId" | "relationshipType" | "notes"> |
+      Pick<LocationContactLink, "contactId" | "relationshipType" | "notes">
+  >;
+  requestedLinks?: ContactLinkInput[];
+  roleSlots: readonly ContactRoleSlotAssignment<string>[];
+}): ContactLinkInput[] {
+  const baseLinks =
+    input.requestedLinks ??
+    input.existingLinks?.map((link) => ({
+      contactId: link.contactId,
+      relationshipType: link.relationshipType,
+      notes: link.notes,
+    })) ??
+    [];
+
+  return ensureRoleSlotContactsAreLinked(baseLinks, input.roleSlots);
+}
+
+function toClientRoleSlots(input: {
+  primaryContactId: EntityId | null;
+  billingContactId: EntityId | null;
+}): ContactRoleSlotAssignment<"primaryContactId" | "billingContactId">[] {
+  return [
+    {
+      key: "primaryContactId",
+      label: "Primary",
+      relationshipType: "primary",
+      contactId: input.primaryContactId,
+      isPrimary: true,
+    },
+    {
+      key: "billingContactId",
+      label: "Billing",
+      relationshipType: "billing",
+      contactId: input.billingContactId,
+    },
+  ];
+}
+
+function toLocationRoleSlots(input: {
+  primaryContactId: EntityId | null;
+  siteContactId: EntityId | null;
+}): ContactRoleSlotAssignment<"primaryContactId" | "siteContactId">[] {
+  return [
+    {
+      key: "primaryContactId",
+      label: "Primary",
+      relationshipType: "primary",
+      contactId: input.primaryContactId,
+      isPrimary: true,
+    },
+    {
+      key: "siteContactId",
+      label: "Site",
+      relationshipType: "site",
+      contactId: input.siteContactId,
+    },
+  ];
 }

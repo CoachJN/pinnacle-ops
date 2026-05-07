@@ -45,7 +45,7 @@ export interface DashboardWorkQueueItem {
   workOrderId: string;
   workOrderNumber: string;
   title: string;
-  status: WorkOrderStatus;
+  lifecycleStatus: WorkOrderStatus;
   priority: WorkOrderPriority;
   clientName: string;
   locationName: string;

@@ -3,6 +3,9 @@ interface WorkOrderOverviewPanelProps {
   statusLabel: string;
   priorityLabel: string;
   categoryLabel: string;
+  requestedServiceDateLabel: string;
+  quoteRequirementLabel: string;
+  quoteThresholdLabel: string;
   createdAtLabel: string;
   updatedAtLabel: string;
   dueDateLabel: string;
@@ -14,6 +17,9 @@ export function WorkOrderOverviewPanel({
   statusLabel,
   priorityLabel,
   categoryLabel,
+  requestedServiceDateLabel,
+  quoteRequirementLabel,
+  quoteThresholdLabel,
   createdAtLabel,
   updatedAtLabel,
   dueDateLabel,
@@ -30,7 +36,10 @@ export function WorkOrderOverviewPanel({
         <DetailItem label="Status" value={statusLabel} />
         <DetailItem label="Priority" value={priorityLabel} />
         <DetailItem label="Category" value={categoryLabel} />
+        <DetailItem label="Requested service date" value={requestedServiceDateLabel} />
         <DetailItem label="Due date" value={dueDateLabel} />
+        <DetailItem label="Quote required" value={quoteRequirementLabel} />
+        <DetailItem label="Quote threshold" value={quoteThresholdLabel} />
         <DetailItem label="Created at" value={createdAtLabel} />
         <DetailItem label="Updated at" value={updatedAtLabel} />
         <DetailItem label="Closed at" value={closedAtLabel} />

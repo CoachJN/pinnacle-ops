@@ -26,6 +26,37 @@ interface WorkOrderListItemResponse {
   title: string;
   clientOrganizationId: string;
   locationId: string;
+  requestedServiceDate: string | null;
+  requiresQuote: boolean;
+  quoteRequiredThresholdCents: number | null;
+  related?: {
+    clientOrganization?: {
+      id: string;
+      name?: string;
+      displayName?: string;
+    };
+    location?: {
+      id: string;
+      name?: string;
+      code?: string;
+    };
+  };
+  internalAssignees?: {
+    coordinator: {
+      id: string;
+      label: string;
+      role: string;
+    } | null;
+    manager: {
+      id: string;
+      label: string;
+      role: string;
+    } | null;
+  };
+  assignedContractor?: {
+    id: string;
+    label: string;
+  } | null;
   status: WorkOrderStatus;
   priority: WorkOrderPriority;
   createdAt: string;
@@ -299,10 +330,24 @@ export function WorkOrderList() {
       workOrderNumber: workOrder.workOrderNumber,
       title: workOrder.title,
       clientName:
+        workOrder.related?.clientOrganization?.displayName ??
+        workOrder.related?.clientOrganization?.name ??
         clientOrganizationNameById.get(workOrder.clientOrganizationId) ??
         workOrder.clientOrganizationId,
       locationName:
+        workOrder.related?.location?.name ??
         locationNameById.get(workOrder.locationId) ?? workOrder.locationId,
+      requestedServiceDate: workOrder.requestedServiceDate,
+      requiresQuote: workOrder.requiresQuote,
+      quoteRequiredThresholdCents: workOrder.quoteRequiredThresholdCents,
+      coordinatorLabel: `Coordinator: ${
+        workOrder.internalAssignees?.coordinator?.label ?? "Unassigned"
+      }`,
+      managerLabel: `Manager: ${
+        workOrder.internalAssignees?.manager?.label ?? "Unassigned"
+      }`,
+      assignedContractorLabel:
+        workOrder.assignedContractor?.label ?? "Unassigned",
       status: workOrder.status,
       priority: workOrder.priority,
       createdAt: workOrder.createdAt,

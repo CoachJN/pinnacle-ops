@@ -12,7 +12,7 @@ export interface FinanceQueueWorkOrderRecord {
   id: string;
   workOrderNumber: string;
   title: string;
-  status: WorkOrderStatus;
+  lifecycleStatus: WorkOrderStatus;
   priority: string | null;
   clientOrganizationId: string;
   locationId: string;
@@ -68,7 +68,7 @@ export function buildFinanceQueue(input: {
       ? invoiceById.get(workOrder.currentInvoiceId) ?? null
       : null;
     const eligibility = buildInvoiceCreationEligibility({
-      workOrderStatus: workOrder.status,
+      workOrderStatus: workOrder.lifecycleStatus,
       hasActiveInvoice: currentInvoice !== null && currentInvoice.status !== "void",
     });
 

@@ -1,20 +1,13 @@
 import "server-only";
 
 import {
-  WORK_ORDER_TRANSITIONS,
   canWorkOrderTransition,
+  getWorkOrderTransitions,
 } from "@/server/services/status-rules";
-import {
-  WORK_ORDER_STATUS_TRANSITION_MAP as PHASE_THREE_WORK_ORDER_TRANSITIONS,
-  isWorkOrderStatusTransitionAllowed,
-  type WorkOrderStatus as PhaseThreeWorkOrderStatus,
-} from "@/modules/work-orders";
 import type { AccessActor } from "@/types/auth";
 import type { EntityId } from "@/types/entity";
 import { USER_ROLES, type InternalUserRole } from "@/types/permissions";
-import type { WorkOrderStatus as LegacyWorkOrderStatus } from "@/types/work-order";
-
-export type WorkOrderStatus = LegacyWorkOrderStatus | PhaseThreeWorkOrderStatus;
+import type { WorkOrderStatus } from "@/types/work-order";
 
 export const WORK_ORDER_INTERNAL_ROLES = [
   USER_ROLES.Coordinator,
@@ -50,57 +43,45 @@ const WORK_ORDER_ATTACHMENT_ROLES = [
 
 const WORK_ORDER_COORDINATOR_STATUS_TARGETS: readonly WorkOrderStatus[] = [
   "new",
-  "draft",
-  "submitted",
-  "in_review",
-  "quote_requested",
-  "quote_received",
-  "dispatched",
   "assigned",
+  "awaiting_contractor_response",
+  "quote_required",
+  "contractor_quote_received",
+  "client_approved",
+  "contractor_scheduled",
   "in_progress",
-  "waiting_on_contractor",
-  "waiting_on_customer",
-  "quoted",
-  "approved",
-  "scheduled",
-  "completed",
+  "work_completed",
+  "completion_review",
+  "ready_for_invoicing",
+  "on_hold",
+  "escalated",
   "cancelled",
-  "OPEN",
-  "ASSIGNED",
-  "IN_PROGRESS",
-  "COMPLETED",
-  "CANCELLED",
 ] as const;
 
 const WORK_ORDER_MANAGER_STATUS_TARGETS: readonly WorkOrderStatus[] = [
   ...WORK_ORDER_COORDINATOR_STATUS_TARGETS,
-  "pending_client_approval",
-  "approved_to_proceed",
-  "READY_FOR_INVOICING",
+  "triage",
+  "quote_under_review",
+  "client_approval_requested",
 ] as const;
 
 const WORK_ORDER_FINANCE_STATUS_TARGETS: readonly WorkOrderStatus[] = [
-  "READY_FOR_INVOICING",
+  "ready_for_invoicing",
   "invoiced",
   "paid",
   "closed",
-  "CLOSED",
 ] as const;
 
 const TERMINAL_WORK_ORDER_STATUSES: readonly WorkOrderStatus[] = [
   "closed",
   "cancelled",
-  "CLOSED",
-  "CANCELLED",
 ] as const;
 
 const FINANCE_EDITABLE_WORK_ORDER_STATUSES: readonly WorkOrderStatus[] = [
-  "completed",
+  "ready_for_invoicing",
   "invoiced",
   "paid",
   "closed",
-  "COMPLETED",
-  "CLOSED",
 ] as const;
 
 export interface WorkOrderPermissionTarget {
@@ -109,10 +90,10 @@ export interface WorkOrderPermissionTarget {
   locationId: EntityId;
   id?: EntityId;
   status?: WorkOrderStatus;
-  requestedByUserId?: EntityId | null;
-  assignedCoordinatorUserId?: EntityId | null;
-  assignedManagerUserId?: EntityId | null;
-  assignedContractorOrganizationId?: EntityId | null;
+  requestedByContactId?: EntityId | null;
+  coordinatorUserId?: EntityId | null;
+  managerUserId?: EntityId | null;
+  assignedContractorId?: EntityId | null;
 }
 
 export interface WorkOrderPermissionOptions {
@@ -386,7 +367,7 @@ export function isWorkOrderInActorScope(
   }
 
   if (
-    target.assignedContractorOrganizationId !== actor.scope.contractorOrganizationId
+    target.assignedContractorId !== actor.scope.contractorOrganizationId
   ) {
     return false;
   }
@@ -441,35 +422,7 @@ function canTransitionWorkOrderStatus(
   from: WorkOrderStatus,
   to: WorkOrderStatus,
 ): boolean {
-  if (isLegacyWorkOrderStatus(from) && isLegacyWorkOrderStatus(to)) {
-    return canWorkOrderTransition(from, to);
-  }
-
-  if (isPhaseThreeWorkOrderStatus(from) && isPhaseThreeWorkOrderStatus(to)) {
-    return isWorkOrderStatusTransitionAllowed(from, to);
-  }
-
-  return false;
-}
-
-function getWorkOrderTransitions(status: WorkOrderStatus): WorkOrderStatus[] {
-  if (isLegacyWorkOrderStatus(status)) {
-    return [...WORK_ORDER_TRANSITIONS[status]];
-  }
-
-  return [...PHASE_THREE_WORK_ORDER_TRANSITIONS[status]];
-}
-
-function isLegacyWorkOrderStatus(
-  status: WorkOrderStatus,
-): status is LegacyWorkOrderStatus {
-  return status in WORK_ORDER_TRANSITIONS;
-}
-
-function isPhaseThreeWorkOrderStatus(
-  status: WorkOrderStatus,
-): status is PhaseThreeWorkOrderStatus {
-  return status in PHASE_THREE_WORK_ORDER_TRANSITIONS;
+  return canWorkOrderTransition(from, to);
 }
 
 function hasRole<const TRole extends AccessActor["role"]>(

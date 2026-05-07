@@ -3,6 +3,8 @@ import type { FinanceQueueFilter } from "@/modules/finance";
 import { FINANCE_QUEUE_FILTERS } from "@/modules/finance";
 import { FinanceQueueTable } from "./finance-queue-table";
 
+import type { InvoiceStatus } from "@/types/invoice";
+
 interface FinanceQueuePageItem {
   id: string;
   state: "ready_for_invoicing" | "draft" | "sent" | "overdue" | "paid";
@@ -11,7 +13,7 @@ interface FinanceQueuePageItem {
     id: string;
     workOrderNumber: string;
     title: string;
-    status: string;
+    lifecycleStatus: string;
     clientSnapshot?: {
       name: string;
     } | null;
@@ -23,7 +25,7 @@ interface FinanceQueuePageItem {
   invoice: {
     id: string;
     invoiceNumber: string;
-    status: "draft" | "sent" | "viewed" | "overdue" | "paid" | "void" | "issued";
+    status: InvoiceStatus;
     dueDate: string;
     totalAmount: number;
     currency: "CAD" | "USD";

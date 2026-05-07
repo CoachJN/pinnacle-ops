@@ -43,7 +43,7 @@ export function DashboardQueueSection({
               <div className="mt-3 flex flex-wrap gap-2 text-xs text-neutral-500">
                 <span>{item.clientName}</span>
                 <span>{item.locationName}</span>
-                <span>{item.status.replaceAll("_", " ")}</span>
+                <span>{item.lifecycleStatus.replaceAll("_", " ")}</span>
                 {item.assignmentStatus ? (
                   <span>Assignment {item.assignmentStatus}</span>
                 ) : null}

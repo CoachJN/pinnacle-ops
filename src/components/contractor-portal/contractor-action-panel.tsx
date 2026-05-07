@@ -46,7 +46,7 @@ export function ContractorActionPanel({
         </div>
         <div className="flex flex-col items-end gap-2">
           <span className="rounded-full border border-slate-300 bg-slate-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-700">
-            {formatStatusLabel(workOrder.status)}
+            {formatStatusLabel(workOrder.lifecycleStatus)}
           </span>
           <span className="text-sm font-medium text-neutral-600">
             Assignment: {workOrder.assignment.status}

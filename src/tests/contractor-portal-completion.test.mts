@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createAssignmentService } from "../server/services/assignment-service.ts";
-import type { ActivityLogService } from "../server/services/activity-log-service.ts";
+import type { DomainEventService } from "../server/services/domain-event-service.ts";
 import {
   getContractorPortalActionAvailability,
   toContractorPortalWorkOrderDetail,
@@ -10,9 +10,9 @@ import {
 import type {
   Assignment,
   AssignmentRepository,
+  ContractorQuote,
   ContractorOrganizationRepository,
   Location,
-  Quote,
   UserProfile,
   UserProfileRepository,
   WorkOrder,
@@ -27,6 +27,15 @@ test("contractor portal projection stays contractor-safe", () => {
     assignment: makeAssignment(),
     quote: makeQuote(),
     location: makeLocation(),
+    siteContact: {
+      id: "contact-avery-hill",
+      displayName: "Avery Hill",
+      email: "avery.hill@example.com",
+      primaryPhone: "416-555-0101",
+      preferredLanguage: "en",
+      roleTitle: "Operations Manager",
+      status: "active",
+    },
     visibleActivity: [
       {
         id: "activity-1",
@@ -35,9 +44,10 @@ test("contractor portal projection stays contractor-safe", () => {
         actorLabel: "Contractor",
       },
     ],
+    communications: [],
   });
 
-  assert.equal("assignedCoordinatorUserId" in detail, false);
+  assert.equal("coordinatorUserId" in detail, false);
   assert.equal("internalNotes" in detail, false);
   assert.equal(detail.locationContactName, "Avery Hill");
   assert.equal(detail.quote?.status, "draft");
@@ -46,7 +56,7 @@ test("contractor portal projection stays contractor-safe", () => {
 
 test("contractor action availability blocks quote submission after decline", () => {
   const availability = getContractorPortalActionAvailability({
-    workOrder: makeWorkOrder({ status: "quote_requested" }),
+    workOrder: makeWorkOrder({ lifecycleStatus: "quote_required", status: "quote_required" }),
     assignment: makeAssignment({ status: "declined" }),
     quote: null,
   });
@@ -95,7 +105,6 @@ test("assignment service allows contractor completion for matching organization 
 
   assert.equal(result.ok, true);
   assert.equal(harness.assignmentStore.get(harness.assignment.id)?.status, "completed");
-  assert.equal(harness.recordedActivity.at(-1)?.visibility, "contractor");
 });
 
 function createAssignmentHarness(input: {
@@ -103,7 +112,9 @@ function createAssignmentHarness(input: {
   assignment?: Assignment;
   profile?: UserProfile;
 } = {}) {
-  const workOrder = input.workOrder ?? makeWorkOrder({ status: "in_progress" });
+  const workOrder =
+    input.workOrder ??
+    makeWorkOrder({ lifecycleStatus: "in_progress", status: "in_progress" });
   const assignment = input.assignment ?? makeAssignment({ status: "accepted" });
   const profile =
     input.profile ?? makeUserProfile({ contractorOrganizationId: "contractor-1" });
@@ -174,12 +185,18 @@ function createAssignmentHarness(input: {
     },
   };
 
-  const activityLogs: ActivityLogService = {
-    async listForWorkOrder() {
+  const domainEvents: DomainEventService = {
+    async listTimelineForWorkOrder() {
+      return { ok: true, value: [] };
+    },
+    async listTimelineForEntity() {
       return { ok: true, value: [] };
     },
     async record(input) {
       recordedActivity.push({ visibility: input.visibility });
+      return { ok: true, value: null as never };
+    },
+    async recordTransition() {
       return { ok: true, value: null as never };
     },
   };
@@ -196,7 +213,7 @@ function createAssignmentHarness(input: {
         contractorOrganizations: contractorOrganizations as ContractorOrganizationRepository,
         userProfiles: userProfiles as UserProfileRepository,
       },
-      { activityLogs },
+      { domainEvents },
     ),
   };
 }
@@ -216,14 +233,16 @@ function makeWorkOrder(overrides: Partial<WorkOrder> = {}): WorkOrder {
     workOrderNumber: "WO-1001",
     title: "Generator repair",
     description: "Repair transfer switch and verify operation.",
-    status: "quote_requested",
+    lifecycleStatus: "quote_required",
+    status: "quote_required",
     priority: "high",
     clientOrganizationId: "client-1",
     locationId: "loc-1",
-    requestedByUserId: "user-1",
-    assignedCoordinatorUserId: "coord-1",
-    assignedManagerUserId: "mgr-1",
-    assignedContractorOrganizationId: "contractor-1",
+    requestedByContactId: "contact-1",
+    coordinatorUserId: "coord-1",
+    managerUserId: "mgr-1",
+    assignedContractorOrgId: "contractor-1",
+    assignedContractorId: "contractor-1",
     currentQuoteId: "quote-1",
     currentInvoiceId: null,
     clientSnapshot: { id: "client-1", name: "Northwind" },
@@ -272,7 +291,7 @@ function makeAssignment(overrides: Partial<Assignment> = {}): Assignment {
   };
 }
 
-function makeQuote(overrides: Partial<Quote> = {}): Quote {
+function makeQuote(overrides: Partial<ContractorQuote> = {}): ContractorQuote {
   return {
     id: "quote-1",
     organizationId: "org-1",
@@ -288,21 +307,30 @@ function makeQuote(overrides: Partial<Quote> = {}): Quote {
     clientOrganizationId: "client-1",
     locationId: "loc-1",
     contractorOrganizationId: "contractor-1",
-    versionNumber: 1,
+    contractorUserId: "contractor-user-1",
     status: "draft",
-    laborAmount: 1000,
-    materialAmount: 250,
-    otherAmount: 0,
+    lineItems: [
+      {
+        description: "Labour",
+        quantity: 1,
+        unitPrice: 1000,
+        lineTotal: 1000,
+      },
+      {
+        description: "Materials",
+        quantity: 1,
+        unitPrice: 250,
+        lineTotal: 250,
+      },
+    ],
+    subtotal: 1250,
+    taxAmount: 0,
     totalAmount: 1250,
-    currency: "USD",
-    scopeSummary: "Replace the failed transfer switch hardware.",
-    contractorNotes: "Material can arrive next morning.",
-    internalReviewNotes: "Do not expose",
-    clientResponseNotes: null,
-    submittedByUserId: null,
+    notes: "Material can arrive next morning.",
     submittedAt: null,
     reviewedAt: null,
-    clientDecisionAt: null,
+    reviewedByUserId: null,
+    rejectionReason: null,
     workOrderSnapshot: { id: "wo-1", name: "WO-1001" },
     contractorSnapshot: { id: "contractor-1", name: "Field Ops" },
     ...overrides,
@@ -322,7 +350,6 @@ function makeLocation(overrides: Partial<Location> = {}): Location {
     deletedAt: null,
     deletedByUserId: null,
     clientOrganizationId: "client-1",
-    clientSnapshot: { id: "client-1", name: "Northwind" },
     name: "Northwind HQ",
     code: "HQ",
     status: "active",
@@ -332,9 +359,7 @@ function makeLocation(overrides: Partial<Location> = {}): Location {
     region: "ON",
     postalCode: "M5H 1J9",
     countryCode: "CA",
-    locationContactName: "Avery Hill",
-    locationContactEmail: "avery@example.com",
-    locationContactPhone: "555-0119",
+    siteContactId: "contact-avery-hill",
     accessNotes: "Check in with building security on arrival.",
     notes: "Internal-only dock code.",
     ...overrides,

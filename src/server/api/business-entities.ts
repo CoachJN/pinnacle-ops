@@ -10,6 +10,11 @@ import type {
 } from "@/server/repositories";
 import type { WorkOrderApiContext } from "@/server/api/work-orders";
 import {
+  resolveClientOrganizationContactLinks,
+  resolveContactsById,
+  resolveContractorContactLinks,
+} from "@/server/api/contact-projections";
+import {
   getWorkOrderApiContext,
   jsonError,
   jsonOk,
@@ -25,6 +30,10 @@ import {
   canUserPerformAction,
   createAccessDeniedError,
 } from "@/server/authorization";
+import {
+  createClientOrganizationSchema,
+  updateClientOrganizationSchema,
+} from "@/lib/validation/client-organizations";
 import {
   createLocationSchema,
   updateLocationSchema,
@@ -77,60 +86,11 @@ export function parseEntityListLimit(request: { nextUrl: URL }): number {
 }
 
 export function parseCreateClientPayload(input: Record<string, unknown>) {
-  assertAllowedFields(input, [
-    "name",
-    "displayName",
-    "status",
-    "primaryContactName",
-    "primaryContactEmail",
-    "primaryContactPhone",
-    "billingEmail",
-    "notes",
-  ]);
-
-  return {
-    name: requiredString(input.name, "name"),
-    displayName: nullableString(input.displayName, "displayName"),
-    status: parseOptionalOrganizationStatus(input.status, "status"),
-    primaryContactName: nullableString(input.primaryContactName, "primaryContactName"),
-    primaryContactEmail: nullableString(input.primaryContactEmail, "primaryContactEmail"),
-    primaryContactPhone: nullableString(input.primaryContactPhone, "primaryContactPhone"),
-    billingEmail: nullableString(input.billingEmail, "billingEmail"),
-    notes: nullableString(input.notes, "notes"),
-  };
+  return createClientOrganizationSchema.parse(input);
 }
 
 export function parseUpdateClientPayload(input: Record<string, unknown>) {
-  assertAllowedFields(input, [
-    "name",
-    "displayName",
-    "status",
-    "primaryContactName",
-    "primaryContactEmail",
-    "primaryContactPhone",
-    "billingEmail",
-    "notes",
-  ]);
-
-  return pruneUndefined({
-    name: optionalString(input.name, "name"),
-    displayName: optionalNullableString(input.displayName, "displayName"),
-    status: parseOptionalOrganizationStatus(input.status, "status"),
-    primaryContactName: optionalNullableString(
-      input.primaryContactName,
-      "primaryContactName",
-    ),
-    primaryContactEmail: optionalNullableString(
-      input.primaryContactEmail,
-      "primaryContactEmail",
-    ),
-    primaryContactPhone: optionalNullableString(
-      input.primaryContactPhone,
-      "primaryContactPhone",
-    ),
-    billingEmail: optionalNullableString(input.billingEmail, "billingEmail"),
-    notes: optionalNullableString(input.notes, "notes"),
-  });
+  return updateClientOrganizationSchema.parse(input);
 }
 
 export function parseCreateLocationPayload(input: Record<string, unknown>) {
@@ -145,24 +105,39 @@ export function parseCreateContractorPayload(input: Record<string, unknown>) {
   assertAllowedFields(input, [
     "name",
     "displayName",
+    "parentContractorId",
     "status",
-    "primaryContactName",
-    "primaryContactEmail",
-    "primaryContactPhone",
-    "serviceCategories",
-    "serviceAreas",
+    "isAssignable",
+    "businessEmail",
+    "mainPhone",
+    "altPhone",
+    "fax",
+    "primaryContactId",
+    "billingContactId",
+    "dispatchContactId",
+    "trades",
+    "serviceArea",
     "notes",
   ]);
 
   return {
     name: requiredString(input.name, "name"),
     displayName: nullableString(input.displayName, "displayName"),
+    parentContractorId: optionalNullableString(
+      input.parentContractorId,
+      "parentContractorId",
+    ),
     status: parseOptionalContractorStatus(input.status, "status"),
-    primaryContactName: nullableString(input.primaryContactName, "primaryContactName"),
-    primaryContactEmail: nullableString(input.primaryContactEmail, "primaryContactEmail"),
-    primaryContactPhone: nullableString(input.primaryContactPhone, "primaryContactPhone"),
-    serviceCategories: optionalStringArray(input.serviceCategories, "serviceCategories"),
-    serviceAreas: optionalStringArray(input.serviceAreas, "serviceAreas"),
+    isAssignable: optionalBoolean(input.isAssignable, "isAssignable"),
+    businessEmail: optionalNullableString(input.businessEmail, "businessEmail"),
+    mainPhone: optionalNullableString(input.mainPhone, "mainPhone"),
+    altPhone: optionalNullableString(input.altPhone, "altPhone"),
+    fax: optionalNullableString(input.fax, "fax"),
+    primaryContactId: optionalNullableString(input.primaryContactId, "primaryContactId"),
+    billingContactId: optionalNullableString(input.billingContactId, "billingContactId"),
+    dispatchContactId: optionalNullableString(input.dispatchContactId, "dispatchContactId"),
+    trades: optionalStringArray(input.trades, "trades"),
+    serviceArea: optionalNullableString(input.serviceArea, "serviceArea"),
     notes: nullableString(input.notes, "notes"),
   };
 }
@@ -171,36 +146,39 @@ export function parseUpdateContractorPayload(input: Record<string, unknown>) {
   assertAllowedFields(input, [
     "name",
     "displayName",
+    "parentContractorId",
     "status",
-    "primaryContactName",
-    "primaryContactEmail",
-    "primaryContactPhone",
-    "serviceCategories",
-    "serviceAreas",
+    "isAssignable",
+    "businessEmail",
+    "mainPhone",
+    "altPhone",
+    "fax",
+    "primaryContactId",
+    "billingContactId",
+    "dispatchContactId",
+    "trades",
+    "serviceArea",
     "notes",
   ]);
 
   return pruneUndefined({
     name: optionalString(input.name, "name"),
     displayName: optionalNullableString(input.displayName, "displayName"),
+    parentContractorId: optionalNullableString(
+      input.parentContractorId,
+      "parentContractorId",
+    ),
     status: parseOptionalContractorStatus(input.status, "status"),
-    primaryContactName: optionalNullableString(
-      input.primaryContactName,
-      "primaryContactName",
-    ),
-    primaryContactEmail: optionalNullableString(
-      input.primaryContactEmail,
-      "primaryContactEmail",
-    ),
-    primaryContactPhone: optionalNullableString(
-      input.primaryContactPhone,
-      "primaryContactPhone",
-    ),
-    serviceCategories: optionalStringArray(
-      input.serviceCategories,
-      "serviceCategories",
-    ),
-    serviceAreas: optionalStringArray(input.serviceAreas, "serviceAreas"),
+    isAssignable: optionalBoolean(input.isAssignable, "isAssignable"),
+    businessEmail: optionalNullableString(input.businessEmail, "businessEmail"),
+    mainPhone: optionalNullableString(input.mainPhone, "mainPhone"),
+    altPhone: optionalNullableString(input.altPhone, "altPhone"),
+    fax: optionalNullableString(input.fax, "fax"),
+    primaryContactId: optionalNullableString(input.primaryContactId, "primaryContactId"),
+    billingContactId: optionalNullableString(input.billingContactId, "billingContactId"),
+    dispatchContactId: optionalNullableString(input.dispatchContactId, "dispatchContactId"),
+    trades: optionalStringArray(input.trades, "trades"),
+    serviceArea: optionalNullableString(input.serviceArea, "serviceArea"),
     notes: optionalNullableString(input.notes, "notes"),
   });
 }
@@ -424,23 +402,49 @@ export async function listContractorsForActor(
   );
 }
 
-export function safeClientSummary(client: ClientOrganization) {
+export async function safeClientSummary(
+  repositories: Pick<
+    WorkOrderApiContext["repositories"],
+    "clientOrganizationContactLinks" | "contacts"
+  >,
+  client: ClientOrganization,
+) {
+  const [contactsById, linkedContacts] = await Promise.all([
+    resolveContactsById(repositories, [
+      client.primaryContactId,
+      client.billingContactId,
+    ]),
+    resolveClientOrganizationContactLinks(repositories, client.id),
+  ]);
+  const primaryContact = client.primaryContactId
+    ? contactsById[client.primaryContactId] ?? null
+    : null;
+  const billingContact = client.billingContactId
+    ? contactsById[client.billingContactId] ?? null
+    : null;
   return {
     id: client.id,
     name: client.name,
     displayName: client.displayName,
     status: client.status,
-    primaryContactName: client.primaryContactName,
-    primaryContactEmail: client.primaryContactEmail,
-    primaryContactPhone: client.primaryContactPhone,
+    primaryContactId: client.primaryContactId,
+    billingContactId: client.billingContactId,
+    primaryContact,
+    billingContact,
+    linkedContacts,
     updatedAt: client.updatedAt,
   };
 }
 
-export function safeClientDetail(client: ClientOrganization) {
+export async function safeClientDetail(
+  repositories: Pick<
+    WorkOrderApiContext["repositories"],
+    "clientOrganizationContactLinks" | "contacts"
+  >,
+  client: ClientOrganization,
+) {
   return {
-    ...safeClientSummary(client),
-    billingEmail: client.billingEmail,
+    ...(await safeClientSummary(repositories, client)),
     notes: client.notes,
     createdAt: client.createdAt,
     recordStatus: client.recordStatus,
@@ -454,24 +458,63 @@ export {
   safeLocationSummaryForActor,
 };
 
-export function safeContractorSummary(contractor: ContractorOrganization) {
+export async function safeContractorSummary(
+  repositories: Pick<
+    WorkOrderApiContext["repositories"],
+    "contacts" | "contractorContactLinks"
+  >,
+  contractor: ContractorOrganization,
+) {
+  const [contactsById, linkedContacts] = await Promise.all([
+    resolveContactsById(repositories, [
+      contractor.primaryContactId,
+      contractor.billingContactId,
+      contractor.dispatchContactId,
+    ]),
+    resolveContractorContactLinks(repositories, contractor.id),
+  ]);
+  const primaryContact = contractor.primaryContactId
+    ? contactsById[contractor.primaryContactId] ?? null
+    : null;
+  const billingContact = contractor.billingContactId
+    ? contactsById[contractor.billingContactId] ?? null
+    : null;
+  const dispatchContact = contractor.dispatchContactId
+    ? contactsById[contractor.dispatchContactId] ?? null
+    : null;
   return {
     id: contractor.id,
     name: contractor.name,
     displayName: contractor.displayName,
+    parentContractorId: contractor.parentContractorId ?? null,
     status: contractor.status,
-    primaryContactName: contractor.primaryContactName,
-    primaryContactEmail: contractor.primaryContactEmail,
-    primaryContactPhone: contractor.primaryContactPhone,
-    serviceCategories: contractor.serviceCategories,
-    serviceAreas: contractor.serviceAreas,
+    isAssignable: contractor.isAssignable ?? null,
+    businessEmail: contractor.businessEmail ?? null,
+    mainPhone: contractor.mainPhone ?? null,
+    altPhone: contractor.altPhone ?? null,
+    fax: contractor.fax ?? null,
+    primaryContactId: contractor.primaryContactId,
+    billingContactId: contractor.billingContactId,
+    dispatchContactId: contractor.dispatchContactId,
+    primaryContact,
+    billingContact,
+    dispatchContact,
+    linkedContacts,
+    trades: contractor.trades ?? [],
+    serviceArea: contractor.serviceArea ?? null,
     updatedAt: contractor.updatedAt,
   };
 }
 
-export function safeContractorDetail(contractor: ContractorOrganization) {
+export async function safeContractorDetail(
+  repositories: Pick<
+    WorkOrderApiContext["repositories"],
+    "contacts" | "contractorContactLinks"
+  >,
+  contractor: ContractorOrganization,
+) {
   return {
-    ...safeContractorSummary(contractor),
+    ...(await safeContractorSummary(repositories, contractor)),
     notes: contractor.notes,
     createdAt: contractor.createdAt,
     recordStatus: contractor.recordStatus,
@@ -479,10 +522,8 @@ export function safeContractorDetail(contractor: ContractorOrganization) {
 }
 
 export function revalidateClientPaths(id?: EntityId): void {
-  revalidatePath("/clients");
   revalidatePath("/client-organizations");
   if (id) {
-    revalidatePath(`/clients/${id}`);
     revalidatePath(`/client-organizations/${id}`);
   }
 }
@@ -659,6 +700,18 @@ function optionalStringArray(
   }
 
   return value.map((item) => item.trim()).filter(Boolean);
+}
+
+function optionalBoolean(value: unknown, field: string): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "boolean") {
+    throw validationError(`${field} must be a boolean.`);
+  }
+
+  return value;
 }
 
 function pruneUndefined<T extends Record<string, unknown>>(input: T): Partial<T> {

@@ -8,6 +8,9 @@ import {
   listScopeForActor,
 } from "../server/api/work-order-access.ts";
 import { createAccessDeniedError } from "../server/authorization/index.ts";
+import { APP_PRIMARY_NAV_ITEMS } from "../lib/navigation/nav-config.ts";
+import { getNavigationItemsForRole } from "../lib/rbac/checks.ts";
+import { APP_ROLES } from "../lib/rbac/roles.ts";
 import type { AccessActor, ClientAccessActor } from "../types/auth.ts";
 import { USER_ROLES } from "../types/permissions.ts";
 
@@ -31,6 +34,23 @@ test("protected legacy route group is removed", () => {
   const routeGroup = `(${["protected"].join("")})`;
   const removedRoot = path.resolve(process.cwd(), "src/app", routeGroup);
   assert.equal(statExists(removedRoot), false);
+});
+
+test("legacy API routes are removed from the active app surface", () => {
+  const removedRoutes = [
+    "src/app/api/clients/route.ts",
+    "src/app/api/clients/[clientId]/route.ts",
+    "src/app/api/work-orders/[workOrderId]/assign-contractor/route.ts",
+    "src/app/api/work-orders/[workOrderId]/quotes/route.ts",
+    "src/app/api/work-orders/[workOrderId]/quotes/[quoteId]/route.ts",
+    "src/app/api/work-orders/[workOrderId]/quotes/[quoteId]/transition/route.ts",
+    "src/app/api/work-orders/[workOrderId]/transition/route.ts",
+  ];
+
+  for (const routePath of removedRoutes) {
+    const absolutePath = path.resolve(process.cwd(), routePath);
+    assert.equal(statExists(absolutePath), false, `${routePath} should not exist`);
+  }
 });
 
 test("client-scoped work-order list scope preserves selected location boundaries", () => {
@@ -68,6 +88,73 @@ test("finance queue authorization rejects external actors", () => {
         error.message === createAccessDeniedError().message,
     );
   }
+});
+
+test("finance queue authorization rejects manager actors", () => {
+  assert.throws(
+    () =>
+      authorizeFinanceQueueRead({
+        actor: makeInternalActor(USER_ROLES.Manager),
+      }),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message === createAccessDeniedError().message,
+  );
+});
+
+test("navigation only exposes external portal links to matching external roles", () => {
+  const ownerItems = getNavigationItemsForRole(
+    APP_ROLES.Owner,
+    APP_PRIMARY_NAV_ITEMS,
+  );
+  assert.equal(
+    ownerItems.some((item) => item.id === "client-organizations"),
+    true,
+  );
+  assert.equal(ownerItems.some((item) => item.id === "contacts"), true);
+  assert.equal(
+    ownerItems.findIndex((item) => item.id === "contacts") >
+      ownerItems.findIndex((item) => item.id === "locations"),
+    true,
+  );
+  assert.equal(ownerItems.some((item) => item.id === "client-portal"), false);
+  assert.equal(
+    ownerItems.some((item) => item.id === "contractor-portal"),
+    false,
+  );
+
+  const clientItems = getNavigationItemsForRole(
+    APP_ROLES.ClientUser,
+    APP_PRIMARY_NAV_ITEMS,
+  );
+  assert.equal(
+    clientItems.some((item) => item.id === "client-organizations"),
+    true,
+  );
+  assert.equal(clientItems.some((item) => item.id === "contacts"), false);
+  assert.equal(clientItems.some((item) => item.id === "client-portal"), true);
+  assert.equal(
+    clientItems.some((item) => item.id === "contractor-portal"),
+    false,
+  );
+
+  const contractorItems = getNavigationItemsForRole(
+    APP_ROLES.ContractorUser,
+    APP_PRIMARY_NAV_ITEMS,
+  );
+  assert.equal(
+    contractorItems.some((item) => item.id === "client-organizations"),
+    true,
+  );
+  assert.equal(contractorItems.some((item) => item.id === "contacts"), false);
+  assert.equal(
+    contractorItems.some((item) => item.id === "client-portal"),
+    false,
+  );
+  assert.equal(
+    contractorItems.some((item) => item.id === "contractor-portal"),
+    true,
+  );
 });
 
 function walkFiles(dir: string): string[] {
@@ -133,6 +220,18 @@ function makeContractorActor(): AccessActor {
       kind: "contractor",
       organizationId: "org-1",
       contractorOrganizationId: "contractor-1",
+    },
+  };
+}
+
+function makeInternalActor(role: typeof USER_ROLES.Manager): AccessActor {
+  return {
+    actorType: "internal",
+    userId: `${role.toLowerCase()}-1`,
+    role,
+    scope: {
+      kind: "internal",
+      organizationId: "org-1",
     },
   };
 }

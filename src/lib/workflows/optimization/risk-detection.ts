@@ -206,9 +206,9 @@ function buildQuoteRisk(
 }
 
 function getInvoiceDueAt(entity: OptimizationEntity | null | undefined): string | undefined {
-  if (!entity || !("dueAt" in entity)) {
+  if (!entity || !("dueDate" in entity) || typeof entity.dueDate !== "string") {
     return undefined;
   }
 
-  return entity.dueAt;
+  return entity.dueDate;
 }

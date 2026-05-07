@@ -12,12 +12,15 @@ import type {
 } from "../../lib/repositories/location.repository.ts";
 import { USER_ROLES } from "../../types/permissions.ts";
 import type {
+  ClientOrganizationContactLink,
   ClientOrganization as FirestoreClientOrganization,
+  ClientInvoice as Invoice,
+  ClientQuote as Quote,
+  Contact,
   ContractorOrganization,
   FirestoreRepositories,
-  Invoice,
+  LocationContactLink,
   Location as FirestoreLocation,
-  Quote,
   RepositoryListOptions,
   RepositoryListResult,
   WorkOrder,
@@ -31,13 +34,17 @@ import {
   type WorkOrderService,
 } from "../../server/services/work-order-service.ts";
 import type {
-  ActivityLogService,
-  RecordActivityLogInput,
-} from "../../server/services/activity-log-service.ts";
+  DomainEventType,
+} from "../../server/events/types.ts";
+import type {
+  DomainEventService,
+  RecordDomainEventInput,
+} from "../../server/services/domain-event-service.ts";
 import type { ServiceAuditContext } from "../../server/services/types.ts";
 import { serviceOk } from "../../server/services/types.ts";
 import type { EntityId } from "../../types/entity.ts";
 import type { ClientOrganization as DomainClientOrganization } from "../../types/client-organization.ts";
+import type { PreferredLanguage } from "../../types/contact.ts";
 import type { Location as DomainLocation } from "../../types/location.ts";
 
 const DEFAULT_NOW = "2026-04-13T12:00:00.000Z";
@@ -47,14 +54,17 @@ export interface PhaseTwoServiceHarness {
   workOrders: WorkOrderService;
   repositories: Pick<
     FirestoreRepositories,
+    | "clientOrganizationContactLinks"
     | "clientOrganizations"
+    | "contacts"
     | "locations"
+    | "locationContactLinks"
     | "workOrders"
-    | "quotes"
-    | "invoices"
+    | "clientQuotes"
+    | "clientInvoices"
     | "contractorOrganizations"
   >;
-  recordedActivityInputs: RecordActivityLogInput[];
+  recordedActivityInputs: Array<RecordDomainEventInput<DomainEventType>>;
 }
 
 export interface LocationDomainServiceHarness {
@@ -82,10 +92,8 @@ function toDomainClientOrganization(
     name: entity.name,
     displayName: entity.displayName ?? undefined,
     status: entity.status,
-    primaryContactName: entity.primaryContactName ?? undefined,
-    primaryContactEmail: entity.primaryContactEmail ?? undefined,
-    primaryContactPhone: entity.primaryContactPhone ?? undefined,
-    billingEmail: entity.billingEmail ?? undefined,
+    primaryContactId: entity.primaryContactId ?? undefined,
+    billingContactId: entity.billingContactId ?? undefined,
     notes: entity.notes ?? undefined,
   };
 }
@@ -112,9 +120,6 @@ function toDomainLocation(entity: FirestoreLocation): DomainLocation {
     region: entity.region ?? undefined,
     postalCode: entity.postalCode ?? undefined,
     countryCode: entity.countryCode ?? undefined,
-    locationContactName: entity.locationContactName ?? undefined,
-    locationContactEmail: entity.locationContactEmail ?? undefined,
-    locationContactPhone: entity.locationContactPhone ?? undefined,
     accessNotes: entity.accessNotes ?? undefined,
     notes: entity.notes ?? undefined,
   };
@@ -208,10 +213,8 @@ export function makeClientOrganization(
     name: "Northstar Properties",
     displayName: "Northstar",
     status: "active",
-    primaryContactName: "Alex Client",
-    primaryContactEmail: "alex@example.com",
-    primaryContactPhone: "4165550100",
-    billingEmail: "billing@example.com",
+    primaryContactId: "contact-alex-client",
+    billingContactId: "contact-alex-client",
     notes: null,
     ...overrides,
   };
@@ -233,10 +236,6 @@ export function makeLocation(
     deletedAt: null,
     deletedByUserId: null,
     clientOrganizationId,
-    clientSnapshot: {
-      id: clientOrganizationId,
-      name: "Northstar",
-    },
     name: "Pinnacle Tower",
     code: "PT-01",
     status: "active",
@@ -246,11 +245,44 @@ export function makeLocation(
     region: "ON",
     postalCode: "M5X 1A9",
     countryCode: "CA",
-    locationContactName: "Avery Hill",
-    locationContactEmail: "avery@example.com",
-    locationContactPhone: "4165550119",
     accessNotes: null,
     notes: null,
+    ...overrides,
+  };
+}
+
+export function makeContact(
+  overrides: Partial<Contact> & {
+    id?: EntityId;
+    firstName?: string;
+    lastName?: string;
+    preferredLanguage?: PreferredLanguage;
+  } = {},
+): Contact {
+  const firstName = overrides.firstName ?? "Alex";
+  const lastName = overrides.lastName ?? "Contact";
+  return {
+    id: overrides.id ?? `contact-${firstName.toLowerCase()}-${lastName.toLowerCase()}`,
+    organizationId: "org-1",
+    recordStatus: "active",
+    isDeleted: false,
+    createdAt: DEFAULT_NOW,
+    updatedAt: DEFAULT_NOW,
+    createdByUserId: "owner-1",
+    updatedByUserId: "owner-1",
+    deletedAt: null,
+    deletedByUserId: null,
+    firstName,
+    lastName,
+    displayName: overrides.displayName ?? `${firstName} ${lastName}`,
+    email: overrides.email ?? `${firstName.toLowerCase()}.${lastName.toLowerCase()}@example.com`,
+    primaryPhone: overrides.primaryPhone ?? "416-555-0100",
+    secondaryPhone: overrides.secondaryPhone ?? null,
+    roleTitle: overrides.roleTitle ?? "Operations",
+    preferredLanguage: overrides.preferredLanguage ?? "en",
+    preferredContactMethod: overrides.preferredContactMethod ?? "email",
+    notes: overrides.notes ?? null,
+    status: overrides.status ?? "active",
     ...overrides,
   };
 }
@@ -270,14 +302,16 @@ export function makeWorkOrder(overrides: Partial<WorkOrder> = {}): WorkOrder {
     workOrderNumber: "WO-1",
     title: "Generator repair",
     description: "Investigate generator fault.",
+    lifecycleStatus: "new",
     status: "new",
     priority: "medium",
     clientOrganizationId: "client-1",
     locationId: "loc-1",
-    requestedByUserId: "owner-1",
-    assignedCoordinatorUserId: null,
-    assignedManagerUserId: null,
-    assignedContractorOrganizationId: null,
+    requestedByContactId: null,
+    coordinatorUserId: null,
+    managerUserId: null,
+    assignedContractorOrgId: null,
+    assignedContractorId: null,
     currentQuoteId: null,
     currentInvoiceId: null,
     clientSnapshot: {
@@ -302,21 +336,73 @@ export function makeWorkOrder(overrides: Partial<WorkOrder> = {}): WorkOrder {
 
 export function createPhaseTwoServiceHarness(input: {
   clients?: FirestoreClientOrganization[];
+  contacts?: Contact[];
   locations?: FirestoreLocation[];
   workOrders?: WorkOrder[];
 } = {}): PhaseTwoServiceHarness {
+  const contactStore = new Map<EntityId, Contact>(
+    (input.contacts ?? [
+      makeContact({
+        id: "contact-avery-hill",
+        firstName: "Avery",
+        lastName: "Hill",
+        roleTitle: "Operations Manager",
+      }),
+      makeContact({
+        id: "contact-jordan-lee",
+        firstName: "Jordan",
+        lastName: "Lee",
+        roleTitle: "Facilities Lead",
+      }),
+      makeContact({
+        id: "contact-alex-client",
+        firstName: "Alex",
+        lastName: "Client",
+        roleTitle: "Client Lead",
+      }),
+    ]).map((contact) => [contact.id, contact]),
+  );
   const clientStore = new Map<EntityId, FirestoreClientOrganization>(
     (input.clients ?? []).map((client) => [client.id, client]),
   );
+  const clientContactLinkStore = new Map<EntityId, ClientOrganizationContactLink>();
   const locationStore = new Map<EntityId, FirestoreLocation>(
     (input.locations ?? []).map((location) => [location.id, location]),
   );
+  const locationContactLinkStore = new Map<EntityId, LocationContactLink>();
   const workOrderStore = new Map<EntityId, WorkOrder>(
     (input.workOrders ?? []).map((workOrder) => [workOrder.id, workOrder]),
   );
-  const recordedActivityInputs: RecordActivityLogInput[] = [];
+  const recordedActivityInputs: PhaseTwoServiceHarness["recordedActivityInputs"] = [];
 
   const repositories: PhaseTwoServiceHarness["repositories"] = {
+    contacts: {
+      newId() {
+        return `contact-${contactStore.size + 1}`;
+      },
+      async getById(id) {
+        return contactStore.get(id) ?? null;
+      },
+      async create(entity) {
+        contactStore.set(entity.id, entity);
+        return { id: entity.id, item: entity };
+      },
+      async save(entity) {
+        contactStore.set(entity.id, entity);
+        return { id: entity.id, item: entity };
+      },
+      async listByOrganizationId(organizationId, options) {
+        return listEntities(contactStore, options, (item) =>
+          item.organizationId === organizationId,
+        );
+      },
+      async listByIds(contactIds) {
+        const items = contactIds
+          .map((contactId) => contactStore.get(contactId))
+          .filter((contact): contact is Contact => Boolean(contact));
+        return { items, count: items.length };
+      },
+    },
     clientOrganizations: {
       newId() {
         return `client-${clientStore.size + 1}`;
@@ -348,6 +434,38 @@ export function createPhaseTwoServiceHarness(input: {
         );
       },
     },
+    clientOrganizationContactLinks: {
+      newId() {
+        return `client-link-${clientContactLinkStore.size + 1}`;
+      },
+      async getById(id) {
+        return clientContactLinkStore.get(id) ?? null;
+      },
+      async create(entity) {
+        clientContactLinkStore.set(entity.id, entity);
+        return { id: entity.id, item: entity };
+      },
+      async save(entity) {
+        clientContactLinkStore.set(entity.id, entity);
+        return { id: entity.id, item: entity };
+      },
+      async listByClientOrganizationId(clientOrganizationId, options) {
+        return listEntities(clientContactLinkStore, options, (item) =>
+          item.clientOrganizationId === clientOrganizationId,
+        );
+      },
+      async replaceForClientOrganizationId(clientOrganizationId, links) {
+        for (const [id, link] of clientContactLinkStore.entries()) {
+          if (link.clientOrganizationId === clientOrganizationId) {
+            clientContactLinkStore.delete(id);
+          }
+        }
+
+        for (const link of links) {
+          clientContactLinkStore.set(link.id, link);
+        }
+      },
+    },
     locations: {
       newId() {
         return `loc-${locationStore.size + 1}`;
@@ -372,6 +490,38 @@ export function createPhaseTwoServiceHarness(input: {
         return listEntities(locationStore, options, (item) =>
           item.clientOrganizationId === clientOrganizationId,
         );
+      },
+    },
+    locationContactLinks: {
+      newId() {
+        return `location-link-${locationContactLinkStore.size + 1}`;
+      },
+      async getById(id) {
+        return locationContactLinkStore.get(id) ?? null;
+      },
+      async create(entity) {
+        locationContactLinkStore.set(entity.id, entity);
+        return { id: entity.id, item: entity };
+      },
+      async save(entity) {
+        locationContactLinkStore.set(entity.id, entity);
+        return { id: entity.id, item: entity };
+      },
+      async listByLocationId(locationId, options) {
+        return listEntities(locationContactLinkStore, options, (item) =>
+          item.locationId === locationId,
+        );
+      },
+      async replaceForLocationId(locationId, links) {
+        for (const [id, link] of locationContactLinkStore.entries()) {
+          if (link.locationId === locationId) {
+            locationContactLinkStore.delete(id);
+          }
+        }
+
+        for (const link of links) {
+          locationContactLinkStore.set(link.id, link);
+        }
       },
     },
     workOrders: {
@@ -404,79 +554,46 @@ export function createPhaseTwoServiceHarness(input: {
           item.locationId === locationId,
         );
       },
-      async listByAssignedCoordinatorUserId(coordinatorUserId, options) {
+      async listByCoordinatorUserId(coordinatorUserId, options) {
         return listEntities(workOrderStore, options, (item) =>
-          item.assignedCoordinatorUserId === coordinatorUserId,
+          item.coordinatorUserId === coordinatorUserId,
         );
       },
-      async listByAssignedManagerUserId(managerUserId, options) {
+      async listByManagerUserId(managerUserId, options) {
         return listEntities(workOrderStore, options, (item) =>
-          item.assignedManagerUserId === managerUserId,
+          item.managerUserId === managerUserId,
         );
       },
       async listByContractorOrganizationId(contractorOrganizationId, options) {
         return listEntities(workOrderStore, options, (item) =>
-          item.assignedContractorOrganizationId === contractorOrganizationId,
+          item.assignedContractorId === contractorOrganizationId,
         );
       },
     },
-    quotes: createEmptyQuoteRepository(),
-    invoices: createEmptyInvoiceRepository(),
+    clientQuotes: createEmptyQuoteRepository(),
+    clientInvoices: createEmptyInvoiceRepository(),
     contractorOrganizations: createEmptyContractorOrganizationRepository(),
   };
 
-  const activityLogs: ActivityLogService = {
-    async listForWorkOrder() {
+  const domainEvents: DomainEventService = {
+    async listTimelineForWorkOrder() {
+      return serviceOk([]);
+    },
+    async listTimelineForEntity() {
       return serviceOk([]);
     },
     async record(inputRecord) {
       recordedActivityInputs.push(inputRecord);
-      return serviceOk({
-        id: `activity-${recordedActivityInputs.length}`,
-        organizationId: inputRecord.organizationId,
-        recordStatus: "active",
-        isDeleted: false,
-        createdAt: inputRecord.now ?? DEFAULT_NOW,
-        updatedAt: inputRecord.now ?? DEFAULT_NOW,
-        createdByUserId: inputRecord.actor.userId,
-        updatedByUserId: inputRecord.actor.userId,
-        deletedAt: null,
-        deletedByUserId: null,
-        workOrderId: inputRecord.workOrderId,
-        action: inputRecord.action,
-        eventType: inputRecord.eventType,
-        message: inputRecord.message,
-        actorType: "user",
-        actorUserId: inputRecord.actor.userId,
-        actorRole: inputRecord.actor.role,
-        actor: {
-          type: "user",
-          userId: inputRecord.actor.userId,
-          role: inputRecord.actor.role,
-        },
-        resourceType: inputRecord.entityType,
-        resourceId: inputRecord.entityId,
-        resourceLabel: inputRecord.entityLabel ?? null,
-        resource: {
-          type: inputRecord.entityType,
-          id: inputRecord.entityId,
-          label: inputRecord.entityLabel ?? null,
-          workOrderId: inputRecord.workOrderId,
-        },
-        entityType: inputRecord.entityType,
-        entityId: inputRecord.entityId,
-        occurredAt: inputRecord.now ?? DEFAULT_NOW,
-        requestId: inputRecord.requestId ?? null,
-        visibility: inputRecord.visibility ?? "internal",
-        changes: inputRecord.changes ?? [],
-        metadata: inputRecord.metadata ?? {},
-      });
+      return serviceOk(null as never);
+    },
+    async recordTransition() {
+      return serviceOk(null as never);
     },
   };
 
   const clientLocations = createClientLocationService(repositories);
   const workOrders = createWorkOrderService(repositories, {
-    activityLogs,
+    domainEvents,
     clientLocations,
   });
 
@@ -578,15 +695,14 @@ export function createLocationDomainServiceHarness(input: {
         name: inputCreate.data.name,
         code: inputCreate.data.code,
         status: inputCreate.data.status ?? "active",
+        primaryContactId: inputCreate.data.primaryContactId,
+        siteContactId: inputCreate.data.siteContactId,
         addressLine1: inputCreate.data.addressLine1,
         addressLine2: inputCreate.data.addressLine2,
         city: inputCreate.data.city,
         region: inputCreate.data.region,
         postalCode: inputCreate.data.postalCode,
         countryCode: inputCreate.data.countryCode,
-        locationContactName: inputCreate.data.locationContactName,
-        locationContactEmail: inputCreate.data.locationContactEmail,
-        locationContactPhone: inputCreate.data.locationContactPhone,
         accessNotes: inputCreate.data.accessNotes,
         notes: inputCreate.data.notes,
       };
@@ -612,6 +728,14 @@ export function createLocationDomainServiceHarness(input: {
             ? existing.code
             : inputUpdate.data.code ?? undefined,
         status: inputUpdate.data.status ?? existing.status,
+        primaryContactId:
+          inputUpdate.data.primaryContactId === undefined
+            ? existing.primaryContactId
+            : inputUpdate.data.primaryContactId ?? undefined,
+        siteContactId:
+          inputUpdate.data.siteContactId === undefined
+            ? existing.siteContactId
+            : inputUpdate.data.siteContactId ?? undefined,
         addressLine1:
           inputUpdate.data.addressLine1 === undefined
             ? existing.addressLine1
@@ -636,18 +760,6 @@ export function createLocationDomainServiceHarness(input: {
           inputUpdate.data.countryCode === undefined
             ? existing.countryCode
             : inputUpdate.data.countryCode ?? undefined,
-        locationContactName:
-          inputUpdate.data.locationContactName === undefined
-            ? existing.locationContactName
-            : inputUpdate.data.locationContactName ?? undefined,
-        locationContactEmail:
-          inputUpdate.data.locationContactEmail === undefined
-            ? existing.locationContactEmail
-            : inputUpdate.data.locationContactEmail ?? undefined,
-        locationContactPhone:
-          inputUpdate.data.locationContactPhone === undefined
-            ? existing.locationContactPhone
-            : inputUpdate.data.locationContactPhone ?? undefined,
         accessNotes:
           inputUpdate.data.accessNotes === undefined
             ? existing.accessNotes
@@ -724,7 +836,7 @@ function listEntities<T>(
   };
 }
 
-function createEmptyQuoteRepository(): FirestoreRepositories["quotes"] {
+function createEmptyQuoteRepository(): FirestoreRepositories["clientQuotes"] {
   const store = new Map<EntityId, Quote>();
   return {
     newId() {
@@ -744,13 +856,19 @@ function createEmptyQuoteRepository(): FirestoreRepositories["quotes"] {
     async listByWorkOrderId(workOrderId, options) {
       return listEntities(store, options, (item) => item.workOrderId === workOrderId);
     },
-    async listPendingQuotes(options) {
-      return listEntities(store, options, () => true);
+    async getActiveByWorkOrderId(workOrderId) {
+      return (
+        [...store.values()].find(
+          (item) =>
+            item.workOrderId === workOrderId &&
+            (item.status === "draft" || item.status === "sent"),
+        ) ?? null
+      );
     },
   };
 }
 
-function createEmptyInvoiceRepository(): FirestoreRepositories["invoices"] {
+function createEmptyInvoiceRepository(): FirestoreRepositories["clientInvoices"] {
   const store = new Map<EntityId, Invoice>();
   return {
     newId() {
@@ -848,8 +966,6 @@ function applyLocationRepositoryFilters(
         location.city,
         location.region,
         location.postalCode,
-        location.locationContactName,
-        location.locationContactEmail,
       ]
         .filter((value): value is string => Boolean(value))
         .some((value) => value.toLowerCase().includes(normalizedSearch));

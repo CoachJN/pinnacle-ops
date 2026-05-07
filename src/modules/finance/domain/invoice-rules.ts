@@ -2,7 +2,8 @@ import type { InvoiceStatus } from "../../../types/invoice.ts";
 import type { WorkOrderStatus } from "../../../types/work-order.ts";
 
 export const INVOICE_CREATION_ELIGIBLE_WORK_ORDER_STATUSES = [
-  "completed",
+  "work_completed",
+  "completion_review",
   "ready_for_invoicing",
 ] as const satisfies readonly WorkOrderStatus[];
 
@@ -110,7 +111,7 @@ export function buildInvoiceCreationEligibility(input: {
     return {
       eligible: false,
       reason:
-        "Invoices can only be created for completed or ready for invoicing work orders.",
+        "Invoices can only be created for work_completed, completion_review, or ready_for_invoicing work orders.",
       duplicatePolicy: INVOICE_DUPLICATION_POLICY.kind,
     };
   }

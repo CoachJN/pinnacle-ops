@@ -4,20 +4,33 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   startTransition,
+  useEffect,
   useState,
   type Dispatch,
   type FormEvent,
   type SetStateAction,
 } from "react";
 import { ActionFeedback } from "@/components/shared/action-feedback";
+import { ContactLinkManager } from "@/components/shared/contact-link-manager";
 import type {
   ClientOrganizationDetail,
   ClientOrganizationFormErrors,
   ClientOrganizationFormValues,
 } from "@/components/client-organizations/types";
+import type { ContactLinkInput, ContactSummary } from "@/types/contact";
+import type { ContactRoleSlotAssignment } from "@/lib/contact-linking";
+
+interface ClientOrganizationEditorPageProps {
+  mode: "create" | "edit";
+  clientOrganizationId?: string;
+}
 
 interface ClientOrganizationResponse {
   clientOrganization: ClientOrganizationDetail;
+}
+
+interface ContactsResponse {
+  contacts: ContactSummary[];
 }
 
 interface ApiErrorResponse {
@@ -29,21 +42,104 @@ interface ApiErrorResponse {
 const EMPTY_FORM: ClientOrganizationFormValues = {
   name: "",
   displayName: "",
-  primaryContactName: "",
-  primaryContactEmail: "",
-  primaryContactPhone: "",
-  billingEmail: "",
+  primaryContactId: "",
+  billingContactId: "",
+  linkedContacts: [],
   notes: "",
   isActive: true,
 };
 
-export function ClientOrganizationEditorPage() {
+export function ClientOrganizationEditorPage({
+  mode,
+  clientOrganizationId,
+}: ClientOrganizationEditorPageProps) {
   const router = useRouter();
   const [formValues, setFormValues] =
     useState<ClientOrganizationFormValues>(EMPTY_FORM);
+  const [contacts, setContacts] = useState<ContactSummary[]>([]);
   const [errors, setErrors] = useState<ClientOrganizationFormErrors>({});
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(mode === "edit");
   const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function loadDependencies() {
+      setIsLoading(mode === "edit");
+      setErrorMessage(null);
+
+      try {
+        const requests: Promise<Response>[] = [
+          fetch("/api/contacts", { cache: "no-store" }),
+        ];
+
+        if (mode === "edit" && clientOrganizationId) {
+          requests.push(
+            fetch(`/api/client-organizations/${clientOrganizationId}`, {
+              cache: "no-store",
+            }),
+          );
+        }
+
+        const responses = await Promise.all(requests);
+        const contactsPayload = (await responses[0].json()) as
+          | ContactsResponse
+          | ApiErrorResponse;
+
+        if (!responses[0]?.ok) {
+          throw new Error(
+            (contactsPayload as ApiErrorResponse).error?.message ??
+              "Unable to load contacts.",
+          );
+        }
+
+        if (!isCancelled) {
+          setContacts((contactsPayload as ContactsResponse).contacts);
+        }
+
+        if (mode === "edit" && responses[1]) {
+          const organizationPayload = (await responses[1].json()) as
+            | ClientOrganizationResponse
+            | ApiErrorResponse;
+
+          if (!responses[1].ok) {
+            throw new Error(
+              (organizationPayload as ApiErrorResponse).error?.message ??
+                "Unable to load client organization.",
+            );
+          }
+
+          if (!isCancelled) {
+            setFormValues(
+              mapOrganizationToFormValues(
+                (organizationPayload as ClientOrganizationResponse)
+                  .clientOrganization,
+              ),
+            );
+          }
+        }
+      } catch (error) {
+        if (!isCancelled) {
+          setErrorMessage(
+            error instanceof Error
+              ? error.message
+              : "Unable to load client organization editor.",
+          );
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    void loadDependencies();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [clientOrganizationId, mode]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -58,22 +154,27 @@ export function ClientOrganizationEditorPage() {
     setErrorMessage(null);
 
     try {
-      const response = await fetch("/api/client-organizations", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      const response = await fetch(
+        mode === "create"
+          ? "/api/client-organizations"
+          : `/api/client-organizations/${clientOrganizationId}`,
+        {
+          method: mode === "create" ? "POST" : "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(toApiPayload(formValues)),
         },
-        body: JSON.stringify(toApiPayload(formValues)),
-      });
+      );
 
       const payload = (await response.json()) as
         | ClientOrganizationResponse
         | ApiErrorResponse;
 
       if (!response.ok) {
-        const errorPayload = payload as ApiErrorResponse;
         throw new Error(
-          errorPayload.error?.message ?? "Unable to create client organization.",
+          (payload as ApiErrorResponse).error?.message ??
+            `Unable to ${mode === "create" ? "create" : "save"} client organization.`,
         );
       }
 
@@ -88,20 +189,33 @@ export function ClientOrganizationEditorPage() {
       setErrorMessage(
         error instanceof Error
           ? error.message
-          : "Unable to create client organization.",
+          : `Unable to ${mode === "create" ? "create" : "save"} client organization.`,
       );
     } finally {
       setIsSaving(false);
     }
   }
 
+  if (isLoading) {
+    return (
+      <section className="space-y-4">
+        <div className="h-32 animate-pulse rounded-3xl bg-neutral-100" />
+        <div className="h-80 animate-pulse rounded-3xl bg-neutral-100" />
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-6">
       <Link
         className="text-sm font-medium text-neutral-600 underline-offset-4 hover:text-neutral-950 hover:underline"
-        href="/client-organizations"
+        href={
+          mode === "edit" && clientOrganizationId
+            ? `/client-organizations/${clientOrganizationId}`
+            : "/client-organizations"
+        }
       >
-        Back to client organizations
+        {mode === "edit" ? "Back to client organization" : "Back to client organizations"}
       </Link>
 
       <section className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
@@ -109,11 +223,11 @@ export function ClientOrganizationEditorPage() {
           Client Organizations
         </p>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">
-          Create client
+          {mode === "create" ? "Create client" : "Edit client"}
         </h1>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">
-          Add a client organization so teams can attach locations and work orders
-          to the correct account.
+          Attach normalized contacts for primary and billing ownership using
+          canonical contact references only.
         </p>
       </section>
 
@@ -140,42 +254,26 @@ export function ClientOrganizationEditorPage() {
             }
             value={formValues.displayName}
           />
-          <TextField
-            label="Primary contact"
-            name="primaryContactName"
-            onChange={(value) =>
-              updateField(setFormValues, "primaryContactName", value)
-            }
-            value={formValues.primaryContactName}
-          />
-          <TextField
-            error={errors.primaryContactEmail}
-            label="Primary email"
-            name="primaryContactEmail"
-            onChange={(value) =>
-              updateField(setFormValues, "primaryContactEmail", value)
-            }
-            type="email"
-            value={formValues.primaryContactEmail}
-          />
-          <TextField
-            label="Primary phone"
-            name="primaryContactPhone"
-            onChange={(value) =>
-              updateField(setFormValues, "primaryContactPhone", value)
-            }
-            value={formValues.primaryContactPhone}
-          />
-          <TextField
-            error={errors.billingEmail}
-            label="Billing email"
-            name="billingEmail"
-            onChange={(value) =>
-              updateField(setFormValues, "billingEmail", value)
-            }
-            type="email"
-            value={formValues.billingEmail}
-          />
+        </div>
+
+        <ContactLinkManager
+          contacts={contacts}
+          description="Assign client role slots and manage additional linked contacts without leaving this workflow."
+          linkedContacts={formValues.linkedContacts}
+          onLinkedContactsChange={(linkedContacts) =>
+            setFormValues((current) => ({ ...current, linkedContacts }))
+          }
+          onRoleSlotsChange={(roleSlots) =>
+            setFormValues((current) => ({
+              ...current,
+              ...mapClientRoleSlotsToFormValues(roleSlots),
+            }))
+          }
+          roleSlots={toClientRoleSlots(formValues)}
+          title="Linked contacts"
+        />
+
+        <div className="grid gap-5 md:grid-cols-2">
           <label className="text-sm font-medium text-neutral-700">
             Status
             <select
@@ -213,11 +311,21 @@ export function ClientOrganizationEditorPage() {
             disabled={isSaving}
             type="submit"
           >
-            {isSaving ? "Creating..." : "Create client"}
+            {isSaving
+              ? mode === "create"
+                ? "Creating..."
+                : "Saving..."
+              : mode === "create"
+                ? "Create client"
+                : "Save client"}
           </button>
           <Link
             className="inline-flex items-center justify-center rounded-full border border-neutral-300 px-5 py-2.5 text-sm font-semibold text-neutral-700 transition hover:border-neutral-500 hover:text-neutral-950"
-            href="/client-organizations"
+            href={
+              mode === "edit" && clientOrganizationId
+                ? `/client-organizations/${clientOrganizationId}`
+                : "/client-organizations"
+            }
           >
             Cancel
           </Link>
@@ -260,58 +368,90 @@ function TextField({
   );
 }
 
-function updateField<TKey extends keyof ClientOrganizationFormValues>(
+function updateField<Key extends keyof ClientOrganizationFormValues>(
   setFormValues: Dispatch<SetStateAction<ClientOrganizationFormValues>>,
-  field: TKey,
-  value: ClientOrganizationFormValues[TKey],
+  key: Key,
+  value: ClientOrganizationFormValues[Key],
 ) {
-  setFormValues((current) => ({
-    ...current,
-    [field]: value,
-  }));
+  setFormValues((current) => ({ ...current, [key]: value }));
 }
 
-function toApiPayload(formValues: ClientOrganizationFormValues) {
+function mapOrganizationToFormValues(
+  organization: ClientOrganizationDetail,
+): ClientOrganizationFormValues {
   return {
-    name: formValues.name.trim(),
-    displayName: normalizeOptionalString(formValues.displayName),
-    status: formValues.isActive ? "active" : "inactive",
-    primaryContactName: normalizeOptionalString(formValues.primaryContactName),
-    primaryContactEmail: normalizeOptionalString(formValues.primaryContactEmail),
-    primaryContactPhone: normalizeOptionalString(formValues.primaryContactPhone),
-    billingEmail: normalizeOptionalString(formValues.billingEmail),
-    notes: normalizeOptionalString(formValues.notes),
+    name: organization.name,
+    displayName: organization.displayName ?? "",
+    primaryContactId: organization.primaryContactId ?? "",
+    billingContactId: organization.billingContactId ?? "",
+    linkedContacts:
+      organization.linkedContacts?.map((link) => ({
+        contactId: link.contactId,
+        relationshipType: link.relationshipType,
+        notes: link.notes ?? null,
+      })) ?? [],
+    notes: organization.notes ?? "",
+    isActive: organization.status === "active",
   };
 }
 
-function validateForm(
-  formValues: ClientOrganizationFormValues,
-): ClientOrganizationFormErrors {
+function toApiPayload(values: ClientOrganizationFormValues) {
+  return {
+    name: values.name.trim(),
+    displayName: normalizeOptionalString(values.displayName),
+    status: values.isActive ? "active" : "inactive",
+    primaryContactId: normalizeOptionalString(values.primaryContactId),
+    billingContactId: normalizeOptionalString(values.billingContactId),
+    linkedContacts: values.linkedContacts,
+    notes: normalizeOptionalString(values.notes),
+  };
+}
+
+function normalizeOptionalString(value: string): string | null {
+  const normalized = value.trim();
+  return normalized ? normalized : null;
+}
+
+function validateForm(values: ClientOrganizationFormValues): ClientOrganizationFormErrors {
   const errors: ClientOrganizationFormErrors = {};
 
-  if (!formValues.name.trim()) {
+  if (!values.name.trim()) {
     errors.name = "Legal name is required.";
-  }
-
-  if (
-    formValues.primaryContactEmail.trim() &&
-    !isValidEmail(formValues.primaryContactEmail)
-  ) {
-    errors.primaryContactEmail = "Primary email must be a valid email address.";
-  }
-
-  if (formValues.billingEmail.trim() && !isValidEmail(formValues.billingEmail)) {
-    errors.billingEmail = "Billing email must be a valid email address.";
   }
 
   return errors;
 }
 
-function normalizeOptionalString(value: string): string | null {
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
+function toClientRoleSlots(
+  values: Pick<
+    ClientOrganizationFormValues,
+    "primaryContactId" | "billingContactId"
+  >,
+): ContactRoleSlotAssignment<"primaryContactId" | "billingContactId">[] {
+  return [
+    {
+      key: "primaryContactId",
+      label: "Primary",
+      relationshipType: "primary",
+      contactId: normalizeOptionalString(values.primaryContactId),
+      isPrimary: true,
+    },
+    {
+      key: "billingContactId",
+      label: "Billing",
+      relationshipType: "billing",
+      contactId: normalizeOptionalString(values.billingContactId),
+    },
+  ];
 }
 
-function isValidEmail(value: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+function mapClientRoleSlotsToFormValues(
+  roleSlots: ContactRoleSlotAssignment<"primaryContactId" | "billingContactId">[],
+): Pick<ClientOrganizationFormValues, "primaryContactId" | "billingContactId"> {
+  return {
+    primaryContactId:
+      roleSlots.find((slot) => slot.key === "primaryContactId")?.contactId ?? "",
+    billingContactId:
+      roleSlots.find((slot) => slot.key === "billingContactId")?.contactId ?? "",
+  };
 }

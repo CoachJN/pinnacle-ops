@@ -5,190 +5,175 @@ import type {
   IsoDateTimeString,
   UpdateEntityInput,
 } from "@/types/entity";
+import type { CommunicationTimelineEntry } from "@/modules/communications";
+import type { WorkOrderLifecycleStatus } from "@/modules/work-orders";
 
-export type WorkOrderStatus =
-  | "new"
-  | "in_review"
-  | "draft"
-  | "submitted"
-  | "quote_requested"
-  | "quote_received"
-  | "pending_client_approval"
-  | "approved_to_proceed"
-  | "dispatched"
-  | "assigned"
-  | "in_progress"
-  | "waiting_on_contractor"
-  | "waiting_on_customer"
-  | "quoted"
-  | "approved"
-  | "scheduled"
-  | "completed"
-  | "ready_for_invoicing"
-  | "invoiced"
-  | "paid"
-  | "closed"
-  | "cancelled";
+export type WorkOrderStatus = WorkOrderLifecycleStatus;
 
 export type WorkOrderPriority = "low" | "medium" | "high" | "urgent";
 
-export type PhaseOneWorkOrderStatus =
-  | "new"
-  | "in_review"
-  | "quote_requested"
-  | "quote_received"
+export type WorkOrderCategory = string;
+
+export type WorkOrderNextActionOwnerType =
+  | "owner"
+  | "manager"
+  | "coordinator"
+  | "finance_admin"
+  | "client_head_office"
+  | "client_store"
+  | "contractor_admin"
+  | "contractor_technician"
+  | "system";
+
+export type WorkOrderApprovalStatus =
+  | "not_required"
+  | "pending_internal_review"
   | "pending_client_approval"
-  | "approved_to_proceed"
-  | "dispatched"
-  | "in_progress"
-  | "completed"
-  | "invoiced"
+  | "approved"
+  | "rejected";
+
+export type WorkOrderQuoteSummaryStatus =
+  | "not_required"
+  | "required"
+  | "awaiting_contractor_quote"
+  | "received"
+  | "under_review"
+  | "client_approval_requested"
+  | "client_approved"
+  | "rejected"
+  | "superseded";
+
+export type WorkOrderInvoiceSummaryStatus =
+  | "not_ready"
+  | "ready"
+  | "draft"
+  | "sent"
+  | "viewed"
+  | "overdue"
+  | "disputed"
+  | "resolved"
   | "paid"
-  | "closed"
-  | "cancelled";
-
-export type PhaseOneActivityType =
-  | "created"
-  | "edited"
-  | "status_changed"
-  | "note_updated"
-  | "contractor_assigned"
-  | "contractor_status_updated"
-  | "contractor_completion_notes_added"
-  | "quote_requested"
-  | "quote_submitted"
-  | "quote_revised"
-  | "quote_sent_for_client_approval"
-  | "quote_client_approved"
-  | "quote_client_rejected"
-  | "invoice_draft_created"
-  | "invoice_updated"
-  | "invoice_issued"
-  | "invoice_marked_paid"
-  | "invoice_marked_overdue"
-  | "invoice_voided";
-
-export interface PhaseOneWorkOrder {
-  id: EntityId;
-  workOrderNumber: string;
-  status: PhaseOneWorkOrderStatus;
-  requiresQuote: boolean;
-  currentQuoteId: EntityId | null;
-  currentInvoiceId: EntityId | null;
-  priority: WorkOrderPriority;
-  title: string;
-  description: string;
-  clientId: EntityId;
-  locationId: EntityId;
-  clientName: string;
-  locationName: string;
-  locationAddress: string;
-  contactName: string;
-  contactPhone: string;
-  createdAt: IsoDateTimeString;
-  updatedAt: IsoDateTimeString;
-  requestedServiceDate: IsoDateTimeString | null;
-  assignedCoordinatorName: string | null;
-  assignedManagerName: string | null;
-  assignedContractorId: string | null;
-  assignedContractorName: string | null;
-  contractorAssignedAt: IsoDateTimeString | null;
-  contractorAssignedBy: string | null;
-  category: string | null;
-  internalNotes: string | null;
-  completionNotes: string | null;
-  createdBy: string;
-  lastUpdatedBy: string;
-}
-
-export interface ActivityEntry {
-  id: EntityId;
-  workOrderId: EntityId;
-  type: PhaseOneActivityType;
-  message: string;
-  createdAt: IsoDateTimeString;
-  actorName: string;
-  actorRole: string;
-}
-
-export type PhaseOneCreateWorkOrderInput = Pick<
-  PhaseOneWorkOrder,
-  | "title"
-  | "description"
-  | "clientId"
-  | "locationId"
-  | "priority"
-  | "requestedServiceDate"
-  | "assignedCoordinatorName"
-  | "assignedManagerName"
-  | "category"
-  | "internalNotes"
->;
-
-export type PhaseOneUpdateWorkOrderInput = Partial<
-  Pick<
-    PhaseOneWorkOrder,
-    | "title"
-    | "description"
-    | "priority"
-    | "requestedServiceDate"
-    | "clientId"
-    | "locationId"
-    | "assignedCoordinatorName"
-    | "assignedManagerName"
-    | "category"
-    | "internalNotes"
-    | "completionNotes"
-  >
->;
+  | "void";
 
 export interface WorkOrderOwnershipReference {
   clientOrganizationId: EntityId;
   locationId: EntityId;
 }
 
-export interface WorkOrderLocationLinkage extends WorkOrderOwnershipReference {}
-
-export interface WorkOrderLocationValidationReference {
-  id: EntityId;
-  clientOrganizationId: EntityId;
-  status: "active" | "inactive";
-}
-
 export interface WorkOrder extends AuditableEntity, WorkOrderOwnershipReference {
-  requestedByUserId: EntityId;
-  title: string;
+  workOrderNumber: string;
+  poNumber?: string | null;
+  requestedByContactId?: EntityId | null;
+  siteContactId?: EntityId | null;
+  coordinatorUserId?: EntityId | null;
+  managerUserId?: EntityId | null;
+  assignedContractorId?: EntityId | null;
+  assignedCoordinatorUserId?: EntityId | null;
+  assignedManagerUserId?: EntityId | null;
+  assignedContractorOrgId?: EntityId | null;
+  assignedContractorContactId?: EntityId | null;
+  financeOwnerUserId?: EntityId | null;
+  quoteReviewerUserId?: EntityId | null;
+  requestedServiceDate?: IsoDateTimeString | null;
+  dueDate?: IsoDateTimeString | null;
+  category?: WorkOrderCategory | null;
+  requiresQuote?: boolean;
+  quoteRequiredThresholdCents?: number | null;
+  shortDescription: string;
   description: string;
+  lifecycleStatus: WorkOrderStatus;
   status: WorkOrderStatus;
+  assignmentStatus?: AssignmentStatus;
+  quoteSummaryStatus?: WorkOrderQuoteSummaryStatus;
+  invoiceSummaryStatus?: WorkOrderInvoiceSummaryStatus;
+  approvalStatus?: WorkOrderApprovalStatus;
   priority: WorkOrderPriority;
-  submittedAt?: IsoDateTimeString;
-  approvedAt?: IsoDateTimeString;
-  completedAt?: IsoDateTimeString;
-  closedAt?: IsoDateTimeString;
+  currentQuoteId?: EntityId | null;
+  currentInvoiceId?: EntityId | null;
+  currentQuoteVersionNumber?: number | null;
+  invoiceNumber?: string | null;
+  lastActivityAt?: IsoDateTimeString | null;
+  nextActionOwnerType?: WorkOrderNextActionOwnerType | null;
+  nextActionDueAt?: IsoDateTimeString | null;
+  isEscalated?: boolean;
+  escalationReason?: string | null;
+  holdReason?: string | null;
+  previousLifecycleStatus?: WorkOrderStatus | null;
+  paymentReference?: string | null;
+  invoiceDisputeFlag?: boolean;
+  quoteRequired?: boolean;
+  submittedAt?: IsoDateTimeString | null;
+  intakeReceivedAt?: IsoDateTimeString | null;
+  triagedAt?: IsoDateTimeString | null;
+  assignedAt?: IsoDateTimeString | null;
+  contractorContactedAt?: IsoDateTimeString | null;
+  contractorRespondedAt?: IsoDateTimeString | null;
+  contractorScheduledAt?: IsoDateTimeString | null;
+  workStartedAt?: IsoDateTimeString | null;
+  quoteRequestedAt?: IsoDateTimeString | null;
+  contractorQuoteReceivedAt?: IsoDateTimeString | null;
+  quoteReviewStartedAt?: IsoDateTimeString | null;
+  clientApprovalRequestedAt?: IsoDateTimeString | null;
+  clientApprovedAt?: IsoDateTimeString | null;
+  approvedAt?: IsoDateTimeString | null;
+  workCompletedAt?: IsoDateTimeString | null;
+  completedAt?: IsoDateTimeString | null;
+  completionReviewStartedAt?: IsoDateTimeString | null;
+  readyForInvoicingAt?: IsoDateTimeString | null;
+  invoiceSentAt?: IsoDateTimeString | null;
+  paidAt?: IsoDateTimeString | null;
+  closedAt?: IsoDateTimeString | null;
+  cancelledAt?: IsoDateTimeString | null;
+  holdStartedAt?: IsoDateTimeString | null;
+  escalatedAt?: IsoDateTimeString | null;
 }
 
 export interface CreateWorkOrderInput
   extends CreateEntityInput,
-    WorkOrderLocationLinkage {
-  requestedByUserId: EntityId;
-  title: string;
+    WorkOrderOwnershipReference {
+  workOrderNumber?: string;
+  poNumber?: string;
+  requestedByContactId?: EntityId;
+  siteContactId?: EntityId;
+  coordinatorUserId?: EntityId;
+  managerUserId?: EntityId;
+  assignedContractorId?: EntityId;
+  requestedServiceDate?: IsoDateTimeString;
+  dueDate?: IsoDateTimeString;
+  category?: WorkOrderCategory;
+  requiresQuote?: boolean;
+  quoteRequiredThresholdCents?: number;
+  shortDescription: string;
   description: string;
   priority: WorkOrderPriority;
-  status?: WorkOrderStatus;
+  lifecycleStatus?: WorkOrderStatus;
 }
 
 export interface UpdateWorkOrderInput extends UpdateEntityInput {
+  workOrderNumber?: string;
+  poNumber?: string | null;
   clientOrganizationId?: EntityId;
   locationId?: EntityId;
-  requestedByUserId?: EntityId;
-  title?: string;
+  requestedByContactId?: EntityId | null;
+  siteContactId?: EntityId | null;
+  coordinatorUserId?: EntityId | null;
+  managerUserId?: EntityId | null;
+  assignedContractorId?: EntityId | null;
+  requestedServiceDate?: IsoDateTimeString | null;
+  dueDate?: IsoDateTimeString | null;
+  category?: WorkOrderCategory | null;
+  requiresQuote?: boolean;
+  quoteRequiredThresholdCents?: number | null;
+  shortDescription?: string | null;
   description?: string;
-  status?: WorkOrderStatus;
+  lifecycleStatus?: WorkOrderStatus;
   priority?: WorkOrderPriority;
-  submittedAt?: IsoDateTimeString;
-  approvedAt?: IsoDateTimeString;
-  completedAt?: IsoDateTimeString;
-  closedAt?: IsoDateTimeString;
+  currentQuoteId?: EntityId | null;
+  currentInvoiceId?: EntityId | null;
+  submittedAt?: IsoDateTimeString | null;
+  approvedAt?: IsoDateTimeString | null;
+  completedAt?: IsoDateTimeString | null;
+  closedAt?: IsoDateTimeString | null;
 }
 
 export type AssignmentAssigneeType = "internal" | "contractor";
@@ -257,13 +242,18 @@ export interface UpdateAssignmentInput extends UpdateEntityInput {
 export interface ClientPortalWorkOrderSummary {
   id: EntityId;
   workOrderNumber: string;
-  title: string;
-  status: WorkOrderStatus | string;
-  priority: WorkOrderPriority | string;
+  shortDescription: string;
+  lifecycleStatus: WorkOrderStatus;
+  priority: WorkOrderPriority;
+  clientOrganizationId?: EntityId;
   locationId: EntityId;
   locationName: string;
-  category?: string | null;
+  category?: WorkOrderCategory | null;
+  poNumber?: string | null;
   requestedServiceDate?: IsoDateTimeString | null;
+  dueDate?: IsoDateTimeString | null;
+  requiresQuote?: boolean;
+  quoteRequiredThresholdCents?: number | null;
   createdAt: IsoDateTimeString;
   updatedAt: IsoDateTimeString;
   currentQuoteStatus?: string | null;
@@ -277,9 +267,11 @@ export interface ClientPortalWorkOrderDetail
   description: string;
   locationCode?: string | null;
   locationAddress?: string | null;
-  requestedByName?: string | null;
-  requestedByEmail?: string | null;
-  requestedByPhone?: string | null;
+  requestedByContactId?: EntityId | null;
+  siteContactId?: EntityId | null;
+  coordinatorUserId?: EntityId | null;
+  managerUserId?: EntityId | null;
+  assignedContractorId?: EntityId | null;
   dueDate?: IsoDateTimeString | null;
   closedAt?: IsoDateTimeString | null;
   activeQuote?: {
@@ -289,4 +281,5 @@ export interface ClientPortalWorkOrderDetail
     sentAt?: IsoDateTimeString | null;
     respondedAt?: IsoDateTimeString | null;
   } | null;
+  communications?: CommunicationTimelineEntry[];
 }

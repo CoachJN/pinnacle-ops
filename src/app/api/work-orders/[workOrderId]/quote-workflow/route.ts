@@ -9,7 +9,7 @@ import {
 } from "@/server/api/work-orders";
 import { validationError } from "@/server/services/errors";
 import { createAccessDeniedError } from "@/server/authorization";
-import type { ClientQuote, ContractorQuote } from "@/server/repositories";
+import { exposeQuoteWorkflowBundle } from "@/server/authorization/visibility";
 import { USER_ROLES } from "@/types/permissions";
 
 interface RouteContext {
@@ -34,17 +34,14 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
         throw aggregate.error;
       }
 
-      const visible = filterAggregateForActor(context.actor.actorType, aggregate.value, context.actor.actorType === "contractor"
-        ? context.actor.scope.contractorOrganizationId
-        : null);
+      const visible = exposeQuoteWorkflowBundle(context.actor, aggregate.value);
 
       return jsonOk({
         contractorQuotes: visible.contractorQuotes,
         clientQuotes: visible.clientQuotes,
         activeClientQuote: visible.activeClientQuote,
+        visibility: visible.visibility,
         capabilities: {
-          actorType: context.actor.actorType,
-          role: context.actor.role,
           canSubmitContractorQuote:
             context.actor.actorType === "contractor" &&
             context.actor.role === USER_ROLES.ContractorUser,
@@ -108,46 +105,6 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       return jsonOk({ quote: result.value });
     },
   );
-}
-
-function filterAggregateForActor(
-  actorType: "internal" | "client" | "contractor",
-  aggregate: {
-    contractorQuotes: ContractorQuote[];
-    clientQuotes: ClientQuote[];
-    activeClientQuote: ClientQuote | null;
-  },
-  contractorOrganizationId: string | null,
-) {
-  if (actorType === "internal") {
-    return aggregate;
-  }
-
-  if (actorType === "contractor") {
-    return {
-      contractorQuotes: aggregate.contractorQuotes.filter(
-        (quote) => quote.contractorOrganizationId === contractorOrganizationId,
-      ),
-      clientQuotes: [],
-      activeClientQuote: null,
-    };
-  }
-
-  return {
-    contractorQuotes: [],
-    clientQuotes: aggregate.clientQuotes.filter((quote) =>
-      quote.status === "sent" ||
-      quote.status === "approved" ||
-      quote.status === "rejected",
-    ),
-    activeClientQuote:
-      aggregate.activeClientQuote &&
-      (aggregate.activeClientQuote.status === "sent" ||
-        aggregate.activeClientQuote.status === "approved" ||
-        aggregate.activeClientQuote.status === "rejected")
-        ? aggregate.activeClientQuote
-        : null,
-  };
 }
 
 async function handleAction(

@@ -143,7 +143,6 @@ describe("server authorization foundation", () => {
           workOrderId: "wo-1",
           clientOrganizationId: "client-1",
           locationId: "loc-1",
-          contractorOrganizationId: undefined,
           status: "sent",
         },
         nextStatus: "paid",

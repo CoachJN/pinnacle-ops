@@ -22,7 +22,11 @@ export async function GET(request: NextRequest) {
     );
 
     return jsonOk({
-      clientOrganizations: clientOrganizations.map(safeClientSummary),
+      clientOrganizations: await Promise.all(
+        clientOrganizations.map((clientOrganization) =>
+          safeClientSummary(context.repositories, clientOrganization),
+        ),
+      ),
     });
   } catch (error) {
     return jsonError(normalizePhaseTwoRouteError(error));
@@ -49,8 +53,7 @@ export async function POST(request: NextRequest) {
     return jsonOk(
       {
         clientOrganization: {
-          ...safeClientSummary(result.value),
-          billingEmail: result.value.billingEmail,
+          ...(await safeClientSummary(context.repositories, result.value)),
           notes: result.value.notes,
           createdAt: result.value.createdAt,
           recordStatus: result.value.recordStatus,

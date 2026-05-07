@@ -17,7 +17,7 @@ import {
 } from "../lib/workflows/lifecycle/index.ts";
 import { PLATFORM_ROLES } from "../lib/workflows/rbac-transition/index.ts";
 import type { WorkflowSlaTimer } from "../lib/workflows/execution/index.ts";
-import type { Invoice } from "../types/financial.ts";
+import type { ClientInvoice as Invoice } from "../types/invoice.ts";
 import type { WorkOrder } from "../types/work-order.ts";
 
 const now = "2026-01-10T00:00:00.000Z";
@@ -44,7 +44,7 @@ describe("workflow priority scoring", () => {
       makeInvoiceContext({
         entity: makeInvoice({
           status: INVOICE_STATUS.Overdue as Invoice["status"],
-          dueAt: "2026-01-01T00:00:00.000Z",
+          dueDate: "2026-01-01T00:00:00.000Z",
         }),
       }),
     );
@@ -86,7 +86,7 @@ describe("workflow risk detection", () => {
       makeInvoiceContext({
         entity: makeInvoice({
           status: INVOICE_STATUS.Sent as Invoice["status"],
-          dueAt: "2026-01-01T00:00:00.000Z",
+          dueDate: "2026-01-01T00:00:00.000Z",
         }),
       }),
     );
@@ -314,12 +314,13 @@ function makeInvoiceContext(
 function makeWorkOrder(overrides: Partial<WorkOrder> = {}): WorkOrder {
   return {
     id: "wo-1",
+    workOrderNumber: "WO-1001",
     organizationId: "org-1",
     clientOrganizationId: "client-1",
     locationId: "loc-1",
-    requestedByUserId: "user-1",
-    title: "Leaking pipe",
+    shortDescription: "Leaking pipe",
     description: "Pipe under sink is leaking",
+    lifecycleStatus: WORK_ORDER_STATUS.New as WorkOrder["lifecycleStatus"],
     status: WORK_ORDER_STATUS.New as WorkOrder["status"],
     priority: "medium",
     recordStatus: "active",
@@ -339,10 +340,31 @@ function makeInvoice(overrides: Partial<Invoice> = {}): Invoice {
     workOrderId: "wo-1",
     clientOrganizationId: "client-1",
     locationId: "loc-1",
+    invoiceNumber: "INV-1",
+    lineItems: [
+      {
+        id: "line-1",
+        description: "Optimization test invoice line",
+        quantity: 1,
+        unitPrice: 100,
+        lineTotal: 100,
+      },
+    ],
+    subtotal: 100,
+    taxAmount: 0,
+    totalAmount: 100,
+    currency: "USD",
     status: INVOICE_STATUS.NotReady as Invoice["status"],
-    currencyCode: "USD",
-    subtotalAmountCents: 10000,
-    totalAmountCents: 10000,
+    issuedDate: null,
+    dueDate: "2026-01-05",
+    sentAt: null,
+    viewedAt: null,
+    paidAt: null,
+    voidedAt: null,
+    paymentReference: null,
+    notes: null,
+    qboInvoiceId: null,
+    qboSyncStatus: null,
     recordStatus: "active",
     isDeleted: false,
     createdAt: "2026-01-01T00:00:00.000Z",

@@ -19,10 +19,6 @@ describe("location permissions", () => {
     const otherLocation = makeLocation({
       id: "loc-2",
       clientOrganizationId: "client-2",
-      clientSnapshot: {
-        id: "client-2",
-        name: "Other Client",
-      },
     });
 
     assert.throws(
@@ -49,10 +45,6 @@ describe("location permissions", () => {
     const otherLocation = makeLocation({
       id: "loc-2",
       clientOrganizationId: "client-2",
-      clientSnapshot: {
-        id: "client-2",
-        name: "Other Client",
-      },
     });
 
     assert.throws(

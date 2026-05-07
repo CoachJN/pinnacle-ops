@@ -24,7 +24,6 @@ describe("location api integration", () => {
       clientOrganizationId: "client-1",
       name: "Harbour Centre",
       city: "Toronto",
-      locationContactEmail: "ops@example.com",
     });
 
     const result = await harness.service.createLocation({
@@ -39,7 +38,6 @@ describe("location api integration", () => {
 
     assert.equal(result.value.name, "Harbour Centre");
     assert.equal(result.value.city, "Toronto");
-    assert.equal(result.value.locationContactEmail, "ops@example.com");
     assert.equal(result.value.clientOrganizationId, "client-1");
   });
 
@@ -67,6 +65,55 @@ describe("location api integration", () => {
 
     assert.equal(result.value.name, "Pinnacle Tower East");
     assert.equal(result.value.notes, "Updated by API test");
+  });
+
+  test("stores normalized site contact links", async () => {
+    const actor = makeOwnerActor();
+    const harness = createLocationDomainServiceHarness({
+      clients: [makeClientOrganization()],
+    });
+
+    const result = await harness.service.createLocation({
+      actor,
+      payload: createLocationSchema.parse({
+        clientOrganizationId: "client-1",
+        name: "Operations Hub",
+        siteContactId: "contact-jordan-lee",
+      }),
+    });
+
+    assert.equal(result.ok, true);
+    if (!result.ok) {
+      return;
+    }
+
+    assert.equal(result.value.siteContactId, "contact-jordan-lee");
+  });
+
+  test("clears the site contact link when removed", async () => {
+    const actor = makeOwnerActor();
+    const location = makeLocation({
+      siteContactId: "contact-jordan-lee",
+    });
+    const harness = createLocationDomainServiceHarness({
+      clients: [makeClientOrganization()],
+      locations: [location],
+    });
+
+    const result = await harness.service.updateLocation({
+      actor,
+      locationId: location.id,
+      payload: updateLocationSchema.parse({
+        siteContactId: null,
+      }),
+    });
+
+    assert.equal(result.ok, true);
+    if (!result.ok) {
+      return;
+    }
+
+    assert.equal(result.value.siteContactId, undefined);
   });
 
   test("deactivates a location successfully", async () => {
@@ -127,10 +174,6 @@ describe("location api integration", () => {
         makeLocation({
           id: "loc-2",
           clientOrganizationId: "client-2",
-          clientSnapshot: {
-            id: "client-2",
-            name: "Other Client",
-          },
         }),
       ],
     });
@@ -195,10 +238,6 @@ describe("location api integration", () => {
         makeLocation({
           id: "loc-2",
           clientOrganizationId: "client-2",
-          clientSnapshot: {
-            id: "client-2",
-            name: "Other Client",
-          },
         }),
       ],
     });

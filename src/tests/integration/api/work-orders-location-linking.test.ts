@@ -74,10 +74,6 @@ describe("work order location linkage integration", () => {
         makeLocation({
           id: "loc-2",
           clientOrganizationId: "client-2",
-          clientSnapshot: {
-            id: "client-2",
-            name: "Beacon",
-          },
         }),
       ],
     });

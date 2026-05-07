@@ -1,4 +1,3 @@
-import type { QuoteFormInput } from "@/types/quote";
 import { calculateQuoteTotal } from "@/lib/quotes/money";
 import { z } from "zod";
 import type {
@@ -17,7 +16,20 @@ export interface QuoteFormErrors {
 }
 
 export type QuoteFormValidationResult =
-  | { ok: true; data: QuoteFormInput & { totalAmount: number }; errors?: never }
+  | {
+      ok: true;
+      data: {
+        contractorName: string;
+        assignedContractorId: string | null;
+        laborAmount: number;
+        materialAmount: number;
+        otherAmount: number;
+        totalAmount: number;
+        scopeSummary: string;
+        contractorNotes: string | null;
+      };
+      errors?: never;
+    }
   | { ok: false; data?: never; errors: QuoteFormErrors };
 
 export function validateQuoteForm(formData: FormData): QuoteFormValidationResult {
@@ -122,8 +134,10 @@ export const contractorQuoteStatuses = [
   "draft",
   "submitted",
   "under_review",
-  "rejected",
   "accepted",
+  "rejected",
+  "expired",
+  "cancelled",
 ] as const satisfies readonly ContractorQuoteStatus[];
 
 export const clientQuoteStatuses = [
@@ -132,6 +146,7 @@ export const clientQuoteStatuses = [
   "approved",
   "rejected",
   "expired",
+  "cancelled",
 ] as const satisfies readonly ClientQuoteStatus[];
 
 export const quoteDecisionActions = [
@@ -245,10 +260,12 @@ export function canTransitionContractorQuote(
 ): boolean {
   const transitions: Record<ContractorQuoteStatus, readonly ContractorQuoteStatus[]> = {
     draft: ["submitted"],
-    submitted: ["under_review", "accepted", "rejected"],
+    submitted: ["under_review", "accepted", "rejected", "cancelled"],
     under_review: ["accepted", "rejected"],
     rejected: [],
     accepted: [],
+    expired: [],
+    cancelled: [],
   };
 
   return transitions[from].includes(to);
@@ -264,6 +281,7 @@ export function canTransitionClientQuote(
     approved: [],
     rejected: [],
     expired: [],
+    cancelled: [],
   };
 
   return transitions[from].includes(to);

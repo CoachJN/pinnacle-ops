@@ -2,8 +2,8 @@ import type { EntityId, IsoDateTimeString } from "@/types/entity";
 import type {
   ClientQuote,
   ContractorQuote,
-  Invoice,
-} from "@/types/financial";
+} from "@/types/quote";
+import type { ClientInvoice as Invoice } from "@/types/invoice";
 import type { WorkOrder } from "@/types/work-order";
 import type { WorkflowActionAvailabilityResult } from "../action-gating/index.ts";
 import type {

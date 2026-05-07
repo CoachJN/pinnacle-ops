@@ -12,6 +12,7 @@ import {
   type WorkOrderPriority,
   type WorkOrderStatus,
 } from "@/modules/work-orders";
+import type { ContactSummary } from "@/types/contact";
 import { AssignmentPanel } from "./assignment-panel";
 import { formatDate, formatDateTime } from "./formatting";
 import { WorkOrderAttachmentsPanel } from "./work-order-attachments-panel";
@@ -96,6 +97,8 @@ interface AssignableContractor {
   id: string;
   label: string;
   status: string;
+  parentContractorId: string | null;
+  trades: string[];
   serviceCategories: string[];
   isAssignable: boolean;
   reason: string | null;
@@ -106,6 +109,11 @@ interface InternalAssignees {
   manager: AssignableUser | null;
 }
 
+interface AssignedContractorSummary {
+  id: string;
+  label: string;
+}
+
 interface WorkOrderDetailRecord {
   id: string;
   workOrderNumber: string;
@@ -113,9 +121,15 @@ interface WorkOrderDetailRecord {
   description: string;
   clientOrganizationId: string;
   locationId: string;
+  requestedByContactId?: string | null;
+  siteContactId?: string | null;
+  assignedContractorId: string | null;
   status: WorkOrderStatus;
   priority: WorkOrderPriority;
   category: WorkOrderCategory;
+  requestedServiceDate: string | null;
+  requiresQuote: boolean;
+  quoteRequiredThresholdCents: number | null;
   requestedByName: string;
   requestedByEmail: string | null;
   requestedByPhone: string | null;
@@ -130,6 +144,7 @@ interface WorkOrderDetailRecord {
   activeAssignment: AssignmentItem | null;
   activeAssignmentId: string | null;
   internalAssignees: InternalAssignees;
+  assignedContractor: AssignedContractorSummary | null;
   assignableInternalUsers: AssignableUser[];
   assignableContractors: AssignableContractor[];
   allowedTransitions: WorkOrderStatus[];
@@ -142,6 +157,9 @@ interface WorkOrderDetailRecord {
     canAcceptAssignment: boolean;
     canDeclineAssignment: boolean;
     canCompleteAssignment: boolean;
+  };
+  sectionVisibility: {
+    showFinancePanel: boolean;
   };
 }
 
@@ -173,6 +191,9 @@ export function WorkOrderDetailPage({
   const router = useRouter();
   const [pageState, setPageState] = useState<PageState>("loading");
   const [workOrder, setWorkOrder] = useState<WorkOrderDetailRecord | null>(null);
+  const [contactsById, setContactsById] = useState<Record<string, ContactSummary>>(
+    {},
+  );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [statusTone, setStatusTone] = useState<"success" | "error" | "info">(
@@ -229,6 +250,31 @@ export function WorkOrderDetailPage({
     }
 
     setWorkOrder(nextWorkOrder);
+    const contactIds = [
+      nextWorkOrder.requestedByContactId,
+      nextWorkOrder.siteContactId,
+    ]
+      .filter(Boolean)
+      .join(",");
+    if (contactIds) {
+      const params = new URLSearchParams({ ids: contactIds });
+      params.set("locationId", nextWorkOrder.locationId);
+      const contactsResponse = await fetch(`/api/contacts?${params.toString()}`, {
+        cache: "no-store",
+      });
+      const contactsPayload = (await contactsResponse.json()) as {
+        contacts: ContactSummary[];
+      };
+      if (contactsResponse.ok) {
+        setContactsById(
+          Object.fromEntries(
+            contactsPayload.contacts.map((contact) => [contact.id, contact]),
+          ),
+        );
+      }
+    } else {
+      setContactsById({});
+    }
     setContractorOrganizationId(
       nextWorkOrder.activeAssignment?.contractorOrganizationId ?? "",
     );
@@ -450,8 +496,8 @@ export function WorkOrderDetailPage({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          assignedCoordinatorUserId: selectedCoordinatorUserId || null,
-          assignedManagerUserId: selectedManagerUserId || null,
+          coordinatorUserId: selectedCoordinatorUserId || null,
+          managerUserId: selectedManagerUserId || null,
         }),
       });
       const payload = (await response.json()) as
@@ -565,17 +611,22 @@ export function WorkOrderDetailPage({
             dueDateLabel={formatDate(workOrder.dueDate)}
             closedAtLabel={formatDateTime(workOrder.closedAt)}
             priorityLabel={WORK_ORDER_PRIORITY_LABELS[workOrder.priority]}
+            quoteRequirementLabel={workOrder.requiresQuote ? "Required" : "Not required"}
+            quoteThresholdLabel={formatQuoteThreshold(workOrder.quoteRequiredThresholdCents)}
+            requestedServiceDateLabel={formatDate(workOrder.requestedServiceDate)}
             statusLabel={WORK_ORDER_STATUS_LABELS[workOrder.status]}
             updatedAtLabel={formatDateTime(workOrder.updatedAt)}
           />
 
           <WorkOrderQuotePanel workOrderId={workOrder.id} />
 
-          <WorkOrderFinancePanel
-            onFinanceUpdated={() => loadWorkOrderDetail({ silent: true })}
-            workOrderStatus={workOrder.status}
-            workOrderId={workOrder.id}
-          />
+          {workOrder.sectionVisibility.showFinancePanel ? (
+            <WorkOrderFinancePanel
+              onFinanceUpdated={() => loadWorkOrderDetail({ silent: true })}
+              workOrderStatus={workOrder.status}
+              workOrderId={workOrder.id}
+            />
+          ) : null}
 
           <AssignmentPanel
             activeAssignment={workOrder.activeAssignment}
@@ -586,6 +637,7 @@ export function WorkOrderDetailPage({
             assignmentTone={assignmentTone}
             assignableContractors={workOrder.assignableContractors}
             assignableInternalUsers={workOrder.assignableInternalUsers}
+            assignedContractorLabel={workOrder.assignedContractor?.label ?? "Unassigned"}
             contractorOrganizationId={contractorOrganizationId}
             internalAssignees={workOrder.internalAssignees}
             internalAssignmentMessage={internalAssignmentMessage}
@@ -671,9 +723,19 @@ export function WorkOrderDetailPage({
           />
 
           <WorkOrderRequesterPanel
+            requesterContact={
+              workOrder.requestedByContactId
+                ? contactsById[workOrder.requestedByContactId] ?? null
+                : null
+            }
             requesterEmail={workOrder.requestedByEmail}
             requesterName={workOrder.requestedByName}
             requesterPhone={workOrder.requestedByPhone}
+            siteContact={
+              workOrder.siteContactId
+                ? contactsById[workOrder.siteContactId] ?? null
+                : null
+            }
           />
         </aside>
       </div>
@@ -764,6 +826,17 @@ function mapResponseStatusToPageState(statusCode: number): PageState {
   }
 
   return "error";
+}
+
+function formatQuoteThreshold(value: number | null): string {
+  if (value == null) {
+    return "Not set";
+  }
+
+  return new Intl.NumberFormat("en-CA", {
+    style: "currency",
+    currency: "CAD",
+  }).format(value / 100);
 }
 
 function getApiErrorMessage(

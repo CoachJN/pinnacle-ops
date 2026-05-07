@@ -10,6 +10,8 @@ import {
   jsonOk,
   parseJsonObject,
   revalidateContractorPaths,
+  safeContractorDetail,
+  safeContractorSummary,
 } from "@/server/api/business-entities";
 import { createAccessDeniedError } from "@/server/authorization";
 
@@ -36,10 +38,15 @@ export async function GET(request: NextRequest) {
     }
 
     return jsonOk({
-      contractors: result.value.map((contractorOrganization) => {
-        authorizeContractorRead(context, contractorOrganization);
-        return mapContractorOrganizationToContractor(contractorOrganization);
-      }),
+      contractors: await Promise.all(
+        result.value.map(async (contractorOrganization) => {
+          authorizeContractorRead(context, contractorOrganization);
+          return {
+            ...mapContractorOrganizationToContractor(contractorOrganization),
+            ...(await safeContractorSummary(context.repositories, contractorOrganization)),
+          };
+        }),
+      ),
     });
   } catch (error) {
     return jsonError(normalizePhaseTwoRouteError(error));
@@ -55,14 +62,20 @@ export async function POST(request: NextRequest) {
     const input = createContractorSchema.parse(await parseJsonObject(request));
     const result = await context.services.contractors.createContractorOrganization({
       ...context.audit,
-      name: input.name,
-      displayName: input.company,
+      name: input.legalName,
+      displayName: input.displayName ?? null,
+      parentContractorId: input.parentContractorId ?? null,
       status: input.status,
-      primaryContactName: input.name,
-      primaryContactEmail: input.email,
-      primaryContactPhone: input.phone,
-      serviceCategories: input.serviceCategories,
-      serviceAreas: input.serviceAreas,
+      isAssignable: input.isAssignable,
+      businessEmail: input.businessEmail ?? null,
+      mainPhone: input.mainPhone ?? null,
+      altPhone: input.altPhone ?? null,
+      fax: input.fax ?? null,
+      primaryContactId: input.primaryContactId ?? null,
+      billingContactId: input.billingContactId ?? null,
+      dispatchContactId: input.dispatchContactId ?? null,
+      trades: input.trades,
+      serviceArea: input.serviceArea ?? null,
       notes: input.notes,
     });
 
@@ -73,7 +86,12 @@ export async function POST(request: NextRequest) {
     revalidateContractorPaths(result.value.id);
 
     return jsonOk(
-      { contractor: mapContractorOrganizationToContractor(result.value) },
+      {
+        contractor: {
+          ...mapContractorOrganizationToContractor(result.value),
+          ...(await safeContractorDetail(context.repositories, result.value)),
+        },
+      },
       201,
     );
   } catch (error) {

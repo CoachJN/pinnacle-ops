@@ -99,12 +99,12 @@ Optional but encouraged where useful:
 - Every `ClientQuote` must belong to one `WorkOrder`.
 - When present, `ClientQuote.contractorQuoteId` must reference a `ContractorQuote`
   in the same tenant and for the same `WorkOrder`.
-- Every `Invoice` must belong to one `WorkOrder` and one `ClientOrganization`.
-- When present, `Invoice.clientQuoteId` must reference a `ClientQuote` in the
-  same tenant, for the same `WorkOrder`, `ClientOrganization`, and `Location`.
-- When present, `Invoice.contractorOrganizationId` must reference a
-  `ContractorOrganization` in the same tenant and must match the contractor
-  ownership implied by the linked quote chain when that chain exists.
+- Every `ClientInvoice` must belong to one `WorkOrder`, one `ClientOrganization`,
+  and one `Location`.
+- `ClientInvoice` is the canonical receivables entity and may store explicit
+  external accounting sync identifiers when an integration requires them.
+- `ContractorInvoice` is a distinct canonical payables entity and must remain
+  separate from `ClientInvoice` even when future accounting integrations are added.
 - `Comment` and `Attachment` records must use shared visibility tagging and
   keep parent business record references explicit for future RBAC enforcement.
 - Work order workflow status remains separate from `record_status`.

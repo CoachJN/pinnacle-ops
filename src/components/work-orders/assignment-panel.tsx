@@ -14,7 +14,8 @@ interface AssignableContractorOption {
   id: string;
   label: string;
   status: string;
-  serviceCategories: string[];
+  parentContractorId: string | null;
+  trades: string[];
   isAssignable: boolean;
   reason: string | null;
 }
@@ -47,6 +48,7 @@ interface AllowedAssignmentActions {
 interface AssignmentPanelProps {
   activeAssignment: ActiveAssignment | null;
   assignments: AssignmentHistoryItem[];
+  assignedContractorLabel: string;
   assignableContractors: AssignableContractorOption[];
   assignableInternalUsers: InternalAssigneeOption[];
   assignmentMessage: string | null;
@@ -171,9 +173,9 @@ export function AssignmentPanel(props: AssignmentPanelProps) {
           </p>
           {props.activeAssignment ? (
             <div className="mt-3 grid gap-3 text-sm text-neutral-600">
-              <p className="font-semibold text-neutral-950">
-                {props.activeAssignment.assigneeDisplayName}
-              </p>
+            <p className="font-semibold text-neutral-950">
+              {props.activeAssignment.assigneeDisplayName}
+            </p>
               <p>Status: {props.activeAssignment.status.replaceAll("_", " ")}</p>
               <p>Assigned: {formatDateTime(props.activeAssignment.assignedAt)}</p>
               <p>Assigned by: {props.activeAssignment.assignedByDisplayName}</p>
@@ -185,9 +187,10 @@ export function AssignmentPanel(props: AssignmentPanelProps) {
               <p>Notes: {props.activeAssignment.notes ?? "No notes provided."}</p>
             </div>
           ) : (
-            <p className="mt-3 text-sm text-neutral-600">
-              No active contractor assignment yet.
-            </p>
+            <div className="mt-3 grid gap-2 text-sm text-neutral-600">
+              <p>No active contractor assignment yet.</p>
+              <p>Current contractor reference: {props.assignedContractorLabel}</p>
+            </div>
           )}
         </div>
       </div>
@@ -224,9 +227,9 @@ export function AssignmentPanel(props: AssignmentPanelProps) {
               <p className="text-xs text-amber-700">{selectedContractor.reason}</p>
             ) : selectedContractor ? (
               <p className="text-xs text-neutral-500">
-                Categories:{" "}
-                {selectedContractor.serviceCategories.length > 0
-                  ? selectedContractor.serviceCategories.join(", ")
+                Trades:{" "}
+                {selectedContractor.trades.length > 0
+                  ? selectedContractor.trades.join(", ")
                   : "None"}
               </p>
             ) : null}

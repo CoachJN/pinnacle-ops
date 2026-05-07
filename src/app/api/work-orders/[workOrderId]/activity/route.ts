@@ -1,11 +1,8 @@
 import { NextRequest } from "next/server";
 import {
-  authorizeActivityRead,
   authorizeWorkOrderRead,
-  filterVisibleActivityLogsForActor,
   getWorkOrderApiContext,
   jsonOk,
-  safeActivityLog,
   withApiRoute,
 } from "@/server/api/work-orders";
 
@@ -27,18 +24,16 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
     }
 
     await authorizeWorkOrderRead(context, workOrder.value);
-    authorizeActivityRead(context);
-
-    const result = await context.services.activityLogs.listForWorkOrder(workOrderId);
+    const result = await context.services.timeline.listForWorkOrder(
+      workOrderId,
+      context.actor,
+    );
     if (!result.ok) {
       throw result.error;
     }
 
     return jsonOk({
-      activity: filterVisibleActivityLogsForActor(
-        context.actor,
-        result.value,
-      ).map(safeActivityLog),
+      activity: result.value,
     });
     },
   );

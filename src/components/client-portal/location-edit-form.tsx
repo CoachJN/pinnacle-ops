@@ -23,9 +23,6 @@ export function LocationEditForm({ location }: LocationEditFormProps) {
     region: location.region ?? "",
     postalCode: location.postalCode ?? "",
     countryCode: location.countryCode ?? "",
-    locationContactName: location.locationContactName ?? "",
-    locationContactEmail: location.locationContactEmail ?? "",
-    locationContactPhone: location.locationContactPhone ?? "",
     accessNotes: location.accessNotes ?? "",
   });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -138,28 +135,6 @@ export function LocationEditForm({ location }: LocationEditFormProps) {
             setFormValues((current) => ({ ...current, countryCode: value }))
           }
           value={formValues.countryCode ?? ""}
-        />
-        <Field
-          label="Contact name"
-          onChange={(value) =>
-            setFormValues((current) => ({ ...current, locationContactName: value }))
-          }
-          value={formValues.locationContactName ?? ""}
-        />
-        <Field
-          label="Contact email"
-          onChange={(value) =>
-            setFormValues((current) => ({ ...current, locationContactEmail: value }))
-          }
-          type="email"
-          value={formValues.locationContactEmail ?? ""}
-        />
-        <Field
-          label="Contact phone"
-          onChange={(value) =>
-            setFormValues((current) => ({ ...current, locationContactPhone: value }))
-          }
-          value={formValues.locationContactPhone ?? ""}
         />
         <TextareaField
           className="md:col-span-2"

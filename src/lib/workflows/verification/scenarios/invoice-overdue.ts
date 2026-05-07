@@ -28,7 +28,7 @@ export const invoiceOverdueScenario = makeScenario({
     seedStandardInvoice(env, {
       id: "invoice-standard",
       status: INVOICE_STATUS.Draft,
-      dueAt: "2026-01-01T00:30:00.000Z",
+      dueDate: "2026-01-01T00:30:00.000Z",
     });
   },
   steps: [

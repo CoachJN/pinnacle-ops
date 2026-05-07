@@ -23,7 +23,7 @@ import type {
 } from "@/types/quote";
 import { USER_ROLES, type UserRole } from "@/types/permissions";
 import { invalidTransitionError, notFoundError, validationError } from "./errors";
-import type { ActivityLogService } from "./activity-log-service";
+import type { DomainEventService } from "./domain-event-service";
 import type { NotificationService } from "./notification-service";
 import {
   createAuditFields,
@@ -119,7 +119,7 @@ export function createQuoteWorkflowService(
     "workOrders" | "contractorQuotes" | "clientQuotes"
   >,
   dependencies: {
-    activityLogs: ActivityLogService;
+    domainEvents: DomainEventService;
     notifications?: NotificationService;
   },
 ): QuoteWorkflowService {
@@ -133,7 +133,7 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
   >;
 
   private readonly dependencies: {
-    activityLogs: ActivityLogService;
+    domainEvents: DomainEventService;
     notifications?: NotificationService;
   };
 
@@ -143,7 +143,7 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
       "workOrders" | "contractorQuotes" | "clientQuotes"
     >,
     dependencies: {
-      activityLogs: ActivityLogService;
+      domainEvents: DomainEventService;
       notifications?: NotificationService;
     },
   ) {
@@ -168,7 +168,7 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
       return serviceFail(validationError("You do not have permission to save a contractor quote draft."));
     }
 
-    if (workOrder.value.status !== "quote_requested") {
+    if (workOrder.value.lifecycleStatus !== "quote_required") {
       return serviceFail(
         validationError("Contractor quotes can only be drafted while the work order is awaiting a quote."),
       );
@@ -176,7 +176,7 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
 
     if (
       input.actor.role === USER_ROLES.ContractorUser &&
-      workOrder.value.assignedContractorOrganizationId !== input.contractorOrganizationId
+      workOrder.value.assignedContractorOrgId !== input.contractorOrganizationId
     ) {
       return serviceFail(validationError("Contractors may only save quotes for their own assigned work orders."));
     }
@@ -268,17 +268,28 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
     );
 
     await this.repositories.contractorQuotes.save(submitted);
-    await this.updateWorkOrderStatusIfNeeded(submitted.workOrderId, "quote_received", input);
-    await this.dependencies.activityLogs.record({
+    await this.updateWorkOrderStatusIfNeeded(
+      submitted.workOrderId,
+      "contractor_quote_received",
+      input,
+    );
+    await this.dependencies.domainEvents.record({
       ...input,
       workOrderId: submitted.workOrderId,
-      action: "contractor_quote.submitted",
-      eventType: "contractor_quote_submitted",
-      message: "Submitted contractor quote for manager review.",
-      entityType: "quote",
-      entityId: submitted.id,
-      entityLabel: "Contractor quote",
+      type: "contractor_quote_received",
       visibility: "internal",
+      lifecycleStatus: "contractor_quote_received",
+      entity: {
+        entityType: "quote",
+        entityId: submitted.id,
+        label: "Contractor quote",
+      },
+      summary: "Submitted contractor quote for manager review.",
+      payload: {
+        quoteId: submitted.id,
+        totalAmount: submitted.totalAmount,
+        status: submitted.status,
+      },
     });
 
     const workOrder = await this.repositories.workOrders.getById(submitted.workOrderId);
@@ -366,29 +377,11 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
     );
 
     await this.repositories.contractorQuotes.save(reviewed);
-    if (reviewed.status === "rejected") {
-      await this.updateWorkOrderStatusIfNeeded(reviewed.workOrderId, "quote_requested", input);
-    }
-    await this.dependencies.activityLogs.record({
-      ...input,
-      workOrderId: reviewed.workOrderId,
-      action:
-        reviewed.status === "accepted"
-          ? "contractor_quote.accepted"
-          : "contractor_quote.rejected",
-      eventType:
-        reviewed.status === "accepted"
-          ? "contractor_quote_accepted"
-          : "contractor_quote_rejected",
-      message:
-        reviewed.status === "accepted"
-          ? "Accepted contractor quote."
-          : "Rejected contractor quote.",
-      entityType: "quote",
-      entityId: reviewed.id,
-      entityLabel: "Contractor quote",
-      visibility: "internal",
-    });
+    await this.updateWorkOrderStatusIfNeeded(
+      reviewed.workOrderId,
+      reviewed.status === "accepted" ? "quote_under_review" : "quote_required",
+      input,
+    );
     return serviceOk(reviewed);
   }
 
@@ -463,17 +456,28 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
     );
 
     await this.repositories.clientQuotes.save(sent);
-    await this.updateWorkOrderStatusIfNeeded(sent.workOrderId, "pending_client_approval", input);
-    await this.dependencies.activityLogs.record({
+    await this.updateWorkOrderStatusIfNeeded(
+      sent.workOrderId,
+      "client_approval_requested",
+      input,
+    );
+    await this.dependencies.domainEvents.record({
       ...input,
       workOrderId: sent.workOrderId,
-      action: "client_quote.sent",
-      eventType: "client_quote_sent",
-      message: "Sent client quote for approval.",
-      entityType: "quote",
-      entityId: sent.id,
-      entityLabel: "Client quote",
-      visibility: "internal",
+      type: "client_approval_requested",
+      visibility: "client",
+      lifecycleStatus: "client_approval_requested",
+      entity: {
+        entityType: "quote",
+        entityId: sent.id,
+        label: "Client quote",
+      },
+      summary: "Sent client quote for approval.",
+      payload: {
+        quoteId: sent.id,
+        totalAmount: sent.totalAmount,
+        status: sent.status,
+      },
     });
 
     const workOrder = await this.repositories.workOrders.getById(sent.workOrderId);
@@ -486,7 +490,6 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
       workOrder,
       quote: {
         id: sent.id,
-        versionNumber: 1,
       },
       toStatus: sent.status,
     });
@@ -531,17 +534,27 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
 
     await this.repositories.clientQuotes.save(approved);
     await this.updateWorkOrderClientQuotePointer(approved.workOrderId, approved.id, input);
-    await this.updateWorkOrderStatusIfNeeded(approved.workOrderId, "approved_to_proceed", input);
-    await this.dependencies.activityLogs.record({
+    await this.updateWorkOrderStatusIfNeeded(
+      approved.workOrderId,
+      "client_approved",
+      input,
+    );
+    await this.dependencies.domainEvents.record({
       ...input,
       workOrderId: approved.workOrderId,
-      action: "client_quote.approved",
-      eventType: "client_quote_approved",
-      message: "Approved client quote.",
-      entityType: "quote",
-      entityId: approved.id,
-      entityLabel: "Client quote",
-      visibility: "internal",
+      type: "client_approved",
+      visibility: "client",
+      lifecycleStatus: "client_approved",
+      entity: {
+        entityType: "quote",
+        entityId: approved.id,
+        label: "Client quote",
+      },
+      summary: "Approved client quote.",
+      payload: {
+        quoteId: approved.id,
+        status: approved.status,
+      },
     });
     return serviceOk(approved);
   }
@@ -584,18 +597,11 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
 
     await this.repositories.clientQuotes.save(rejected);
     await this.updateWorkOrderClientQuotePointer(rejected.workOrderId, rejected.id, input);
-    await this.updateWorkOrderStatusIfNeeded(rejected.workOrderId, "quote_requested", input);
-    await this.dependencies.activityLogs.record({
-      ...input,
-      workOrderId: rejected.workOrderId,
-      action: "client_quote.rejected",
-      eventType: "client_quote_rejected",
-      message: "Rejected client quote.",
-      entityType: "quote",
-      entityId: rejected.id,
-      entityLabel: "Client quote",
-      visibility: "internal",
-    });
+    await this.updateWorkOrderStatusIfNeeded(
+      rejected.workOrderId,
+      "quote_required",
+      input,
+    );
     return serviceOk(rejected);
   }
 
@@ -660,19 +666,6 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
 
     await this.repositories.clientQuotes.create(quote);
     await this.updateWorkOrderClientQuotePointer(workOrder.value.id, quote.id, input);
-    await this.dependencies.activityLogs.record({
-      ...input,
-      workOrderId: quote.workOrderId,
-      action: "client_quote.created",
-      eventType: "client_quote_created",
-      message: quote.sourceContractorQuoteId
-        ? "Created client quote from accepted contractor quote."
-        : "Created manual client quote.",
-      entityType: "quote",
-      entityId: quote.id,
-      entityLabel: "Client quote",
-      visibility: "internal",
-    });
     return serviceOk(quote);
   }
 
@@ -720,11 +713,11 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
 
   private async updateWorkOrderStatusIfNeeded(
     workOrderId: string,
-    nextStatus: WorkOrder["status"],
+    nextStatus: WorkOrder["lifecycleStatus"],
     input: ServiceAuditContext,
   ): Promise<void> {
     const workOrder = await this.repositories.workOrders.getById(workOrderId);
-    if (!workOrder || workOrder.isDeleted || workOrder.status === nextStatus) {
+    if (!workOrder || workOrder.isDeleted || workOrder.lifecycleStatus === nextStatus) {
       return;
     }
 
@@ -732,11 +725,22 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
       touchAuditFields(
         {
           ...workOrder,
-          status: nextStatus,
+          lifecycleStatus: nextStatus,
+          lastActivityAt: input.now ?? new Date().toISOString(),
         },
         input,
       ),
     );
+    await this.dependencies.domainEvents.recordTransition({
+      ...input,
+      workOrderId,
+      fromLifecycleStatus: workOrder.lifecycleStatus,
+      toLifecycleStatus: nextStatus,
+      visibility: "internal",
+      metadata: {
+        source: "quote_workflow",
+      },
+    });
   }
 }
 

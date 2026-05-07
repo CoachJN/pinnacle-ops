@@ -18,6 +18,7 @@ import {
   normalizePhoneNumber,
   normalizePostalCode,
 } from "@/lib/utils/normalization";
+import { CONTACT_RELATIONSHIP_TYPE_VALUES } from "@/types/contact";
 import type { LocationQueryFilters, LocationStatus } from "@/types/location";
 import { ValidationError } from "@/lib/utils/errors";
 
@@ -27,18 +28,24 @@ const RECORD_STATUSES = ["active", "archived"] as const;
 const createLocationAllowedFields = [
   "clientOrganizationId",
   "name",
+  "displayName",
   "code",
+  "storeNumber",
   "status",
+  "primaryContactId",
+  "siteContactId",
+  "linkedContacts",
   "addressLine1",
   "addressLine2",
   "city",
   "region",
   "postalCode",
   "countryCode",
-  "locationContactName",
-  "locationContactEmail",
-  "locationContactPhone",
+  "latitude",
+  "longitude",
+  "timeZone",
   "accessNotes",
+  "serviceNotes",
   "notes",
 ] as const;
 
@@ -63,25 +70,31 @@ export const createLocationSchema = createValidationSchema((value: unknown) => {
       "clientOrganizationId",
     ),
     name: requireString(payload.name, "name"),
-    code: readOptionalString(payload.code),
+    displayName: parseOptionalCreateString(payload.displayName, "displayName"),
+    code: parseOptionalCreateString(payload.code, "code"),
+    storeNumber: parseOptionalCreateString(payload.storeNumber, "storeNumber"),
     status: parseOptionalLocationStatus(payload.status),
-    addressLine1: readOptionalString(payload.addressLine1),
-    addressLine2: readOptionalString(payload.addressLine2),
-    city: readOptionalString(payload.city),
-    region: readOptionalString(payload.region),
-    postalCode: parseOptionalPostalCode(payload.postalCode),
-    countryCode: parseOptionalCountryCode(payload.countryCode),
-    locationContactName: readOptionalString(payload.locationContactName),
-    locationContactEmail: parseOptionalEmail(
-      payload.locationContactEmail,
-      "locationContactEmail",
+    primaryContactId: parseOptionalEntityId(
+      payload.primaryContactId,
+      "primaryContactId",
     ),
-    locationContactPhone: parseOptionalPhone(
-      payload.locationContactPhone,
-      "locationContactPhone",
+    siteContactId: parseOptionalEntityId(payload.siteContactId, "siteContactId"),
+    linkedContacts: parseOptionalContactLinks(payload.linkedContacts, "linkedContacts"),
+    addressLine1: parseOptionalCreateString(payload.addressLine1, "addressLine1"),
+    addressLine2: parseOptionalCreateString(payload.addressLine2, "addressLine2"),
+    city: parseOptionalCreateString(payload.city, "city"),
+    region: parseOptionalCreateString(payload.region, "region"),
+    postalCode: parseOptionalCreatePostalCode(payload.postalCode, "postalCode"),
+    countryCode: parseOptionalCreateCountryCode(
+      payload.countryCode,
+      "countryCode",
     ),
-    accessNotes: readOptionalString(payload.accessNotes),
-    notes: readOptionalString(payload.notes),
+    latitude: parseOptionalCreateLatitude(payload.latitude, "latitude"),
+    longitude: parseOptionalCreateLongitude(payload.longitude, "longitude"),
+    timeZone: parseOptionalCreateTimeZone(payload.timeZone, "timeZone"),
+    accessNotes: parseOptionalCreateString(payload.accessNotes, "accessNotes"),
+    serviceNotes: parseOptionalCreateString(payload.serviceNotes, "serviceNotes"),
+    notes: parseOptionalCreateString(payload.notes, "notes"),
   };
 });
 
@@ -96,8 +109,19 @@ export const updateLocationSchema = createValidationSchema((value: unknown) => {
       "clientOrganizationId",
     ),
     name: parseOptionalRequiredString(payload.name, "name"),
+    displayName: parseOptionalNullString(payload.displayName, "displayName"),
     code: parseOptionalNullString(payload.code, "code"),
+    storeNumber: parseOptionalNullString(payload.storeNumber, "storeNumber"),
     status: parseOptionalLocationStatus(payload.status),
+    primaryContactId: parseOptionalNullableEntityId(
+      payload.primaryContactId,
+      "primaryContactId",
+    ),
+    siteContactId: parseOptionalNullableEntityId(
+      payload.siteContactId,
+      "siteContactId",
+    ),
+    linkedContacts: parseOptionalContactLinks(payload.linkedContacts, "linkedContacts"),
     addressLine1: parseOptionalNullString(payload.addressLine1, "addressLine1"),
     addressLine2: parseOptionalNullString(payload.addressLine2, "addressLine2"),
     city: parseOptionalNullString(payload.city, "city"),
@@ -107,19 +131,11 @@ export const updateLocationSchema = createValidationSchema((value: unknown) => {
       payload.countryCode,
       "countryCode",
     ),
-    locationContactName: parseOptionalNullString(
-      payload.locationContactName,
-      "locationContactName",
-    ),
-    locationContactEmail: parseOptionalNullableEmail(
-      payload.locationContactEmail,
-      "locationContactEmail",
-    ),
-    locationContactPhone: parseOptionalNullablePhone(
-      payload.locationContactPhone,
-      "locationContactPhone",
-    ),
+    latitude: parseOptionalNullableLatitude(payload.latitude, "latitude"),
+    longitude: parseOptionalNullableLongitude(payload.longitude, "longitude"),
+    timeZone: parseOptionalNullableTimeZone(payload.timeZone, "timeZone"),
     accessNotes: parseOptionalNullString(payload.accessNotes, "accessNotes"),
+    serviceNotes: parseOptionalNullString(payload.serviceNotes, "serviceNotes"),
     notes: parseOptionalNullString(payload.notes, "notes"),
   });
 });
@@ -206,6 +222,32 @@ function parseOptionalRequiredString(
   return requireString(value, fieldName);
 }
 
+function parseOptionalEntityId(
+  value: unknown,
+  fieldName: string,
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  return requireString(value, fieldName);
+}
+
+function parseOptionalNullableEntityId(
+  value: unknown,
+  fieldName: string,
+): string | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null) {
+    return null;
+  }
+
+  return requireString(value, fieldName);
+}
+
 function parseOptionalNullString(
   value: unknown,
   fieldName: string,
@@ -223,6 +265,74 @@ function parseOptionalNullString(
   }
 
   return normalizeOptionalNullString(value) ?? null;
+}
+
+function parseOptionalContactLinks(
+  value: unknown,
+  fieldName: string,
+):
+  | Array<{
+      contactId: string;
+      relationshipType: (typeof CONTACT_RELATIONSHIP_TYPE_VALUES)[number];
+      notes?: string | null;
+    }>
+  | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value)) {
+    throw new ValidationError(`${fieldName} must be an array.`);
+  }
+
+  return value.map((item, index) => parseContactLink(item, `${fieldName}[${index}]`));
+}
+
+function parseContactLink(
+  value: unknown,
+  fieldName: string,
+): {
+  contactId: string;
+  relationshipType: (typeof CONTACT_RELATIONSHIP_TYPE_VALUES)[number];
+  notes?: string | null;
+} {
+  const payload = requirePlainObject(value, `${fieldName} must be a plain object.`);
+
+  assertNoUnknownFields(
+    payload,
+    ["contactId", "relationshipType", "notes"],
+    fieldName,
+  );
+
+  const relationshipType = requireString(
+    payload.relationshipType,
+    `${fieldName}.relationshipType`,
+  ) as (typeof CONTACT_RELATIONSHIP_TYPE_VALUES)[number];
+
+  if (!CONTACT_RELATIONSHIP_TYPE_VALUES.includes(relationshipType)) {
+    throw new ValidationError(`${fieldName}.relationshipType is invalid.`);
+  }
+
+  return pruneUndefined({
+    contactId: requireString(payload.contactId, `${fieldName}.contactId`),
+    relationshipType,
+    notes: parseOptionalNullString(payload.notes, `${fieldName}.notes`),
+  });
+}
+
+function parseOptionalCreateString(
+  value: unknown,
+  fieldName: string,
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new ValidationError(`${fieldName} must be a string.`);
+  }
+
+  return readOptionalString(value);
 }
 
 function parseOptionalEmail(value: unknown, fieldName: string): string | undefined {
@@ -260,6 +370,17 @@ function parseOptionalNullableEmail(
   return parseOptionalEmail(value, fieldName) ?? null;
 }
 
+function parseOptionalCreateEmail(
+  value: unknown,
+  fieldName: string,
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  return parseOptionalEmail(value, fieldName);
+}
+
 function parseOptionalPhone(value: unknown, fieldName: string): string | undefined {
   if (value === undefined) {
     return undefined;
@@ -295,6 +416,17 @@ function parseOptionalNullablePhone(
   return parseOptionalPhone(value, fieldName) ?? null;
 }
 
+function parseOptionalCreatePhone(
+  value: unknown,
+  fieldName: string,
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  return parseOptionalPhone(value, fieldName);
+}
+
 function parseOptionalPostalCode(value: unknown): string | undefined {
   if (value === undefined) {
     return undefined;
@@ -302,6 +434,21 @@ function parseOptionalPostalCode(value: unknown): string | undefined {
 
   if (typeof value !== "string" || !value.trim()) {
     throw new ValidationError("postalCode must be a non-empty string.");
+  }
+
+  return normalizePostalCode(value);
+}
+
+function parseOptionalCreatePostalCode(
+  value: unknown,
+  fieldName: string,
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string" || !value.trim()) {
+    throw new ValidationError(`${fieldName} must be a non-empty string.`);
   }
 
   return normalizePostalCode(value);
@@ -351,6 +498,32 @@ function parseOptionalCountryCode(value: unknown): string | undefined {
   return normalized;
 }
 
+function parseOptionalCreateCountryCode(
+  value: unknown,
+  fieldName: string,
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new ValidationError(`${fieldName} must be a string.`);
+  }
+
+  const normalized = value.trim().toUpperCase();
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (!/^[A-Z]{2}$/.test(normalized)) {
+    throw new ValidationError(
+      `${fieldName} must be a 2-letter ISO country code.`,
+    );
+  }
+
+  return normalized;
+}
+
 function parseOptionalNullableCountryCode(
   value: unknown,
   fieldName: string,
@@ -369,6 +542,125 @@ function parseOptionalNullableCountryCode(
   }
 
   return normalized;
+}
+
+function parseOptionalCoordinate(
+  value: unknown,
+  fieldName: string,
+  minimum: number,
+  maximum: number,
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new ValidationError(`${fieldName} must be a valid number.`);
+  }
+
+  if (value < minimum || value > maximum) {
+    throw new ValidationError(
+      `${fieldName} must be between ${minimum} and ${maximum}.`,
+    );
+  }
+
+  return value;
+}
+
+function parseOptionalCreateLatitude(
+  value: unknown,
+  fieldName: string,
+): number | undefined {
+  if (value === null) {
+    return undefined;
+  }
+
+  return parseOptionalCoordinate(value, fieldName, -90, 90);
+}
+
+function parseOptionalNullableLatitude(
+  value: unknown,
+  fieldName: string,
+): number | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null) {
+    return null;
+  }
+
+  return parseOptionalCoordinate(value, fieldName, -90, 90);
+}
+
+function parseOptionalCreateLongitude(
+  value: unknown,
+  fieldName: string,
+): number | undefined {
+  if (value === null) {
+    return undefined;
+  }
+
+  return parseOptionalCoordinate(value, fieldName, -180, 180);
+}
+
+function parseOptionalNullableLongitude(
+  value: unknown,
+  fieldName: string,
+): number | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null) {
+    return null;
+  }
+
+  return parseOptionalCoordinate(value, fieldName, -180, 180);
+}
+
+function parseOptionalTimeZone(
+  value: unknown,
+  fieldName: string,
+): string | undefined {
+  const normalized = parseOptionalCreateString(value, fieldName);
+  if (!normalized) {
+    return undefined;
+  }
+
+  try {
+    Intl.DateTimeFormat("en-US", { timeZone: normalized });
+  } catch {
+    throw new ValidationError(`${fieldName} must be a valid IANA time zone.`);
+  }
+
+  return normalized;
+}
+
+function parseOptionalCreateTimeZone(
+  value: unknown,
+  fieldName: string,
+): string | undefined {
+  if (value === null) {
+    return undefined;
+  }
+
+  return parseOptionalTimeZone(value, fieldName);
+}
+
+function parseOptionalNullableTimeZone(
+  value: unknown,
+  fieldName: string,
+): string | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null) {
+    return null;
+  }
+
+  return parseOptionalTimeZone(value, fieldName) ?? null;
 }
 
 function parseOptionalLimit(value: unknown): number | undefined {

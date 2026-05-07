@@ -28,7 +28,7 @@ export function getDashboardVisibilityForRole(
       return {
         showDispatchAttention: true,
         showQuoteBottlenecks: true,
-        showFinanceAttention: true,
+        showFinanceAttention: false,
         showAtRiskItems: true,
         summaryCardOrder: [
           "openWorkOrders",
@@ -36,8 +36,6 @@ export function getDashboardVisibilityForRole(
           "awaitingContractorResponse",
           "awaitingQuoteReview",
           "awaitingClientAction",
-          "readyForInvoicing",
-          "overdueInvoices",
           "activeAlerts",
         ],
         financeFirst: false,

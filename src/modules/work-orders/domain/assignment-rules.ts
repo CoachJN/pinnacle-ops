@@ -18,7 +18,7 @@ const INTERNAL_ASSIGNMENT_OVERRIDE_ROLES = new Set<UserRole>([
 const TERMINAL_WORK_ORDER_STATUSES = new Set<WorkOrderStatus>([
   "closed",
   "cancelled",
-  "completed",
+  "work_completed",
 ]);
 
 const ACTIVE_ASSIGNMENT_STATUSES = new Set<AssignmentStatus>([
@@ -71,6 +71,13 @@ export function getContractorAssignmentEligibility(
   input: ContractorAssignmentEligibilityInput,
 ): ContractorAssignmentEligibility {
   if (!isContractorAssignable(input)) {
+    if (input.isAssignable === false) {
+      return {
+        isAssignable: false,
+        reason: "Contractor is marked as not assignable.",
+      };
+    }
+
     if (input.status !== "active") {
       return {
         isAssignable: false,
@@ -80,7 +87,7 @@ export function getContractorAssignmentEligibility(
 
     return {
       isAssignable: false,
-      reason: "Contractor must have at least one service category before it can be assigned.",
+      reason: "Contractor must have at least one trade before it can be assigned.",
     };
   }
 
@@ -92,8 +99,11 @@ export function getContractorAssignmentEligibility(
     };
   }
 
+  const configuredCategories = input.trades ?? [];
   const contractorCategories = new Set(
-    input.serviceCategories.map((category) => normalizeCategory(category)).filter(Boolean),
+    configuredCategories
+      .map((category) => normalizeCategory(category))
+      .filter(Boolean),
   );
   if (!contractorCategories.has(normalizedCategory)) {
     return {

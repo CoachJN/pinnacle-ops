@@ -1,32 +1,38 @@
 import { NextRequest } from "next/server";
 import {
-  addPhaseThreeWorkOrderNote,
-  listPhaseThreeWorkOrderNotes,
-  withPhaseThreeWorkOrderRoute,
-} from "@/server/api/work-order-core";
+  getWorkOrderApiContext,
+  parseJsonObject,
+  withApiRoute,
+} from "@/server/api/work-orders";
+import {
+  addRuntimeWorkOrderNote,
+  listRuntimeWorkOrderNotes,
+} from "@/server/api/work-order-runtime";
 
 interface RouteContext {
   params: Promise<{ workOrderId: string }>;
 }
 
 export async function GET(request: NextRequest, { params }: RouteContext) {
-  return withPhaseThreeWorkOrderRoute(
+  return withApiRoute(
     request,
     "/api/work-orders/[workOrderId]/notes",
-    async (context) => {
+    async (requestContext) => {
+      const context = await getWorkOrderApiContext(requestContext);
       const { workOrderId } = await params;
-      return listPhaseThreeWorkOrderNotes(context, workOrderId);
+      return listRuntimeWorkOrderNotes(context, workOrderId);
     },
   );
 }
 
 export async function POST(request: NextRequest, { params }: RouteContext) {
-  return withPhaseThreeWorkOrderRoute(
+  return withApiRoute(
     request,
     "/api/work-orders/[workOrderId]/notes",
-    async (context) => {
+    async (requestContext) => {
+      const context = await getWorkOrderApiContext(requestContext);
       const { workOrderId } = await params;
-      return addPhaseThreeWorkOrderNote(context, request, workOrderId);
+      return addRuntimeWorkOrderNote(context, workOrderId, await parseJsonObject(request));
     },
   );
 }

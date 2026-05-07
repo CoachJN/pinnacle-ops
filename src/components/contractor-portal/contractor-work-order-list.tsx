@@ -58,7 +58,7 @@ export function ContractorWorkOrderList({
                 <td className="px-4 py-3 text-neutral-700">{item.assignment.status}</td>
                 <td className="px-4 py-3">
                   <span className="rounded-full border border-slate-300 bg-slate-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-700">
-                    {formatStatusLabel(item.status)}
+                    {formatStatusLabel(item.lifecycleStatus)}
                   </span>
                 </td>
                 <td className="px-4 py-3 text-neutral-700">{item.quoteStatus ?? "None"}</td>

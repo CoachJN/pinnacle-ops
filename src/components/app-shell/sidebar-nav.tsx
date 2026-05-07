@@ -1,8 +1,10 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import type { NavigationItem } from "@/types/navigation";
 
 interface SidebarNavProps {
-  currentPath: string;
   items: readonly NavigationItem[];
   orientation?: "horizontal" | "vertical";
 }
@@ -21,10 +23,10 @@ function isNavigationItemActive(
 }
 
 export function SidebarNav({
-  currentPath,
   items,
   orientation = "vertical",
 }: SidebarNavProps) {
+  const pathname = usePathname();
   const isHorizontal = orientation === "horizontal";
 
   return (
@@ -37,7 +39,7 @@ export function SidebarNav({
       }
     >
       {items.map((item) => {
-        const isActive = isNavigationItemActive(currentPath, item);
+        const isActive = isNavigationItemActive(pathname, item);
         const baseClassName = isHorizontal
           ? "inline-flex min-w-max items-center rounded-full px-3 py-2 text-sm font-medium"
           : "flex items-center justify-between rounded-xl px-3 py-2.5 text-sm font-medium";

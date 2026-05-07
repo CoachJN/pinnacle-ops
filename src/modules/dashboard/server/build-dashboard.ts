@@ -15,7 +15,7 @@ import type { DashboardQueueSection } from "../domain/types.ts";
 import { getDashboardVisibilityForRole } from "./role-visibility.ts";
 import type {
   Assignment,
-  Invoice,
+  ClientInvoice as Invoice,
   WorkOrder,
 } from "../../../server/repositories/index.ts";
 import type { InternalUserRole } from "../../../types/permissions.ts";
@@ -153,14 +153,14 @@ export async function buildInternalDashboard(
         id: workOrder.id,
         workOrderNumber: workOrder.workOrderNumber,
         title: workOrder.title,
-        status: workOrder.status,
+        lifecycleStatus: workOrder.lifecycleStatus,
         priority: workOrder.priority,
         clientOrganizationId: workOrder.clientOrganizationId,
         locationId: workOrder.locationId,
         currentInvoiceId: workOrder.currentInvoiceId,
         clientSnapshot: workOrder.clientSnapshot,
         locationSnapshot: workOrder.locationSnapshot,
-        completedAt: workOrder.completedAt,
+        completedAt: workOrder.completedAt ?? workOrder.workCompletedAt ?? null,
         updatedAt: workOrder.updatedAt,
       })),
       invoices: financeQueueResult.value.map((invoice) => ({
@@ -198,7 +198,7 @@ export function buildDashboardData(
   const financeQueueItems = input.financeQueueItems ?? [];
 
   const awaitingAssignment = input.workOrders.filter((workOrder) => {
-    if (workOrder.status !== "approved_to_proceed") {
+    if (workOrder.lifecycleStatus !== "client_approved") {
       return false;
     }
 
@@ -211,15 +211,15 @@ export function buildDashboardData(
   });
 
   const quoteReview = input.workOrders.filter(
-    (workOrder) => workOrder.status === "quote_received",
+    (workOrder) => workOrder.lifecycleStatus === "contractor_quote_received",
   );
   const clientAction = input.workOrders.filter(
-    (workOrder) => workOrder.status === "pending_client_approval",
+    (workOrder) => workOrder.lifecycleStatus === "client_approval_requested",
   );
 
   const summaryCounts: DashboardSummaryCounts = {
     openWorkOrders: input.workOrders.filter(
-      (workOrder) => !TERMINAL_WORK_ORDER_STATUSES.has(workOrder.status),
+      (workOrder) => !TERMINAL_WORK_ORDER_STATUSES.has(workOrder.lifecycleStatus),
     ).length,
     awaitingAssignment: awaitingAssignment.length,
     awaitingContractorResponse: awaitingContractorResponse.length,
@@ -273,10 +273,10 @@ async function loadActiveAssignmentsByWorkOrderId(input: {
 }): Promise<Map<string, Assignment | null>> {
   const relevantWorkOrders = input.workOrders.filter((workOrder) => {
     return (
-      workOrder.status === "approved_to_proceed" ||
-      workOrder.status === "assigned" ||
-      workOrder.status === "dispatched" ||
-      workOrder.status === "in_progress"
+      workOrder.lifecycleStatus === "client_approved" ||
+      workOrder.lifecycleStatus === "assigned" ||
+      workOrder.lifecycleStatus === "awaiting_contractor_response" ||
+      workOrder.lifecycleStatus === "in_progress"
     );
   });
 
@@ -299,9 +299,9 @@ function buildDispatchAttentionSection(input: {
   const items = input.workOrders.flatMap((workOrder) => {
     const assignment = input.activeAssignmentsByWorkOrderId.get(workOrder.id) ?? null;
 
-    if (workOrder.status === "approved_to_proceed" && !assignment) {
+    if (workOrder.lifecycleStatus === "client_approved" && !assignment) {
       return [toWorkQueueItem(workOrder, {
-        reason: "Approved to proceed and ready for contractor assignment.",
+        reason: "Client approved the work and it is ready for contractor assignment.",
         assignmentStatus: null,
       })];
     }
@@ -315,8 +315,8 @@ function buildDispatchAttentionSection(input: {
 
     if (
       assignment?.status === "accepted" &&
-      workOrder.status !== "in_progress" &&
-      workOrder.status !== "completed"
+      workOrder.lifecycleStatus !== "in_progress" &&
+      workOrder.lifecycleStatus !== "work_completed"
     ) {
       return [toWorkQueueItem(workOrder, {
         reason: "Contractor accepted the work; move it into active execution.",
@@ -339,21 +339,21 @@ function buildQuoteBottlenecksSection(
   workOrders: readonly WorkOrder[],
 ): DashboardQueueSection<DashboardWorkQueueItem> {
   const items = workOrders.flatMap((workOrder) => {
-    if (workOrder.status === "quote_requested") {
+    if (workOrder.lifecycleStatus === "quote_required") {
       return [toWorkQueueItem(workOrder, {
         reason: "Waiting on a contractor quote submission.",
         assignmentStatus: null,
       })];
     }
 
-    if (workOrder.status === "quote_received") {
+    if (workOrder.lifecycleStatus === "contractor_quote_received") {
       return [toWorkQueueItem(workOrder, {
         reason: "Submitted contractor quote needs internal review.",
         assignmentStatus: null,
       })];
     }
 
-    if (workOrder.status === "pending_client_approval") {
+    if (workOrder.lifecycleStatus === "client_approval_requested") {
       return [toWorkQueueItem(workOrder, {
         reason: "Client approval is still outstanding.",
         assignmentStatus: null,
@@ -416,7 +416,7 @@ function buildAtRiskItemsSection(input: {
 
   for (const workOrder of input.workOrders) {
     const ageDays = ageInDays(workOrder.updatedAt, input.now);
-    if (ageDays >= 3 && !TERMINAL_WORK_ORDER_STATUSES.has(workOrder.status)) {
+    if (ageDays >= 3 && !TERMINAL_WORK_ORDER_STATUSES.has(workOrder.lifecycleStatus)) {
       const assignment = input.activeAssignmentsByWorkOrderId.get(workOrder.id);
       items.push({
         id: `risk-work-order-${workOrder.id}`,
@@ -425,7 +425,7 @@ function buildAtRiskItemsSection(input: {
         description:
           assignment?.status === "assigned"
             ? "Contractor response is still pending and the work order has gone stale."
-            : `Work order has been idle for ${ageDays} days in ${workOrder.status.replaceAll("_", " ")}.`,
+            : `Work order has been idle for ${ageDays} days in ${formatLifecycleStatusLabel(workOrder.lifecycleStatus)}.`,
         href: `${APP_PATHS.workOrders}/${workOrder.id}`,
         severity: ageDays >= 7 ? "risk" : "attention",
         updatedAt: workOrder.updatedAt,
@@ -487,11 +487,11 @@ function toWorkQueueItem(
   },
 ): DashboardWorkQueueItem {
   return {
-    id: `dashboard-work-order-${workOrder.id}-${input.assignmentStatus ?? workOrder.status}`,
+    id: `dashboard-work-order-${workOrder.id}-${input.assignmentStatus ?? workOrder.lifecycleStatus}`,
     workOrderId: workOrder.id,
     workOrderNumber: workOrder.workOrderNumber,
     title: workOrder.title,
-    status: workOrder.status,
+    lifecycleStatus: workOrder.lifecycleStatus,
     priority: workOrder.priority,
     clientName: workOrder.clientSnapshot.name,
     locationName: workOrder.locationSnapshot.name,
@@ -517,6 +517,16 @@ function sortWorkQueueItems(
 
 function comparePriority(left: string, right: string): number {
   return priorityScore(right) - priorityScore(left);
+}
+
+function formatLifecycleStatusLabel(
+  lifecycleStatus: WorkOrderStatus | null | undefined,
+): string {
+  if (typeof lifecycleStatus !== "string" || lifecycleStatus.length === 0) {
+    return "an unknown status";
+  }
+
+  return lifecycleStatus.replaceAll("_", " ");
 }
 
 function priorityScore(priority: string): number {

@@ -12,7 +12,7 @@ import {
   canWorkOrderTransition,
   isTerminalWorkOrderStatus,
 } from "./status-rules.ts";
-import type { ActivityLogService } from "./activity-log-service.ts";
+import type { DomainEventService } from "./domain-event-service.ts";
 import type { NotificationService } from "./notification-service.ts";
 import type { ClientLocationService } from "./client-location-service.ts";
 import { createServiceLogger } from "./observability.ts";
@@ -25,61 +25,6 @@ import {
   type ServiceResult,
 } from "./types.ts";
 
-export {
-  assertWorkOrderAllowsCollaboration,
-  buildWorkOrderDetailAggregate,
-  calculateAllowedActions,
-  calculateAllowedNextStatuses,
-  createAddWorkOrderAttachmentService,
-  createAddWorkOrderNoteService,
-  createCreateWorkOrderService,
-  createGetWorkOrderDetailService,
-  createListWorkOrdersService,
-  createUpdateWorkOrderStatusService,
-  createWorkOrderServiceDependencies,
-  enforceWorkOrderStatusTransition,
-  generateWorkOrderNumber,
-  normalizeWorkOrderSearchText,
-  resolveClosedAt,
-  resolveInitialWorkOrderStatus,
-  toWorkOrderDetailDto,
-  toWorkOrderListItemDto,
-  validateWorkOrderRelationships,
-  type AddWorkOrderAttachmentService,
-  type AddWorkOrderAttachmentServiceInput,
-  type AddWorkOrderNoteService,
-  type AddWorkOrderNoteServiceInput,
-  type CreateWorkOrderService as PhaseThreeCreateWorkOrderService,
-  type CreateWorkOrderServiceInput as PhaseThreeCreateWorkOrderServiceInput,
-  type GetWorkOrderDetailService,
-  type GetWorkOrderDetailServiceInput,
-  type ListWorkOrdersService,
-  type ListWorkOrdersServiceInput as PhaseThreeListWorkOrdersServiceInput,
-  type UpdateWorkOrderStatusService,
-  type UpdateWorkOrderStatusServiceInput,
-  type WorkOrderDetailDto,
-  type WorkOrderListItemDto,
-  type WorkOrderListResultDto,
-  type WorkOrderServiceDependencies,
-  type WorkOrderStatusControls,
-} from "./work-order-core/index.ts";
-export {
-  acceptAssignment,
-  completeAssignment,
-  createAssignment,
-  declineAssignment,
-  getActiveAssignmentForWorkOrder,
-  getAllowedWorkOrderActions,
-  getAssignmentsForWorkOrder,
-  reassignAssignment,
-  transitionWorkOrderStatusWithAssignmentChecks,
-  type AssignmentWorkflowDependencies,
-  type CreateAssignmentServiceInput,
-  type ReassignAssignmentServiceInput,
-  type TransitionWorkOrderWithAssignmentInput,
-  type UpdateAssignmentStateServiceInput,
-  type WorkOrderActionAvailabilityContext,
-} from "./work-order-core/assignment-workflow.service.ts";
 
 export interface WorkOrderService {
   list(input: ListWorkOrdersServiceInput): Promise<ServiceResult<WorkOrder[]>>;
@@ -124,9 +69,13 @@ export interface CreateWorkOrderServiceInput extends ServiceAuditContext {
   priority: WorkOrderPriority;
   clientOrganizationId: EntityId;
   locationId: EntityId;
-  requestedByUserId?: EntityId | null;
-  assignedCoordinatorUserId?: EntityId | null;
-  assignedManagerUserId?: EntityId | null;
+  requestedByContactId?: EntityId | null;
+  siteContactId?: EntityId | null;
+  requestedByName?: string | null;
+  requestedByEmail?: string | null;
+  requestedByPhone?: string | null;
+  coordinatorUserId?: EntityId | null;
+  managerUserId?: EntityId | null;
   category?: string | null;
   requestedServiceDate?: IsoDateTimeString | null;
 }
@@ -138,16 +87,16 @@ export interface UpdateWorkOrderServiceInput extends ServiceAuditContext {
   priority?: WorkOrderPriority;
   clientOrganizationId?: EntityId;
   locationId?: EntityId;
-  assignedCoordinatorUserId?: EntityId | null;
-  assignedManagerUserId?: EntityId | null;
+  coordinatorUserId?: EntityId | null;
+  managerUserId?: EntityId | null;
   category?: string | null;
   requestedServiceDate?: IsoDateTimeString | null;
 }
 
 export interface AssignInternalStaffInput extends ServiceAuditContext {
   workOrderId: EntityId;
-  assignedCoordinatorUserId?: EntityId | null;
-  assignedManagerUserId?: EntityId | null;
+  coordinatorUserId?: EntityId | null;
+  managerUserId?: EntityId | null;
 }
 
 export interface AssignContractorToWorkOrderInput extends ServiceAuditContext {
@@ -171,11 +120,11 @@ export interface TransitionWorkOrderInput extends ServiceAuditContext {
 export function createWorkOrderService(
   repositories: Pick<
     FirestoreRepositories,
-    "workOrders" | "quotes" | "invoices" | "clientOrganizations" | "locations"
+    "workOrders" | "clientQuotes" | "clientInvoices" | "clientOrganizations" | "locations"
     | "contractorOrganizations"
   >,
   dependencies: {
-    activityLogs: ActivityLogService;
+    domainEvents: DomainEventService;
     clientLocations: ClientLocationService;
     notifications?: NotificationService;
   },
@@ -186,12 +135,12 @@ export function createWorkOrderService(
 class FirestoreWorkOrderService implements WorkOrderService {
   private readonly repositories: Pick<
     FirestoreRepositories,
-    "workOrders" | "quotes" | "invoices" | "clientOrganizations" | "locations"
+    "workOrders" | "clientQuotes" | "clientInvoices" | "clientOrganizations" | "locations"
     | "contractorOrganizations"
   >;
 
   private readonly dependencies: {
-    activityLogs: ActivityLogService;
+    domainEvents: DomainEventService;
     clientLocations: ClientLocationService;
     notifications?: NotificationService;
   };
@@ -199,11 +148,11 @@ class FirestoreWorkOrderService implements WorkOrderService {
   constructor(
     repositories: Pick<
       FirestoreRepositories,
-      "workOrders" | "quotes" | "invoices" | "clientOrganizations" | "locations"
+      "workOrders" | "clientQuotes" | "clientInvoices" | "clientOrganizations" | "locations"
       | "contractorOrganizations"
     >,
     dependencies: {
-      activityLogs: ActivityLogService;
+      domainEvents: DomainEventService;
       clientLocations: ClientLocationService;
       notifications?: NotificationService;
     },
@@ -301,49 +250,90 @@ class FirestoreWorkOrderService implements WorkOrderService {
       workOrderNumber: `WO-${id.slice(0, 8).toUpperCase()}`,
       title: input.title.trim(),
       description: input.description.trim(),
-      status: "new",
+      poNumber: null,
+      requestedByName: input.requestedByName?.trim() || null,
+      requestedByEmail: input.requestedByEmail?.trim() || null,
+      requestedByPhone: input.requestedByPhone?.trim() || null,
+      requestedServiceDate: input.requestedServiceDate ?? null,
+      dueDate: null,
+      category: input.category ?? null,
+      requiresQuote: false,
+      quoteRequiredThresholdCents: null,
+      lifecycleStatus: input.requestedServiceDate ? "triage" : "new",
+      status: input.requestedServiceDate ? "triage" : "new",
+      assignmentStatus: null,
+      quoteSummaryStatus: "not_required",
+      invoiceSummaryStatus: "not_ready",
+      approvalStatus: "not_required",
       priority: input.priority,
       clientOrganizationId: input.clientOrganizationId,
       locationId: input.locationId,
-      requestedByUserId: input.requestedByUserId ?? input.actor.userId,
-      assignedCoordinatorUserId: input.assignedCoordinatorUserId ?? null,
-      assignedManagerUserId: input.assignedManagerUserId ?? null,
-      assignedContractorOrganizationId: null,
+      requestedByContactId: input.requestedByContactId ?? null,
+      siteContactId: input.siteContactId ?? null,
+      coordinatorUserId: input.coordinatorUserId ?? null,
+      managerUserId: input.managerUserId ?? null,
+      assignedCoordinatorUserId: null,
+      assignedManagerUserId: null,
+      assignedContractorOrgId: null,
+      assignedContractorContactId: null,
+      financeOwnerUserId: null,
+      quoteReviewerUserId: null,
       currentQuoteId: null,
       currentInvoiceId: null,
+      currentQuoteVersionNumber: null,
+      invoiceNumber: null,
       clientSnapshot: {
         id: clientLocation.value.client.id,
         name: clientLocation.value.client.displayName ?? clientLocation.value.client.name,
       },
       locationSnapshot: buildLocationSnapshot(clientLocation.value.location),
       contractorSnapshot: null,
-      category: input.category ?? null,
-      requestedServiceDate: input.requestedServiceDate ?? null,
-      submittedAt: null,
-      approvedAt: null,
-      completedAt: null,
+      lastActivityAt: input.now ?? new Date().toISOString(),
+      nextActionOwnerType: null,
+      nextActionDueAt: null,
+      isEscalated: false,
+      escalationReason: null,
+      holdReason: null,
+      previousLifecycleStatus: null,
+      intakeReceivedAt: input.now ?? new Date().toISOString(),
+      triagedAt: null,
+      assignedAt: null,
+      contractorContactedAt: null,
+      contractorRespondedAt: null,
+      contractorScheduledAt: null,
+      workStartedAt: null,
+      quoteRequestedAt: null,
+      contractorQuoteReceivedAt: null,
+      quoteReviewStartedAt: null,
+      clientApprovalRequestedAt: null,
+      clientApprovedAt: null,
+      workCompletedAt: null,
+      completionReviewStartedAt: null,
+      readyForInvoicingAt: null,
+      invoiceSentAt: null,
+      paidAt: null,
       closedAt: null,
+      cancelledAt: null,
+      holdStartedAt: null,
+      escalatedAt: null,
     };
 
     await this.repositories.workOrders.create(workOrder);
-    await this.dependencies.activityLogs.record({
+    await this.dependencies.domainEvents.record({
       ...input,
       workOrderId: workOrder.id,
-      action: "work_order.created",
-      eventType: "work_order_created",
-      message: `Created ${workOrder.workOrderNumber}.`,
-      entityType: "workOrder",
-      entityId: workOrder.id,
-      entityLabel: workOrder.workOrderNumber,
+      type: "work_order_created",
       visibility: "internal",
-      changes: [
-        { field: "status", to: workOrder.status },
-        { field: "priority", to: workOrder.priority },
-        { field: "clientOrganizationId", to: workOrder.clientOrganizationId },
-        { field: "locationId", to: workOrder.locationId },
-      ],
-      metadata: {
-        workOrderNumber: workOrder.workOrderNumber,
+      lifecycleStatus: workOrder.lifecycleStatus,
+      entity: {
+        entityType: "work_order",
+        entityId: workOrder.id,
+        label: workOrder.workOrderNumber,
+      },
+      summary: `Created ${workOrder.workOrderNumber}.`,
+      payload: {
+        lifecycleStatus: workOrder.lifecycleStatus,
+        priority: workOrder.priority,
         title: workOrder.title,
       },
     });
@@ -354,7 +344,7 @@ class FirestoreWorkOrderService implements WorkOrderService {
         id: workOrder.id,
         label: workOrder.workOrderNumber,
       },
-      status: workOrder.status,
+      lifecycleStatus: workOrder.lifecycleStatus,
     });
 
     return serviceOk(workOrder);
@@ -369,7 +359,7 @@ class FirestoreWorkOrderService implements WorkOrderService {
       return existing;
     }
 
-    if (isTerminalWorkOrderStatus(existing.value.status)) {
+    if (isTerminalWorkOrderStatus(existing.value.lifecycleStatus)) {
       return serviceFail(
         conflictError("Terminal work orders cannot be edited."),
       );
@@ -396,10 +386,10 @@ class FirestoreWorkOrderService implements WorkOrderService {
         priority: input.priority ?? existing.value.priority,
         clientOrganizationId: nextClientOrganizationId,
         locationId: nextLocationId,
-        assignedCoordinatorUserId:
-          input.assignedCoordinatorUserId ?? existing.value.assignedCoordinatorUserId,
-        assignedManagerUserId:
-          input.assignedManagerUserId ?? existing.value.assignedManagerUserId,
+        coordinatorUserId:
+          input.coordinatorUserId ?? existing.value.coordinatorUserId,
+        managerUserId:
+          input.managerUserId ?? existing.value.managerUserId,
         category: input.category ?? existing.value.category,
         requestedServiceDate:
           input.requestedServiceDate ?? existing.value.requestedServiceDate,
@@ -421,20 +411,6 @@ class FirestoreWorkOrderService implements WorkOrderService {
     }
 
     await this.repositories.workOrders.save(updated);
-    await this.dependencies.activityLogs.record({
-      ...input,
-      workOrderId: updated.id,
-      action: "work_order.updated",
-      eventType: "work_order_updated",
-      message: `Updated ${updated.workOrderNumber}.`,
-      entityType: "workOrder",
-      entityId: updated.id,
-      entityLabel: updated.workOrderNumber,
-      visibility: "internal",
-      metadata: {
-        workOrderNumber: updated.workOrderNumber,
-      },
-    });
     logger.info("use_case.completed", {
       action: "work_order.updated",
       resource: {
@@ -456,7 +432,7 @@ class FirestoreWorkOrderService implements WorkOrderService {
       return existing;
     }
 
-    if (isTerminalWorkOrderStatus(existing.value.status)) {
+    if (isTerminalWorkOrderStatus(existing.value.lifecycleStatus)) {
       return serviceFail(
         conflictError("Terminal work orders cannot be reassigned."),
       );
@@ -465,46 +441,19 @@ class FirestoreWorkOrderService implements WorkOrderService {
     const updated = touchAuditFields(
       {
         ...existing.value,
-        assignedCoordinatorUserId:
-          "assignedCoordinatorUserId" in input
-            ? input.assignedCoordinatorUserId ?? null
-            : existing.value.assignedCoordinatorUserId,
-        assignedManagerUserId:
-          "assignedManagerUserId" in input
-            ? input.assignedManagerUserId ?? null
-            : existing.value.assignedManagerUserId,
+        coordinatorUserId:
+          "coordinatorUserId" in input
+            ? input.coordinatorUserId ?? null
+            : existing.value.coordinatorUserId,
+        managerUserId:
+          "managerUserId" in input
+            ? input.managerUserId ?? null
+            : existing.value.managerUserId,
       },
       input,
     );
 
     await this.repositories.workOrders.save(updated);
-    await this.dependencies.activityLogs.record({
-      ...input,
-      workOrderId: updated.id,
-      action: "work_order.assigned",
-      eventType: "work_order_internal_staff_assigned",
-      message: `Updated internal assignment for ${updated.workOrderNumber}.`,
-      entityType: "workOrder",
-      entityId: updated.id,
-      entityLabel: updated.workOrderNumber,
-      visibility: "internal",
-      changes: [
-        {
-          field: "assignedCoordinatorUserId",
-          from: existing.value.assignedCoordinatorUserId,
-          to: updated.assignedCoordinatorUserId,
-        },
-        {
-          field: "assignedManagerUserId",
-          from: existing.value.assignedManagerUserId,
-          to: updated.assignedManagerUserId,
-        },
-      ],
-      metadata: {
-        assignedCoordinatorUserId: updated.assignedCoordinatorUserId,
-        assignedManagerUserId: updated.assignedManagerUserId,
-      },
-    });
     logger.info("use_case.completed", {
       action: "work_order.assigned",
       resource: {
@@ -526,7 +475,7 @@ class FirestoreWorkOrderService implements WorkOrderService {
       return existing;
     }
 
-    if (isTerminalWorkOrderStatus(existing.value.status)) {
+    if (isTerminalWorkOrderStatus(existing.value.lifecycleStatus)) {
       return serviceFail(
         conflictError("Terminal work orders cannot be assigned to contractors."),
       );
@@ -549,47 +498,23 @@ class FirestoreWorkOrderService implements WorkOrderService {
     const updated = touchAuditFields(
       {
         ...existing.value,
-        assignedContractorOrganizationId: contractor?.id ?? null,
+        assignedContractorOrgId: contractor?.id ?? null,
         contractorSnapshot: contractor
           ? {
               id: contractor.id,
               name: contractor.displayName ?? contractor.name,
             }
           : null,
-        status:
-          contractor && existing.value.status === "approved_to_proceed"
+        lifecycleStatus:
+          contractor && existing.value.lifecycleStatus === "client_approved"
             ? "assigned"
-            : existing.value.status,
+            : existing.value.lifecycleStatus,
+        assignedAt: contractor ? (input.now ?? new Date().toISOString()) : existing.value.assignedAt,
       },
       input,
     );
 
     await this.repositories.workOrders.save(updated);
-    await this.dependencies.activityLogs.record({
-      ...input,
-      workOrderId: updated.id,
-      action: "work_order.assigned",
-      eventType: contractor
-        ? "contractor_assigned"
-        : "contractor_assignment_cleared",
-      message: contractor
-        ? `Assigned ${contractor.displayName ?? contractor.name}.`
-        : "Cleared contractor assignment.",
-      entityType: "workOrder",
-      entityId: updated.id,
-      entityLabel: updated.workOrderNumber,
-      visibility: "internal",
-      changes: [
-        {
-          field: "assignedContractorOrganizationId",
-          from: existing.value.assignedContractorOrganizationId,
-          to: updated.assignedContractorOrganizationId,
-        },
-      ],
-      metadata: {
-        contractorOrganizationId: updated.assignedContractorOrganizationId,
-      },
-    });
     logger.info("use_case.completed", {
       action: contractor ? "work_order.assigned" : "work_order.updated",
       resource: {
@@ -616,23 +541,6 @@ class FirestoreWorkOrderService implements WorkOrderService {
 
     const updated = touchAuditFields(existing.value, input);
     await this.repositories.workOrders.save(updated);
-    await this.dependencies.activityLogs.record({
-      ...input,
-      workOrderId: updated.id,
-      action: "work_order.updated",
-      eventType:
-        input.noteType === "internal"
-          ? "internal_note_added"
-          : "operational_note_added",
-      message: note,
-      entityType: "workOrder",
-      entityId: updated.id,
-      entityLabel: updated.workOrderNumber,
-      visibility: input.noteType === "internal" ? "internal" : "all",
-      metadata: {
-        noteType: input.noteType,
-      },
-    });
     logger.info("use_case.completed", {
       action: "work_order.updated",
       resource: {
@@ -664,53 +572,117 @@ class FirestoreWorkOrderService implements WorkOrderService {
     const transitioned = touchAuditFields(
       {
         ...existing.value,
-        status: input.toStatus,
-        submittedAt:
-          input.toStatus === "submitted"
-            ? existing.value.submittedAt ?? timestamp
-            : existing.value.submittedAt,
-        approvedAt:
-          input.toStatus === "approved_to_proceed" || input.toStatus === "approved"
-            ? existing.value.approvedAt ?? timestamp
-            : existing.value.approvedAt,
-        completedAt:
-          input.toStatus === "completed"
-            ? existing.value.completedAt ?? timestamp
-            : existing.value.completedAt,
+        lifecycleStatus: input.toStatus,
+        previousLifecycleStatus:
+          input.toStatus === "on_hold" || input.toStatus === "escalated"
+            ? existing.value.lifecycleStatus
+            : existing.value.previousLifecycleStatus,
+        triagedAt:
+          input.toStatus === "triage"
+            ? existing.value.triagedAt ?? timestamp
+            : existing.value.triagedAt,
+        contractorScheduledAt:
+          input.toStatus === "contractor_scheduled"
+            ? existing.value.contractorScheduledAt ?? timestamp
+            : existing.value.contractorScheduledAt,
+        workStartedAt:
+          input.toStatus === "in_progress"
+            ? existing.value.workStartedAt ?? timestamp
+            : existing.value.workStartedAt,
+        clientApprovedAt:
+          input.toStatus === "client_approved"
+            ? existing.value.clientApprovedAt ?? timestamp
+            : existing.value.clientApprovedAt,
+        workCompletedAt:
+          input.toStatus === "work_completed"
+            ? existing.value.workCompletedAt ?? timestamp
+            : existing.value.workCompletedAt,
+        completionReviewStartedAt:
+          input.toStatus === "completion_review"
+            ? existing.value.completionReviewStartedAt ?? timestamp
+            : existing.value.completionReviewStartedAt,
+        readyForInvoicingAt:
+          input.toStatus === "ready_for_invoicing"
+            ? existing.value.readyForInvoicingAt ?? timestamp
+            : existing.value.readyForInvoicingAt,
+        paidAt:
+          input.toStatus === "paid"
+            ? existing.value.paidAt ?? timestamp
+            : existing.value.paidAt,
         closedAt:
           input.toStatus === "closed"
             ? existing.value.closedAt ?? timestamp
             : existing.value.closedAt,
+        cancelledAt:
+          input.toStatus === "cancelled"
+            ? existing.value.cancelledAt ?? timestamp
+            : existing.value.cancelledAt,
+        holdStartedAt:
+          input.toStatus === "on_hold"
+            ? existing.value.holdStartedAt ?? timestamp
+            : existing.value.holdStartedAt,
+        escalatedAt:
+          input.toStatus === "escalated"
+            ? existing.value.escalatedAt ?? timestamp
+            : existing.value.escalatedAt,
+        isEscalated:
+          input.toStatus === "escalated"
+            ? true
+            : input.toStatus === "on_hold" || input.toStatus === "closed" || input.toStatus === "cancelled"
+              ? existing.value.isEscalated
+              : false,
+        lastActivityAt: timestamp,
       },
       { ...input, now: timestamp },
     );
 
     await this.repositories.workOrders.save(transitioned);
-    await this.dependencies.activityLogs.record({
+    await this.dependencies.domainEvents.recordTransition({
       ...input,
       now: timestamp,
       workOrderId: transitioned.id,
-      action: "work_order.status_changed",
-      eventType: "work_order_status_changed",
-      message:
-        input.activityMessage ??
-        `Changed work order status from ${existing.value.status} to ${input.toStatus}.`,
-      entityType: "workOrder",
-      entityId: transitioned.id,
-      entityLabel: transitioned.workOrderNumber,
+      fromLifecycleStatus: existing.value.lifecycleStatus,
+      toLifecycleStatus: input.toStatus,
       visibility: "internal",
-      changes: [
-        {
-          field: "status",
-          from: existing.value.status,
-          to: input.toStatus,
-        },
-      ],
+      reason: input.activityMessage ?? null,
+      escalationContext:
+        input.toStatus === "escalated"
+          ? { previousLifecycleStatus: existing.value.lifecycleStatus }
+          : null,
+      holdContext:
+        input.toStatus === "on_hold"
+          ? { previousLifecycleStatus: existing.value.lifecycleStatus }
+          : null,
       metadata: {
-        fromStatus: existing.value.status,
-        toStatus: input.toStatus,
+        workOrderNumber: transitioned.workOrderNumber,
       },
     });
+    const canonicalEventType = mapLifecycleStatusToEventType(input.toStatus);
+    if (canonicalEventType) {
+      await this.dependencies.domainEvents.record({
+        ...input,
+        now: timestamp,
+        workOrderId: transitioned.id,
+        type: canonicalEventType,
+        visibility: "internal",
+        lifecycleStatus: transitioned.lifecycleStatus,
+        entity: {
+          entityType: "work_order",
+          entityId: transitioned.id,
+          label: transitioned.workOrderNumber,
+        },
+        summary:
+          input.activityMessage ??
+          `Changed work order lifecycle from ${existing.value.lifecycleStatus} to ${input.toStatus}.`,
+        reason: input.activityMessage ?? null,
+        payload: eventPayloadForLifecycleStatus(
+          canonicalEventType,
+          transitioned,
+          existing.value.lifecycleStatus,
+          input.activityMessage ?? null,
+        ),
+      });
+    }
     logger.info("use_case.completed", {
       action: "work_order.status_changed",
       resource: {
@@ -718,8 +690,8 @@ class FirestoreWorkOrderService implements WorkOrderService {
         id: transitioned.id,
         label: transitioned.workOrderNumber,
       },
-      fromStatus: existing.value.status,
-      toStatus: input.toStatus,
+      fromLifecycleStatus: existing.value.lifecycleStatus,
+      toLifecycleStatus: input.toStatus,
     });
 
     if (input.toStatus === "ready_for_invoicing") {
@@ -730,7 +702,7 @@ class FirestoreWorkOrderService implements WorkOrderService {
         entityType: "work-order",
         entityId: transitioned.id,
         workOrder: transitioned,
-        fromStatus: existing.value.status,
+        fromStatus: existing.value.lifecycleStatus,
         toStatus: input.toStatus,
       });
     }
@@ -742,18 +714,22 @@ class FirestoreWorkOrderService implements WorkOrderService {
     workOrder: WorkOrder,
     input: TransitionWorkOrderInput,
   ): Promise<ServiceResult<true>> {
-    if (isTerminalWorkOrderStatus(workOrder.status)) {
+    if (isTerminalWorkOrderStatus(workOrder.lifecycleStatus)) {
       return serviceFail(
         invalidTransitionError(
-          `Work order status ${workOrder.status} is terminal.`,
+          `Work order lifecycle ${workOrder.lifecycleStatus} is terminal.`,
         ),
       );
     }
 
-    if (!canWorkOrderTransition(workOrder.status, input.toStatus)) {
+    if (!canWorkOrderTransition(workOrder.lifecycleStatus, input.toStatus, {
+      previousLifecycleStatus: workOrder.previousLifecycleStatus,
+      holdReason: workOrder.holdReason,
+      escalationReason: workOrder.escalationReason,
+    })) {
       return serviceFail(
         invalidTransitionError(
-          `Work order cannot transition from ${workOrder.status} to ${input.toStatus}.`,
+          `Work order cannot transition from ${workOrder.lifecycleStatus} to ${input.toStatus}.`,
         ),
       );
     }
@@ -766,14 +742,14 @@ class FirestoreWorkOrderService implements WorkOrderService {
       return quoteValidation;
     }
 
-    if (input.toStatus === "completed" && !input.completionAccepted) {
+    if (input.toStatus === "work_completed" && !input.completionAccepted) {
       return serviceFail(
         validationError("Completion must be accepted before the work order is completed."),
       );
     }
 
     if (input.toStatus === "invoiced") {
-      const invoices = await this.repositories.invoices.listByWorkOrderId(
+      const invoices = await this.repositories.clientInvoices.listByWorkOrderId(
         workOrder.id,
       );
       const activeInvoice = invoices.items.find(
@@ -787,13 +763,13 @@ class FirestoreWorkOrderService implements WorkOrderService {
     }
 
     if (input.toStatus === "closed") {
-      const invoices = await this.repositories.invoices.listByWorkOrderId(
+      const invoices = await this.repositories.clientInvoices.listByWorkOrderId(
         workOrder.id,
       );
       const currentInvoice = invoices.items.find(
         (invoice) => invoice.id === workOrder.currentInvoiceId,
       );
-      if (workOrder.status === "paid" && currentInvoice?.status !== "paid") {
+      if (workOrder.lifecycleStatus === "paid" && currentInvoice?.status !== "paid") {
         return serviceFail(
           validationError("The current invoice must be paid before closing."),
         );
@@ -808,10 +784,8 @@ class FirestoreWorkOrderService implements WorkOrderService {
     toStatus: WorkOrderStatus,
   ): Promise<ServiceResult<true>> {
     const quoteGatedStatuses = new Set<WorkOrderStatus>([
-      "approved_to_proceed",
-      "dispatched",
       "assigned",
-      "scheduled",
+      "contractor_scheduled",
       "in_progress",
     ]);
 
@@ -821,9 +795,10 @@ class FirestoreWorkOrderService implements WorkOrderService {
 
     const isQuotePath =
       workOrder.currentQuoteId != null ||
-      workOrder.status === "quote_requested" ||
-      workOrder.status === "quote_received" ||
-      workOrder.status === "pending_client_approval";
+      workOrder.lifecycleStatus === "quote_required" ||
+      workOrder.lifecycleStatus === "contractor_quote_received" ||
+      workOrder.lifecycleStatus === "quote_under_review" ||
+      workOrder.lifecycleStatus === "client_approval_requested";
 
     if (!isQuotePath) {
       return serviceOk(true);
@@ -837,10 +812,7 @@ class FirestoreWorkOrderService implements WorkOrderService {
       );
     }
 
-    const clientQuoteRepository = (this.repositories as FirestoreRepositories).clientQuotes;
-    const quote = clientQuoteRepository
-      ? await clientQuoteRepository.getById(workOrder.currentQuoteId)
-      : await this.repositories.quotes.getById(workOrder.currentQuoteId);
+    const quote = await this.repositories.clientQuotes.getById(workOrder.currentQuoteId);
     if (
       !quote ||
       quote.isDeleted ||
@@ -855,6 +827,73 @@ class FirestoreWorkOrderService implements WorkOrderService {
     }
 
     return serviceOk(true);
+  }
+}
+
+function mapLifecycleStatusToEventType(
+  status: WorkOrderStatus,
+):
+  | "quote_requested"
+  | "client_approved"
+  | "work_started"
+  | "work_completed"
+  | "work_order_closed"
+  | "work_order_cancelled"
+  | "work_order_on_hold"
+  | "work_order_escalated"
+  | null {
+  switch (status) {
+    case "quote_required":
+      return "quote_requested";
+    case "client_approved":
+      return "client_approved";
+    case "in_progress":
+      return "work_started";
+    case "work_completed":
+      return "work_completed";
+    case "closed":
+      return "work_order_closed";
+    case "cancelled":
+      return "work_order_cancelled";
+    case "on_hold":
+      return "work_order_on_hold";
+    case "escalated":
+      return "work_order_escalated";
+    default:
+      return null;
+  }
+}
+
+function eventPayloadForLifecycleStatus(
+  type:
+    | "quote_requested"
+    | "client_approved"
+    | "work_started"
+    | "work_completed"
+    | "work_order_closed"
+    | "work_order_cancelled"
+    | "work_order_on_hold"
+    | "work_order_escalated",
+  workOrder: WorkOrder,
+  fromLifecycleStatus: WorkOrderStatus,
+  reason: string | null,
+) {
+  switch (type) {
+    case "quote_requested":
+      return { workOrderId: workOrder.id };
+    case "client_approved":
+      return {
+        quoteId: workOrder.currentQuoteId ?? workOrder.id,
+        status: workOrder.lifecycleStatus,
+      };
+    case "work_started":
+    case "work_completed":
+    case "work_order_closed":
+      return { fromLifecycleStatus };
+    case "work_order_cancelled":
+    case "work_order_on_hold":
+    case "work_order_escalated":
+      return { fromLifecycleStatus, reason };
   }
 }
 

@@ -12,6 +12,10 @@ import {
   safeLocationSummaryForActor,
 } from "@/server/api/business-entities";
 import {
+  resolveContactsById,
+  resolveLocationContactLinks,
+} from "@/server/api/contact-projections";
+import {
   filterLocations,
   normalizePhaseTwoRouteError,
   parseLocationListFilters,
@@ -59,8 +63,29 @@ export async function POST(request: NextRequest) {
 
     revalidateLocationPaths(result.value.id);
 
+    const [contactsById, linkedContacts] = await Promise.all([
+      resolveContactsById(context.repositories, [
+        result.value.primaryContactId,
+        result.value.siteContactId,
+      ]),
+      resolveLocationContactLinks(context.repositories, result.value.id),
+    ]);
+
     return jsonOk(
-      { location: safeLocationDetailForActor(context.actor, result.value) },
+      {
+        location: {
+          ...safeLocationDetailForActor(context.actor, result.value),
+          primaryContact:
+            result.value.primaryContactId == null
+              ? null
+              : contactsById[result.value.primaryContactId] ?? null,
+          siteContact:
+            result.value.siteContactId == null
+              ? null
+              : contactsById[result.value.siteContactId] ?? null,
+          linkedContacts,
+        },
+      },
       201,
     );
   } catch (error) {

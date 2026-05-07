@@ -10,7 +10,6 @@ import type {
   Location,
   WorkOrder,
 } from "../server/repositories/index.ts";
-import type { WorkOrderDetailDto } from "../server/services/work-order-service.ts";
 import type { ClientAccessActor } from "../types/auth.ts";
 import { USER_ROLES } from "../types/permissions.ts";
 
@@ -37,7 +36,7 @@ test("client work order visibility respects selected location scope", () => {
       organizationId: "org-1",
       clientOrganizationId: "client-1",
       locationId: "loc-1",
-      status: "submitted",
+      status: "triage",
     }),
     true,
   );
@@ -47,7 +46,7 @@ test("client work order visibility respects selected location scope", () => {
       organizationId: "org-1",
       clientOrganizationId: "client-1",
       locationId: "loc-2",
-      status: "submitted",
+      status: "triage",
     }),
     false,
   );
@@ -103,7 +102,6 @@ function makeLocation(): Location {
     deletedAt: null,
     deletedByUserId: null,
     clientOrganizationId: "client-1",
-    clientSnapshot: { id: "client-1", name: "Northwind" },
     name: "Northwind HQ",
     code: "HQ",
     status: "active",
@@ -113,9 +111,7 @@ function makeLocation(): Location {
     region: "ON",
     postalCode: "M5H 1J9",
     countryCode: "CA",
-    locationContactName: "Alex Rivera",
-    locationContactEmail: "alex@example.com",
-    locationContactPhone: "555-0100",
+    siteContactId: "contact-avery-hill",
     accessNotes: "Escort required after 5 p.m.",
     notes: "Internal gate code is 1234.",
   };
@@ -136,14 +132,16 @@ function makeWorkOrder(): WorkOrder {
     workOrderNumber: "WO-1001",
     title: "Generator alarm",
     description: "Investigate generator issue.",
-    status: "submitted",
+    lifecycleStatus: "triage",
+    status: "triage",
     priority: "medium",
     clientOrganizationId: "client-1",
     locationId: "loc-1",
-    requestedByUserId: "user-1",
-    assignedCoordinatorUserId: "coord-1",
-    assignedManagerUserId: "mgr-1",
-    assignedContractorOrganizationId: "contractor-1",
+    requestedByContactId: "contact-1",
+    coordinatorUserId: "coord-1",
+    managerUserId: "mgr-1",
+    assignedContractorOrgId: "contractor-1",
+    assignedContractorId: "contractor-1",
     currentQuoteId: "cq-1",
     currentInvoiceId: null,
     clientSnapshot: { id: "client-1", name: "Northwind" },
@@ -158,45 +156,9 @@ function makeWorkOrder(): WorkOrder {
   };
 }
 
-function makeWorkOrderDetailDto(): WorkOrderDetailDto {
+function makeWorkOrderDetailDto() {
   return {
-    id: "wo-1",
-    workOrderNumber: "WO-1001",
-    title: "Generator alarm",
-    description: "Investigate generator issue.",
-    clientOrganizationId: "client-1",
-    locationId: "loc-1",
-    status: "OPEN",
-    priority: "MEDIUM",
-    category: "ELECTRICAL",
-    requestedByName: "Jordan Lee",
-    requestedByEmail: "jordan@example.com",
-    requestedByPhone: "555-0111",
-    source: "CLIENT_PORTAL",
-    createdByUserId: "user-1",
-    assignedCoordinatorUserId: "coord-1",
-    assignedManagerUserId: "mgr-1",
     dueDate: "2026-04-15T14:00:00.000Z",
-    createdAt: "2026-04-12T10:00:00.000Z",
-    updatedAt: "2026-04-12T10:00:00.000Z",
-    closedAt: null,
-    isArchived: false,
-    searchText: "generator alarm",
-    notes: [],
-    attachments: [],
-    assignments: [],
-    activeAssignment: null,
-    allowedNextStatuses: [],
-    allowedActions: {
-      canUpdateStatus: false,
-      canAddNote: false,
-      canAddAttachment: false,
-      canAssign: false,
-      canReassign: false,
-      canAcceptAssignment: false,
-      canDeclineAssignment: false,
-      canCompleteAssignment: false,
-    },
   };
 }
 

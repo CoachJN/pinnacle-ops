@@ -10,6 +10,7 @@ import {
   normalizeInvoiceStatus,
   normalizeInvoiceStatusResult,
   normalizeQuoteStatus,
+  normalizeWorkOrderStatusResult,
   normalizeWorkOrderStatus,
   validateInvoiceTransition,
   validateLifecycleTransition,
@@ -156,16 +157,24 @@ describe("status adapters", () => {
     assert.equal(normalizeInvoiceStatus(INVOICE_STATUS.NotReady), "NOT_READY");
   });
 
-  test("maps explicit legacy values", () => {
+  test("rejects legacy values instead of mapping them", () => {
     const result = normalizeInvoiceStatusResult("void");
 
-    assert.equal(result.ok, true);
-    assert.equal(result.status, INVOICE_STATUS.Voided);
-    assert.equal(result.ok ? result.source : undefined, "legacy");
+    assert.equal(result.ok, false);
+    assert.equal(result.status, null);
+    assert.equal(result.failureCode, "STATUS_MODEL_MISMATCH");
   });
 
   test("fails safely for mismatched values", () => {
     const result = normalizeInvoiceStatusResult("refunded");
+
+    assert.equal(result.ok, false);
+    assert.equal(result.status, null);
+    assert.equal(result.failureCode, "STATUS_MODEL_MISMATCH");
+  });
+
+  test("rejects legacy lowercase work-order values", () => {
+    const result = normalizeWorkOrderStatusResult("completed");
 
     assert.equal(result.ok, false);
     assert.equal(result.status, null);

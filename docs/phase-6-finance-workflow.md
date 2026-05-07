@@ -20,18 +20,34 @@ Supported invoice statuses are:
 
 - `draft`
 - `issued`
+- `sent`
+- `viewed`
 - `paid`
 - `overdue`
+- `disputed`
+- `resolved`
 - `void`
+- `cancelled`
 
 Allowed invoice transitions are:
 
-- `draft -> issued, void`
-- `issued -> paid, overdue, void`
-- `overdue -> paid, void`
-- `paid` and `void` are terminal
+- `draft -> sent, void, cancelled`
+- `issued -> viewed, overdue, paid, void, disputed, cancelled`
+- `sent -> viewed, overdue, paid, void, disputed, cancelled`
+- `viewed -> overdue, paid, void, disputed`
+- `overdue -> paid, disputed`
+- `disputed -> resolved, void, sent`
+- `resolved -> sent, paid, void, disputed`
+- `paid`, `void`, and `cancelled` are terminal
 
 Overdue support is both explicit and simple: Finance/Admin or Owner can manually mark an issued invoice overdue, and the UI also derives an overdue display state when an issued invoice is past due.
+
+The canonical `ClientInvoice` model already reserves external accounting placeholders:
+
+- `qboInvoiceId`
+- `qboSyncStatus`
+
+Those fields are currently summary sync markers only. The integration itself is intentionally deferred and should attach through service-layer finance actions rather than route handlers or UI components.
 
 ## Intentional MVP Exclusions
 

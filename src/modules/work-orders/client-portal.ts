@@ -1,22 +1,33 @@
 import "server-only";
 
+import type { CommunicationTimelineEntry } from "@/modules/communications";
 import type { ClientQuote, WorkOrder } from "@/server/repositories";
-import type { WorkOrderDetailDto } from "@/server/services/work-order-service";
 import type {
   ClientPortalWorkOrderDetail,
   ClientPortalWorkOrderSummary,
 } from "@/types/work-order";
 
+interface ClientPortalWorkOrderDetailSource {
+  dueDate?: string | null;
+  communications?: CommunicationTimelineEntry[];
+}
+
 export function toClientPortalWorkOrderSummary(
   workOrder: WorkOrder,
   currentQuote: ClientQuote | null,
 ): ClientPortalWorkOrderSummary {
+  const shortDescription =
+    "shortDescription" in workOrder && typeof workOrder.shortDescription === "string"
+      ? workOrder.shortDescription
+      : workOrder.title;
+
   return {
     id: workOrder.id,
     workOrderNumber: workOrder.workOrderNumber,
-    title: workOrder.title,
-    status: workOrder.status,
+    shortDescription,
+    lifecycleStatus: workOrder.lifecycleStatus,
     priority: workOrder.priority,
+    clientOrganizationId: workOrder.clientOrganizationId,
     locationId: workOrder.locationId,
     locationName: workOrder.locationSnapshot.name,
     category: workOrder.category,
@@ -29,27 +40,44 @@ export function toClientPortalWorkOrderSummary(
 }
 
 export function toClientPortalWorkOrderDetail(
-  detail: WorkOrderDetailDto,
+  detail: ClientPortalWorkOrderDetailSource,
   workOrder: WorkOrder,
   currentQuote: ClientQuote | null,
 ): ClientPortalWorkOrderDetail {
+  const shortDescription =
+    "shortDescription" in workOrder && typeof workOrder.shortDescription === "string"
+      ? workOrder.shortDescription
+      : workOrder.title;
+
   return {
     id: workOrder.id,
     clientOrganizationId: workOrder.clientOrganizationId,
     clientOrganizationName: workOrder.clientSnapshot.name,
     workOrderNumber: workOrder.workOrderNumber,
-    title: workOrder.title,
+    shortDescription,
     description: workOrder.description,
-    status: workOrder.status,
+    lifecycleStatus: workOrder.lifecycleStatus,
     priority: workOrder.priority,
     locationId: workOrder.locationId,
     locationName: workOrder.locationSnapshot.name,
     locationCode: null,
     locationAddress: workOrder.locationSnapshot.addressText,
     category: workOrder.category,
-    requestedByName: detail.requestedByName,
-    requestedByEmail: detail.requestedByEmail,
-    requestedByPhone: detail.requestedByPhone,
+    coordinatorUserId:
+      "coordinatorUserId" in workOrder &&
+      typeof workOrder.coordinatorUserId === "string"
+        ? workOrder.coordinatorUserId
+        : null,
+    managerUserId:
+      "managerUserId" in workOrder &&
+      typeof workOrder.managerUserId === "string"
+        ? workOrder.managerUserId
+        : null,
+    assignedContractorId:
+      "assignedContractorId" in workOrder &&
+      typeof workOrder.assignedContractorId === "string"
+        ? workOrder.assignedContractorId
+        : null,
     requestedServiceDate: workOrder.requestedServiceDate,
     dueDate: detail.dueDate,
     createdAt: workOrder.createdAt,
@@ -66,5 +94,6 @@ export function toClientPortalWorkOrderDetail(
           respondedAt: currentQuote.respondedAt,
         }
       : null,
+    communications: detail.communications ?? [],
   };
 }

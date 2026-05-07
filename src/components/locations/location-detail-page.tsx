@@ -3,10 +3,16 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ActionFeedback } from "@/components/shared/action-feedback";
+import {
+  ContactLinkManager,
+  formatRelationshipTypeLabel,
+} from "@/components/shared/contact-link-manager";
 import type { ClientOrganizationDetail } from "@/components/client-organizations/types";
 import { ClientOrganizationStatusBadge } from "@/components/client-organizations/client-organization-status-badge";
 import { LocationStatusBadge } from "@/components/locations/location-status-badge";
 import type { LocationDetail } from "@/components/locations/types";
+import type { ContactLinkInput, ContactSummary } from "@/types/contact";
+import type { ContactRoleSlotAssignment } from "@/lib/contact-linking";
 
 interface LocationDetailPageProps {
   locationId: string;
@@ -18,6 +24,10 @@ interface LocationResponse {
 
 interface ClientOrganizationResponse {
   clientOrganization: ClientOrganizationDetail;
+}
+
+interface ContactsResponse {
+  contacts: ContactSummary[];
 }
 
 interface ApiErrorResponse {
@@ -37,7 +47,16 @@ export function LocationDetailPage({
   const [location, setLocation] = useState<LocationDetail | null>(null);
   const [clientOrganization, setClientOrganization] =
     useState<ClientOrganizationDetail | null>(null);
+  const [contacts, setContacts] = useState<ContactSummary[]>([]);
+  const [contactsById, setContactsById] = useState<Record<string, ContactSummary>>(
+    {},
+  );
+  const [editableLinks, setEditableLinks] = useState<ContactLinkInput[]>([]);
+  const [roleSlots, setRoleSlots] = useState<
+    ContactRoleSlotAssignment<"primaryContactId" | "siteContactId">[]
+  >([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSavingContacts, setIsSavingContacts] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -48,27 +67,52 @@ export function LocationDetailPage({
       setErrorMessage(null);
 
       try {
-        const locationResponse = await fetch(`/api/locations/${locationId}`, {
-          cache: "no-store",
-        });
+        const [locationResponse, contactsResponse] = await Promise.all([
+          fetch(`/api/locations/${locationId}`, {
+            cache: "no-store",
+          }),
+          fetch("/api/contacts", { cache: "no-store" }),
+        ]);
         const locationPayload = (await locationResponse.json()) as
           | LocationResponse
           | ApiErrorResponse;
+        const contactsPayload = (await contactsResponse.json()) as
+          | ContactsResponse
+          | ApiErrorResponse;
 
         if (!locationResponse.ok) {
-          const errorPayload = locationPayload as ApiErrorResponse;
           throw new Error(
             getApiErrorMessage(
-              errorPayload,
+              locationPayload as ApiErrorResponse,
               "Unable to load location details.",
             ),
           );
         }
 
-        const locationSuccessPayload = locationPayload as LocationResponse;
+        if (!contactsResponse.ok) {
+          throw new Error(
+            getApiErrorMessage(
+              contactsPayload as ApiErrorResponse,
+              "Unable to load contacts.",
+            ),
+          );
+        }
+
+        const nextLocation = (locationPayload as LocationResponse).location;
 
         if (!isCancelled) {
-          setLocation(locationSuccessPayload.location);
+          setLocation(nextLocation);
+          setContacts((contactsPayload as ContactsResponse).contacts);
+          setContactsById(
+            Object.fromEntries(
+              (nextLocation.linkedContacts ?? []).map((linkedContact) => [
+                linkedContact.contact.id,
+                linkedContact.contact,
+              ]),
+            ),
+          );
+          setEditableLinks(toEditableLinks(nextLocation));
+          setRoleSlots(toLocationRoleSlots(nextLocation));
         }
 
         if (portalMode) {
@@ -76,7 +120,7 @@ export function LocationDetailPage({
         }
 
         const clientResponse = await fetch(
-          `/api/client-organizations/${locationSuccessPayload.location.clientOrganizationId}`,
+          `/api/client-organizations/${nextLocation.clientOrganizationId}`,
           { cache: "no-store" },
         );
         const clientPayload = (await clientResponse.json()) as
@@ -84,18 +128,18 @@ export function LocationDetailPage({
           | ApiErrorResponse;
 
         if (!clientResponse.ok) {
-          const errorPayload = clientPayload as ApiErrorResponse;
           throw new Error(
             getApiErrorMessage(
-              errorPayload,
+              clientPayload as ApiErrorResponse,
               "Unable to load the related client organization.",
             ),
           );
         }
 
         if (!isCancelled) {
-          const clientSuccessPayload = clientPayload as ClientOrganizationResponse;
-          setClientOrganization(clientSuccessPayload.clientOrganization);
+          setClientOrganization(
+            (clientPayload as ClientOrganizationResponse).clientOrganization,
+          );
         }
       } catch (error) {
         if (!isCancelled) {
@@ -118,6 +162,60 @@ export function LocationDetailPage({
       isCancelled = true;
     };
   }, [locationId, portalMode]);
+
+  async function handleSaveContacts() {
+    if (!location) {
+      return;
+    }
+
+    setIsSavingContacts(true);
+    setErrorMessage(null);
+
+    try {
+      const response = await fetch(`/api/locations/${location.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          primaryContactId:
+            roleSlots.find((slot) => slot.key === "primaryContactId")?.contactId ?? null,
+          siteContactId:
+            roleSlots.find((slot) => slot.key === "siteContactId")?.contactId ?? null,
+          linkedContacts: editableLinks,
+        }),
+      });
+
+      const payload = (await response.json()) as LocationResponse | ApiErrorResponse;
+      if (!response.ok) {
+        throw new Error(
+          getApiErrorMessage(
+            payload as ApiErrorResponse,
+            "Unable to update linked contacts.",
+          ),
+        );
+      }
+
+      const nextLocation = (payload as LocationResponse).location;
+      setLocation(nextLocation);
+      setContactsById(
+        Object.fromEntries(
+          (nextLocation.linkedContacts ?? []).map((linkedContact) => [
+            linkedContact.contact.id,
+            linkedContact.contact,
+          ]),
+        ),
+      );
+      setEditableLinks(toEditableLinks(nextLocation));
+      setRoleSlots(toLocationRoleSlots(nextLocation));
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Unable to update linked contacts.",
+      );
+    } finally {
+      setIsSavingContacts(false);
+    }
+  }
 
   if (isLoading) {
     return (
@@ -207,18 +305,62 @@ export function LocationDetailPage({
 
           <DetailCard
             items={[
-              { label: "Contact name", value: location.locationContactName },
-              { label: "Contact email", value: location.locationContactEmail },
-              { label: "Contact phone", value: location.locationContactPhone },
+              {
+                label: "Primary contact slot",
+                value: formatLinkedContact(contactsById[location.primaryContactId ?? ""]),
+              },
+              {
+                label: "Site contact slot",
+                value: formatLinkedContact(contactsById[location.siteContactId ?? ""]),
+              },
             ]}
-            title="Contact information"
+            title="Role slots"
           />
+
+          <section className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-semibold text-neutral-950">Linked contacts</h2>
+            <div className="mt-4 space-y-3">
+              {(location.linkedContacts ?? []).length > 0 ? (
+                location.linkedContacts?.map((linkedContact) => (
+                  <article
+                    className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4"
+                    key={`${linkedContact.contactId}-${linkedContact.relationshipType}`}
+                  >
+                    <p className="text-sm font-semibold text-neutral-950">
+                      {linkedContact.contact.displayName}
+                    </p>
+                    <p className="mt-1 text-xs uppercase tracking-[0.18em] text-neutral-500">
+                      {formatRelationshipTypeLabel(linkedContact.relationshipType)}
+                      {linkedContact.isPrimary ? " • primary slot" : ""}
+                    </p>
+                    <p className="mt-2 text-sm text-neutral-600">
+                      {linkedContact.contact.email ?? "No email"} •{" "}
+                      {linkedContact.contact.primaryPhone ?? "No phone"}
+                    </p>
+                  </article>
+                ))
+              ) : (
+                <p className="text-sm text-neutral-600">
+                  No normalized contacts are linked yet.
+                </p>
+              )}
+            </div>
+          </section>
 
           <TextCard
             body={location.accessNotes ?? "No access instructions provided."}
             title="Access instructions"
           />
-          <TextCard body={location.notes ?? "No internal notes provided."} title="Notes" />
+          <TextCard
+            body={location.serviceNotes ?? "No service notes provided."}
+            title="Service notes"
+          />
+          {portalMode ? null : (
+            <TextCard
+              body={location.notes ?? "No internal notes provided."}
+              title="Notes"
+            />
+          )}
         </section>
 
         <aside className="space-y-6">
@@ -241,10 +383,15 @@ export function LocationDetailPage({
                   </p>
                   <p className="mt-2 text-sm text-neutral-600">
                     Primary contact:{" "}
-                    {clientOrganization.primaryContactName ?? "Not provided"}
+                    {clientOrganization.primaryContact?.displayName ??
+                      clientOrganization.primaryContactId ??
+                      "Not provided"}
                   </p>
                   <p className="mt-2 text-sm text-neutral-600">
-                    Billing email: {clientOrganization.billingEmail ?? "Not provided"}
+                    Billing contact:{" "}
+                    {clientOrganization.billingContact?.displayName ??
+                      clientOrganization.billingContactId ??
+                      "Not provided"}
                   </p>
                   <Link
                     className="mt-4 inline-flex rounded-full border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:border-neutral-500 hover:text-neutral-950"
@@ -277,6 +424,26 @@ export function LocationDetailPage({
             </p>
           </section>
         </aside>
+      </div>
+
+      <ContactLinkManager
+        contacts={contacts}
+        description="Manage site-linked contacts directly here. Removing a role-assigned contact clears that slot in the same change."
+        linkedContacts={editableLinks}
+        onLinkedContactsChange={setEditableLinks}
+        onRoleSlotsChange={setRoleSlots}
+        roleSlots={roleSlots}
+        title="Manage linked contacts"
+      />
+      <div className="flex justify-end">
+        <button
+          className="inline-flex rounded-full bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={isSavingContacts}
+          onClick={handleSaveContacts}
+          type="button"
+        >
+          {isSavingContacts ? "Saving contacts..." : "Save linked contacts"}
+        </button>
       </div>
     </section>
   );
@@ -319,11 +486,51 @@ function TextCard({ title, body }: { title: string; body: string }) {
   );
 }
 
+function toEditableLinks(location: Pick<LocationDetail, "linkedContacts">): ContactLinkInput[] {
+  return (
+    location.linkedContacts?.map((link) => ({
+      contactId: link.contactId,
+      relationshipType: link.relationshipType,
+      notes: link.notes ?? null,
+    })) ?? []
+  );
+}
+
+function toLocationRoleSlots(
+  location: Pick<LocationDetail, "primaryContactId" | "siteContactId">,
+): ContactRoleSlotAssignment<"primaryContactId" | "siteContactId">[] {
+  return [
+    {
+      key: "primaryContactId",
+      label: "Primary",
+      relationshipType: "primary",
+      contactId: location.primaryContactId ?? null,
+      isPrimary: true,
+    },
+    {
+      key: "siteContactId",
+      label: "Site",
+      relationshipType: "site",
+      contactId: location.siteContactId ?? null,
+    },
+  ];
+}
+
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat("en-CA", {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
+}
+
+function formatLinkedContact(contact: ContactSummary | undefined): string {
+  if (!contact) {
+    return "Not linked";
+  }
+
+  return [contact.displayName, contact.email, contact.primaryPhone]
+    .filter(Boolean)
+    .join(" • ");
 }
 
 function getApiErrorMessage(

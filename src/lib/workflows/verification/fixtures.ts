@@ -1,4 +1,4 @@
-import type { Invoice } from "@/types/financial";
+import type { ClientInvoice as Invoice } from "@/types/invoice";
 import type { WorkOrder } from "@/types/work-order";
 import type {
   WorkflowActionAvailabilityResult,
@@ -381,10 +381,11 @@ export function makeWorkOrder(
 ): WorkOrder & { quoteRequired?: boolean; quoteStatus?: string | null } {
   return {
     id: "wo-1",
+    workOrderNumber: "WO-1001",
     organizationId: "org-1",
     clientOrganizationId: "client-1",
     locationId: "loc-1",
-    requestedByUserId: "user-1",
+    requestedByContactId: "contact-1",
     title: "Leaking pipe",
     description: "Pipe under sink is leaking",
     status: WORK_ORDER_STATUS.New as WorkOrder["status"],

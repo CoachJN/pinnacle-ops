@@ -77,7 +77,13 @@ export function ContractorListPage() {
     () => ({
       total: contractors.length,
       assignable: contractors.filter((contractor) => contractor.isAssignable).length,
+      branches: contractors.filter((contractor) => contractor.parentContractorId).length,
     }),
+    [contractors],
+  );
+  const contractorsById = useMemo(
+    () =>
+      Object.fromEntries(contractors.map((contractor) => [contractor.id, contractor])),
     [contractors],
   );
 
@@ -133,6 +139,7 @@ export function ContractorListPage() {
         <div className="mt-5 flex flex-wrap gap-3 text-sm text-neutral-600">
           <span>{counts.total} contractor records</span>
           <span>{counts.assignable} assignment-ready</span>
+          <span>{counts.branches} branch records</span>
         </div>
       </section>
 
@@ -161,8 +168,9 @@ export function ContractorListPage() {
               <thead className="bg-neutral-50 text-left text-xs font-semibold uppercase tracking-[0.12em] text-neutral-500">
                 <tr>
                   <th className="px-6 py-4">Name</th>
+                  <th className="px-6 py-4">Hierarchy</th>
                   <th className="px-6 py-4">Status</th>
-                  <th className="px-6 py-4">Primary trade</th>
+                  <th className="px-6 py-4">Trades</th>
                   <th className="px-6 py-4">Contact</th>
                   <th className="px-6 py-4">Created</th>
                 </tr>
@@ -175,10 +183,15 @@ export function ContractorListPage() {
                         className="font-semibold text-neutral-950 underline-offset-4 hover:underline"
                         href={`/contractors/${contractor.id}`}
                       >
-                        {contractor.name}
+                        {contractor.displayName ?? contractor.legalName}
                       </Link>
                       <p className="mt-1 text-xs text-neutral-500">
-                        {contractor.company ?? "Independent contractor"}
+                        {contractor.legalName}
+                      </p>
+                    </td>
+                    <td className="px-6 py-4 align-top">
+                      <p className="text-neutral-700">
+                        {formatHierarchy(contractor, contractorsById)}
                       </p>
                     </td>
                     <td className="px-6 py-4 align-top">
@@ -192,12 +205,14 @@ export function ContractorListPage() {
                       </div>
                     </td>
                     <td className="px-6 py-4 align-top text-neutral-700">
-                      {contractor.serviceCategories[0] ?? "Not set"}
+                      {contractor.trades.length > 0
+                        ? contractor.trades.map(formatTradeLabel).join(", ")
+                        : "Not set"}
                     </td>
                     <td className="px-6 py-4 align-top text-neutral-700">
-                      <p>{contractor.email || "No email"}</p>
+                      <p>{contractor.businessEmail || "No email"}</p>
                       <p className="mt-1 text-xs text-neutral-500">
-                        {contractor.phone || "No phone"}
+                        {contractor.mainPhone || "No phone"}
                       </p>
                     </td>
                     <td className="px-6 py-4 align-top text-neutral-700">
@@ -218,4 +233,25 @@ function formatDate(value: string): string {
   return new Intl.DateTimeFormat("en-CA", {
     dateStyle: "medium",
   }).format(new Date(value));
+}
+
+function formatHierarchy(
+  contractor: Contractor,
+  contractorsById: Record<string, Contractor>,
+): string {
+  if (!contractor.parentContractorId) {
+    return "Parent company";
+  }
+
+  const parent = contractorsById[contractor.parentContractorId];
+  return parent
+    ? `${parent.displayName ?? parent.legalName} > ${contractor.displayName ?? contractor.legalName}`
+    : "Branch";
+}
+
+function formatTradeLabel(value: string): string {
+  return value
+    .split("_")
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
 }

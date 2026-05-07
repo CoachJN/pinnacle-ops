@@ -1,4 +1,9 @@
-import type { EntityId, IsoDateTimeString } from "@/types/entity";
+import type {
+  CreateEntityInput,
+  EntityId,
+  IsoDateTimeString,
+  UpdateEntityInput,
+} from "@/types/entity";
 import type { UserRole } from "@/types/permissions";
 
 export type QuoteStatus =
@@ -10,6 +15,16 @@ export type QuoteStatus =
   | "client_rejected"
   | "superseded";
 
+export const CONTRACTOR_QUOTE_STATUSES = [
+  "draft",
+  "submitted",
+  "under_review",
+  "accepted",
+  "rejected",
+  "expired",
+  "cancelled",
+] as const;
+
 export interface QuoteTotals {
   laborAmount: number;
   materialAmount: number;
@@ -17,52 +32,20 @@ export interface QuoteTotals {
   totalAmount: number;
 }
 
-export interface Quote extends QuoteTotals {
-  id: EntityId;
-  workOrderId: EntityId;
-  versionNumber: number;
-  status: QuoteStatus;
-  assignedContractorId: EntityId | null;
-  contractorName: string;
-  submittedByName: string;
-  submittedByRole: UserRole;
-  scopeSummary: string;
-  contractorNotes: string | null;
-  internalReviewNotes: string | null;
-  clientResponseNotes: string | null;
-  submittedAt: IsoDateTimeString | null;
-  reviewedAt: IsoDateTimeString | null;
-  clientDecisionAt: IsoDateTimeString | null;
-  createdAt: IsoDateTimeString;
-  updatedAt: IsoDateTimeString;
-  createdBy: string;
-  lastUpdatedBy: string;
-}
-
-export type QuoteFormInput = Pick<
-  Quote,
-  | "contractorName"
-  | "assignedContractorId"
-  | "laborAmount"
-  | "materialAmount"
-  | "otherAmount"
-  | "scopeSummary"
-  | "contractorNotes"
->;
-
 export type ContractorQuoteStatus =
-  | "draft"
-  | "submitted"
-  | "under_review"
-  | "rejected"
-  | "accepted";
+  | (typeof CONTRACTOR_QUOTE_STATUSES)[number];
+
+export const CLIENT_QUOTE_STATUSES = [
+  "draft",
+  "sent",
+  "approved",
+  "rejected",
+  "expired",
+  "cancelled",
+] as const;
 
 export type ClientQuoteStatus =
-  | "draft"
-  | "sent"
-  | "approved"
-  | "rejected"
-  | "expired";
+  | (typeof CLIENT_QUOTE_STATUSES)[number];
 
 export type QuoteDecisionAction =
   | "accept_contractor_quote"
@@ -84,11 +67,29 @@ export interface QuoteLineItemTotals {
   totalAmount: number;
 }
 
-export interface ContractorQuote extends QuoteLineItemTotals {
+export interface QuoteSnapshot {
   id: EntityId;
+  name: string;
+}
+
+export interface ContractorQuoteOwnershipReference {
   workOrderId: EntityId;
-  contractorUserId: EntityId | null;
   contractorOrganizationId: EntityId | null;
+}
+
+export interface ClientQuoteOwnershipReference {
+  workOrderId: EntityId;
+  clientOrganizationId: EntityId;
+  locationId: EntityId;
+}
+
+export interface ContractorQuote
+  extends QuoteLineItemTotals,
+    ContractorQuoteOwnershipReference {
+  id: EntityId;
+  contractorUserId: EntityId | null;
+  clientOrganizationId: EntityId;
+  locationId: EntityId;
   lineItems: QuoteLineItem[];
   notes: string | null;
   status: ContractorQuoteStatus;
@@ -96,13 +97,23 @@ export interface ContractorQuote extends QuoteLineItemTotals {
   reviewedAt: IsoDateTimeString | null;
   reviewedByUserId: EntityId | null;
   rejectionReason: string | null;
+  workOrderSnapshot?: QuoteSnapshot;
+  contractorSnapshot?: QuoteSnapshot | null;
+  organizationId: EntityId;
+  recordStatus: "active" | "archived";
+  isDeleted: boolean;
   createdAt: IsoDateTimeString;
   updatedAt: IsoDateTimeString;
+  createdByUserId: EntityId;
+  updatedByUserId: EntityId;
+  deletedAt?: IsoDateTimeString | null;
+  deletedByUserId?: EntityId | null;
 }
 
-export interface ClientQuote extends QuoteLineItemTotals {
+export interface ClientQuote
+  extends QuoteLineItemTotals,
+    ClientQuoteOwnershipReference {
   id: EntityId;
-  workOrderId: EntityId;
   sourceContractorQuoteId: EntityId | null;
   lineItems: QuoteLineItem[];
   notes: string | null;
@@ -113,8 +124,15 @@ export interface ClientQuote extends QuoteLineItemTotals {
   rejectedAt: IsoDateTimeString | null;
   rejectionReason: string | null;
   createdByUserId: EntityId;
+  workOrderSnapshot?: QuoteSnapshot;
+  organizationId: EntityId;
+  recordStatus: "active" | "archived";
+  isDeleted: boolean;
   createdAt: IsoDateTimeString;
   updatedAt: IsoDateTimeString;
+  updatedByUserId: EntityId;
+  deletedAt?: IsoDateTimeString | null;
+  deletedByUserId?: EntityId | null;
 }
 
 export interface ClientPortalQuoteDetail extends QuoteLineItemTotals {
@@ -133,4 +151,66 @@ export interface ClientPortalQuoteDetail extends QuoteLineItemTotals {
   createdAt: IsoDateTimeString;
   updatedAt: IsoDateTimeString;
   workOrderNumber: string;
+}
+
+export interface CreateContractorQuoteInput
+  extends CreateEntityInput,
+    ContractorQuoteOwnershipReference {
+  contractorUserId?: EntityId | null;
+  clientOrganizationId: EntityId;
+  locationId: EntityId;
+  lineItems: QuoteLineItem[];
+  subtotal: number;
+  taxAmount: number;
+  totalAmount: number;
+  notes?: string | null;
+  status?: ContractorQuoteStatus;
+}
+
+export interface UpdateContractorQuoteInput extends UpdateEntityInput {
+  workOrderId?: EntityId;
+  contractorUserId?: EntityId | null;
+  contractorOrganizationId?: EntityId | null;
+  clientOrganizationId?: EntityId;
+  locationId?: EntityId;
+  lineItems?: QuoteLineItem[];
+  subtotal?: number;
+  taxAmount?: number;
+  totalAmount?: number;
+  notes?: string | null;
+  status?: ContractorQuoteStatus;
+  submittedAt?: IsoDateTimeString | null;
+  reviewedAt?: IsoDateTimeString | null;
+  reviewedByUserId?: EntityId | null;
+  rejectionReason?: string | null;
+}
+
+export interface CreateClientQuoteInput
+  extends CreateEntityInput,
+    ClientQuoteOwnershipReference {
+  sourceContractorQuoteId?: EntityId | null;
+  lineItems: QuoteLineItem[];
+  subtotal: number;
+  taxAmount: number;
+  totalAmount: number;
+  notes?: string | null;
+  status?: ClientQuoteStatus;
+}
+
+export interface UpdateClientQuoteInput extends UpdateEntityInput {
+  workOrderId?: EntityId;
+  clientOrganizationId?: EntityId;
+  locationId?: EntityId;
+  sourceContractorQuoteId?: EntityId | null;
+  lineItems?: QuoteLineItem[];
+  subtotal?: number;
+  taxAmount?: number;
+  totalAmount?: number;
+  notes?: string | null;
+  status?: ClientQuoteStatus;
+  sentAt?: IsoDateTimeString | null;
+  respondedAt?: IsoDateTimeString | null;
+  approvedAt?: IsoDateTimeString | null;
+  rejectedAt?: IsoDateTimeString | null;
+  rejectionReason?: string | null;
 }

@@ -39,8 +39,9 @@ function buildRoleCapabilityMap(): RoleCapabilityMap {
   const capabilities = Object.fromEntries(
     APPLICATION_ROLES.map((role) => [role, [] as RoleCapability[]]),
   ) as Record<UserRole, RoleCapability[]>;
+  const permissionEntities = [...new Set(Object.values(PERMISSION_ENTITIES))];
 
-  for (const entity of Object.values(PERMISSION_ENTITIES)) {
+  for (const entity of permissionEntities) {
     for (const action of Object.values(AUTHORITY_CATEGORIES)) {
       const roles = ROLE_PERMISSION_MATRIX[entity][action];
 

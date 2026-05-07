@@ -25,7 +25,7 @@ import {
   applyWorkOrderTransition,
   type LifecycleTransitionRepositories,
 } from "../lib/workflows/transition-service/index.ts";
-import type { Invoice } from "../types/financial.ts";
+import type { ClientInvoice as Invoice } from "../types/invoice.ts";
 import type { WorkOrder } from "../types/work-order.ts";
 
 describe("transition reaction intent mapping", () => {
@@ -386,7 +386,7 @@ function makeWorkOrder(
     organizationId: "org-1",
     clientOrganizationId: "client-1",
     locationId: "loc-1",
-    requestedByUserId: "user-1",
+    requestedByContactId: "contact-1",
     title: "Leaking pipe",
     description: "Pipe under sink is leaking",
     status: WORK_ORDER_STATUS.New as WorkOrder["status"],

@@ -2,12 +2,32 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import type { Invoice } from "@/types/invoice";
+import type { ClientInvoice } from "@/types/invoice";
 import { buildInvoiceCreationEligibility } from "@/modules/finance";
 import { InvoiceDetailCard } from "@/components/invoices/invoice-detail-card";
 import { InvoiceHistoryList } from "./invoice-history-list";
 
-type FinanceWorkOrderStatus = "NEW" | "OPEN" | "ASSIGNED" | "IN_PROGRESS" | "COMPLETED" | "READY_FOR_INVOICING" | "CANCELLED" | "CLOSED";
+type FinanceWorkOrderStatus =
+  | "new"
+  | "triage"
+  | "assigned"
+  | "awaiting_contractor_response"
+  | "quote_required"
+  | "contractor_quote_received"
+  | "quote_under_review"
+  | "client_approval_requested"
+  | "client_approved"
+  | "contractor_scheduled"
+  | "in_progress"
+  | "work_completed"
+  | "completion_review"
+  | "ready_for_invoicing"
+  | "invoiced"
+  | "paid"
+  | "closed"
+  | "on_hold"
+  | "escalated"
+  | "cancelled";
 
 interface WorkOrderFinancePanelProps {
   onFinanceUpdated: () => Promise<void>;
@@ -16,7 +36,7 @@ interface WorkOrderFinancePanelProps {
 }
 
 interface InvoiceListResponse {
-  invoices?: Invoice[];
+  invoices?: ClientInvoice[];
 }
 
 interface ApiErrorResponse {
@@ -32,7 +52,7 @@ export function WorkOrderFinancePanel({
 }: WorkOrderFinancePanelProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [invoices, setInvoices] = useState<ClientInvoice[]>([]);
   const [paymentReference, setPaymentReference] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [tone, setTone] = useState<"error" | "success">("success");
@@ -281,16 +301,5 @@ export function WorkOrderFinancePanel({
 }
 
 function mapFinanceStatusToCanonical(status: FinanceWorkOrderStatus) {
-  switch (status) {
-    case "COMPLETED":
-      return "completed" as const;
-    case "READY_FOR_INVOICING":
-      return "ready_for_invoicing" as const;
-    case "CANCELLED":
-      return "cancelled" as const;
-    case "CLOSED":
-      return "closed" as const;
-    default:
-      return "in_progress" as const;
-  }
+  return status;
 }

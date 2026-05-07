@@ -32,6 +32,7 @@ const entityIdSchema = z.string().trim().min(1, "Must be a non-empty identifier.
 const optionalEntityIdSchema = entityIdSchema.optional();
 const optionalTrimmedStringSchema = z.string().trim().min(1).optional();
 const optionalEmailSchema = z.string().trim().email().optional();
+const optionalNonNegativeIntegerSchema = z.number().int().nonnegative().nullable().optional();
 const isoDateTimeSchema = z
   .string()
   .trim()
@@ -51,17 +52,31 @@ export const createWorkOrderSchema: z.ZodType<CreateWorkOrderDto> = z
     description: z.string().trim().min(10),
     clientOrganizationId: entityIdSchema,
     locationId: entityIdSchema,
+    requestedByContactId: optionalEntityIdSchema,
+    siteContactId: optionalEntityIdSchema,
     priority: workOrderPrioritySchema,
     category: workOrderCategorySchema,
+    requestedServiceDate: optionalIsoDateTimeSchema,
+    requiresQuote: z.boolean().optional(),
+    quoteRequiredThresholdCents: optionalNonNegativeIntegerSchema,
     requestedByName: z.string().trim().min(1),
     requestedByEmail: optionalEmailSchema,
     requestedByPhone: optionalTrimmedStringSchema,
     source: workOrderSourceSchema,
     createdByUserId: entityIdSchema,
-    assignedCoordinatorUserId: optionalEntityIdSchema,
-    assignedManagerUserId: optionalEntityIdSchema,
+    coordinatorUserId: optionalEntityIdSchema,
+    managerUserId: optionalEntityIdSchema,
     dueDate: optionalIsoDateTimeSchema,
     status: workOrderStatusSchema.optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.requiresQuote === false && value.quoteRequiredThresholdCents != null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "quoteRequiredThresholdCents can only be set when requiresQuote is true.",
+        path: ["quoteRequiredThresholdCents"],
+      });
+    }
   })
   .strict();
 
@@ -196,8 +211,8 @@ export const workOrderListQuerySchema: z.ZodType<WorkOrderListQueryDto> = z
     source: workOrderSourceSchema.optional(),
     clientOrganizationId: optionalEntityIdSchema,
     locationId: optionalEntityIdSchema,
-    assignedCoordinatorUserId: optionalEntityIdSchema,
-    assignedManagerUserId: optionalEntityIdSchema,
+    coordinatorUserId: optionalEntityIdSchema,
+    managerUserId: optionalEntityIdSchema,
     requestedByEmail: optionalEmailSchema,
     dueDateFrom: optionalIsoDateTimeSchema,
     dueDateTo: optionalIsoDateTimeSchema,

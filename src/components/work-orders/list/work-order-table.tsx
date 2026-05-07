@@ -14,6 +14,12 @@ export interface WorkOrderTableRow {
   title: string;
   clientName: string;
   locationName: string;
+  requestedServiceDate: string | null;
+  requiresQuote: boolean;
+  quoteRequiredThresholdCents: number | null;
+  coordinatorLabel: string;
+  managerLabel: string;
+  assignedContractorLabel: string;
   status: WorkOrderStatus;
   priority: WorkOrderPriority;
   createdAt: string;
@@ -41,6 +47,10 @@ export function WorkOrderTable({
               <th className="px-4 py-3">Title</th>
               <th className="px-4 py-3">Client</th>
               <th className="px-4 py-3">Location</th>
+              <th className="px-4 py-3">Service Date</th>
+              <th className="px-4 py-3">Ownership</th>
+              <th className="px-4 py-3">Contractor</th>
+              <th className="px-4 py-3">Quote</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Priority</th>
               <th className="px-4 py-3">Created</th>
@@ -84,6 +94,22 @@ export function WorkOrderTable({
                   </td>
                   <td className="px-4 py-4 text-neutral-600">{row.clientName}</td>
                   <td className="px-4 py-4 text-neutral-600">{row.locationName}</td>
+                  <td className="whitespace-nowrap px-4 py-4 text-neutral-600">
+                    {formatOptionalDate(row.requestedServiceDate)}
+                  </td>
+                  <td className="px-4 py-4 text-neutral-600">
+                    <div>{row.coordinatorLabel}</div>
+                    <div>{row.managerLabel}</div>
+                  </td>
+                  <td className="px-4 py-4 text-neutral-600">
+                    {row.assignedContractorLabel}
+                  </td>
+                  <td className="px-4 py-4 text-neutral-600">
+                    {formatQuoteRequirement(
+                      row.requiresQuote,
+                      row.quoteRequiredThresholdCents,
+                    )}
+                  </td>
                   <td className="px-4 py-4">
                     <WorkOrderStatusBadge status={row.status} />
                   </td>
@@ -111,4 +137,32 @@ function formatDateTime(value: string): string {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
+}
+
+function formatOptionalDate(value: string | null): string {
+  if (!value) {
+    return "Not set";
+  }
+
+  return new Intl.DateTimeFormat("en-CA", {
+    dateStyle: "medium",
+  }).format(new Date(value));
+}
+
+function formatQuoteRequirement(
+  requiresQuote: boolean,
+  quoteRequiredThresholdCents: number | null,
+): string {
+  if (!requiresQuote) {
+    return "Not required";
+  }
+
+  if (quoteRequiredThresholdCents == null) {
+    return "Required";
+  }
+
+  return new Intl.NumberFormat("en-CA", {
+    style: "currency",
+    currency: "CAD",
+  }).format(quoteRequiredThresholdCents / 100);
 }

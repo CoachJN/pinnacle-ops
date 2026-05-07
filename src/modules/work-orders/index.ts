@@ -12,6 +12,18 @@ export {
   isTerminalAssignmentWorkOrderStatus,
 } from "./domain/assignment-rules.ts";
 export {
+  getAllowedNextWorkOrderLifecycleStatuses,
+  getWorkOrderLifecycleLabel,
+  isTerminalWorkOrderLifecycleStatus,
+  isWorkOrderLifecycleTransitionAllowed,
+  validateWorkOrderLifecycleTransition,
+  WORK_ORDER_LIFECYCLE_LABELS,
+  WORK_ORDER_LIFECYCLE_STATUSES,
+  WORK_ORDER_LIFECYCLE_TRANSITIONS,
+  type WorkOrderLifecycleStatus,
+  type WorkOrderLifecycleTransitionContext,
+} from "./domain/lifecycle.ts";
+export {
   ASSIGNMENT_ASSIGNEE_TYPES,
   ASSIGNMENT_STATUS_LABELS,
   ASSIGNMENT_STATUSES,

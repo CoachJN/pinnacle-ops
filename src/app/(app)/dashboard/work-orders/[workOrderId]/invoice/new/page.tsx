@@ -30,7 +30,7 @@ export default async function InvoiceCreatePage({
   }
 
   const eligibility = buildInvoiceCreationEligibility({
-    workOrderStatus: workOrder.value.status,
+    workOrderStatus: workOrder.value.lifecycleStatus,
     hasActiveInvoice: invoices.value.some((invoice) => invoice.status !== "void"),
   });
 

@@ -39,7 +39,7 @@ export const optimizationRankingScenario = makeScenario({
       id: "invoice-overdue",
       workOrderId: "wo-low",
       status: INVOICE_STATUS.Overdue,
-      dueAt: "2025-12-20T00:00:00.000Z",
+      dueDate: "2025-12-20T00:00:00.000Z",
     });
     env.workflowSlaTimers.push({
       timerId: "timer-critical-invoice",

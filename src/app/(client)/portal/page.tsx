@@ -73,11 +73,13 @@ export default async function ClientPortalLandingPage() {
                   <p className="text-sm font-semibold text-slate-950">
                     {workOrder.workOrderNumber}
                   </p>
-                  <p className="mt-1 text-sm text-slate-600">{workOrder.title}</p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {workOrder.shortDescription}
+                  </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600">
                   <span>{workOrder.locationName}</span>
-                  <span>{workOrder.status}</span>
+                  <span>{workOrder.lifecycleStatus}</span>
                   <span>{formatDate(workOrder.updatedAt)}</span>
                 </div>
               </Link>

@@ -22,22 +22,29 @@ import type { Comment } from "@/types/collaboration";
 import type { EntityId, IsoDateTimeString } from "@/types/entity";
 import type {
   ClientQuote,
+  ClientQuoteOwnershipReference,
   ContractorQuote,
-  CurrencyCode,
-  Invoice,
-  MoneyAmountCents,
-} from "@/types/financial";
-import type {
-  ClientOrganization,
-  ContractorOrganization,
-  Location,
-} from "@/types/organization";
+  ContractorQuoteOwnershipReference,
+} from "@/types/quote";
+import type { ClientInvoice as Invoice, InvoiceCurrency } from "@/types/invoice";
+import type { ClientOrganization } from "@/types/client-organization";
+import type { ContractorOrganization } from "@/types/contractor";
+import type { Location } from "@/types/location";
 import {
   FINANCIAL_VISIBILITY_LAYERS,
   type FinancialVisibilityLayer,
   roleCanViewFinancialLayer,
 } from "@/types/financial-controls";
 import type { Assignment, WorkOrder } from "@/types/work-order";
+import {
+  AUTHORITY_CATEGORIES,
+  PERMISSION_ENTITIES,
+  roleCanAccessEntity,
+} from "@/types/permissions";
+import type { ClientQuoteStatus, ContractorQuoteStatus } from "@/types/quote";
+
+type CurrencyCode = InvoiceCurrency;
+type MoneyAmountCents = number;
 
 type ExternalEntityFields = Pick<
   WorkOrder,
@@ -56,8 +63,7 @@ export type ClientWorkOrderView = ExternalEntityFields &
     WorkOrder,
     | "clientOrganizationId"
     | "locationId"
-    | "requestedByUserId"
-    | "title"
+    | "shortDescription"
     | "description"
     | "status"
     | "priority"
@@ -70,7 +76,7 @@ export type ClientWorkOrderView = ExternalEntityFields &
 export type ContractorWorkOrderView = ExternalEntityFields &
   Pick<
     WorkOrder,
-    | "title"
+    | "shortDescription"
     | "description"
     | "status"
     | "priority"
@@ -114,15 +120,11 @@ export type ContractorQuoteView = Pick<
   | "organizationId"
   | "workOrderId"
   | "contractorOrganizationId"
-  | "quoteNumber"
   | "status"
-  | "currencyCode"
-  | "scopeOfWork"
-  | "subtotalAmountCents"
-  | "taxAmountCents"
-  | "totalAmountCents"
+  | "subtotal"
+  | "taxAmount"
+  | "totalAmount"
   | "submittedAt"
-  | "expiresAt"
   | "recordStatus"
   | "isDeleted"
   | "createdAt"
@@ -140,16 +142,12 @@ export type ClientQuoteView = Pick<
   | "workOrderId"
   | "clientOrganizationId"
   | "locationId"
-  | "quoteNumber"
   | "status"
-  | "currencyCode"
-  | "scopeOfWork"
-  | "subtotalAmountCents"
-  | "taxAmountCents"
-  | "totalAmountCents"
+  | "subtotal"
+  | "taxAmount"
+  | "totalAmount"
   | "sentAt"
   | "respondedAt"
-  | "expiresAt"
   | "recordStatus"
   | "isDeleted"
   | "createdAt"
@@ -167,15 +165,14 @@ export type ClientInvoiceView = Pick<
   | "workOrderId"
   | "clientOrganizationId"
   | "locationId"
-  | "clientQuoteId"
   | "invoiceNumber"
   | "status"
-  | "currencyCode"
-  | "subtotalAmountCents"
-  | "taxAmountCents"
-  | "totalAmountCents"
-  | "issuedAt"
-  | "dueAt"
+  | "currency"
+  | "subtotal"
+  | "taxAmount"
+  | "totalAmount"
+  | "issuedDate"
+  | "dueDate"
   | "overdueAt"
   | "disputedAt"
   | "resolvedAt"
@@ -216,8 +213,6 @@ export type ClientOrganizationView = Pick<
   | "name"
   | "displayName"
   | "status"
-  | "primaryContactEmail"
-  | "primaryContactPhone"
   | "recordStatus"
   | "isDeleted"
   | "createdAt"
@@ -251,8 +246,6 @@ export type ContractorOrganizationView = Pick<
   | "name"
   | "displayName"
   | "status"
-  | "primaryContactEmail"
-  | "primaryContactPhone"
   | "recordStatus"
   | "isDeleted"
   | "createdAt"
@@ -282,21 +275,21 @@ export interface BillingRecordView {
   workOrderId?: EntityId;
   clientOrganizationId?: EntityId;
   contractorOrganizationId?: EntityId;
-  currencyCode: CurrencyCode;
-  subtotalAmountCents: MoneyAmountCents;
-  taxAmountCents?: MoneyAmountCents;
-  totalAmountCents: MoneyAmountCents;
-  issuedAt?: IsoDateTimeString;
+  currency: CurrencyCode;
+  subtotal: MoneyAmountCents;
+  taxAmount?: MoneyAmountCents;
+  totalAmount: MoneyAmountCents;
+  issuedDate?: IsoDateTimeString;
   paidAt?: IsoDateTimeString;
 }
 
 export interface MarginMarkupView {
   workOrderId: EntityId;
   organizationId: EntityId;
-  currencyCode: CurrencyCode;
-  contractorCostAmountCents: MoneyAmountCents;
-  clientSellAmountCents: MoneyAmountCents;
-  marginAmountCents: MoneyAmountCents;
+  currency: CurrencyCode;
+  contractorCost: MoneyAmountCents;
+  clientSell: MoneyAmountCents;
+  marginAmount: MoneyAmountCents;
   markupPercent?: number;
 }
 
@@ -315,6 +308,43 @@ export interface WorkOrderDataVisibilityBundle {
   users?: readonly User[];
   billingRecords?: readonly BillingRecordView[];
   marginMarkup?: MarginMarkupView;
+}
+
+export interface QuoteWorkflowVisibility {
+  showContractorQuotes: boolean;
+  showClientQuotes: boolean;
+}
+
+type QuoteWorkflowContractorQuote = TenantScopedQuoteFields &
+  ContractorQuoteOwnershipReference & {
+    id: EntityId;
+    status?: ContractorQuoteStatus;
+  };
+
+type QuoteWorkflowClientQuote = TenantScopedQuoteFields &
+  ClientQuoteOwnershipReference & {
+    id: EntityId;
+    status?: ClientQuoteStatus;
+  };
+
+interface TenantScopedQuoteFields {
+  organizationId: EntityId;
+}
+
+export interface QuoteWorkflowVisibilityBundle<
+  TContractorQuote extends QuoteWorkflowContractorQuote = ContractorQuote,
+  TClientQuote extends QuoteWorkflowClientQuote = ClientQuote,
+> {
+  contractorQuotes: readonly TContractorQuote[];
+  clientQuotes: readonly TClientQuote[];
+  activeClientQuote: TClientQuote | null;
+}
+
+export interface VisibleQuoteWorkflowBundle<
+  TContractorQuote extends QuoteWorkflowContractorQuote = ContractorQuote,
+  TClientQuote extends QuoteWorkflowClientQuote = ClientQuote,
+> extends QuoteWorkflowVisibilityBundle<TContractorQuote, TClientQuote> {
+  visibility: QuoteWorkflowVisibility;
 }
 
 export interface VisibleWorkOrderDataBundle {
@@ -403,8 +433,7 @@ export function exposeWorkOrder(
       organizationId: workOrder.organizationId,
       clientOrganizationId: workOrder.clientOrganizationId,
       locationId: workOrder.locationId,
-      requestedByUserId: workOrder.requestedByUserId,
-      title: workOrder.title,
+      shortDescription: workOrder.shortDescription,
       description: workOrder.description,
       status: workOrder.status,
       priority: workOrder.priority,
@@ -422,7 +451,7 @@ export function exposeWorkOrder(
   return {
     id: workOrder.id,
     organizationId: workOrder.organizationId,
-    title: workOrder.title,
+    shortDescription: workOrder.shortDescription,
     description: workOrder.description,
     status: workOrder.status,
     priority: workOrder.priority,
@@ -498,15 +527,11 @@ export function exposeContractorQuotes(
         organizationId: contractorQuote.organizationId,
         workOrderId: contractorQuote.workOrderId,
         contractorOrganizationId: contractorQuote.contractorOrganizationId,
-        quoteNumber: contractorQuote.quoteNumber,
         status: contractorQuote.status,
-        currencyCode: contractorQuote.currencyCode,
-        scopeOfWork: contractorQuote.scopeOfWork,
-        subtotalAmountCents: contractorQuote.subtotalAmountCents,
-        taxAmountCents: contractorQuote.taxAmountCents,
-        totalAmountCents: contractorQuote.totalAmountCents,
+        subtotal: contractorQuote.subtotal,
+        taxAmount: contractorQuote.taxAmount,
+        totalAmount: contractorQuote.totalAmount,
         submittedAt: contractorQuote.submittedAt,
-        expiresAt: contractorQuote.expiresAt,
         recordStatus: contractorQuote.recordStatus,
         isDeleted: contractorQuote.isDeleted,
         createdAt: contractorQuote.createdAt,
@@ -514,6 +539,51 @@ export function exposeContractorQuotes(
       },
     ];
   });
+}
+
+export function exposeQuoteWorkflowBundle<
+  TContractorQuote extends QuoteWorkflowContractorQuote,
+  TClientQuote extends QuoteWorkflowClientQuote,
+>(
+  actor: AccessActor,
+  bundle: QuoteWorkflowVisibilityBundle<TContractorQuote, TClientQuote>,
+  context: AssignmentRelationshipContext = {},
+): VisibleQuoteWorkflowBundle<TContractorQuote, TClientQuote> {
+  const contractorQuotes = bundle.contractorQuotes.filter((contractorQuote) =>
+    contractorQuotePolicy.canRead(actor, contractorQuote, context),
+  );
+  const clientQuotes = bundle.clientQuotes.filter((clientQuote) =>
+    clientQuotePolicy.canRead(actor, clientQuote),
+  );
+  const activeClientQuote =
+    bundle.activeClientQuote &&
+    clientQuotePolicy.canRead(actor, bundle.activeClientQuote)
+      ? bundle.activeClientQuote
+      : null;
+
+  return {
+    contractorQuotes,
+    clientQuotes,
+    activeClientQuote,
+    visibility: {
+      showContractorQuotes:
+        actor.actorType === "contractor" ||
+        (actor.actorType === "internal" &&
+          roleCanAccessEntity(
+            actor.role,
+            PERMISSION_ENTITIES.ContractorQuotes,
+            AUTHORITY_CATEGORIES.View,
+          )),
+      showClientQuotes:
+        actor.actorType === "client" ||
+        (actor.actorType === "internal" &&
+          roleCanAccessEntity(
+            actor.role,
+            PERMISSION_ENTITIES.ClientQuotes,
+            AUTHORITY_CATEGORIES.View,
+          )),
+    },
+  };
 }
 
 export function exposeClientQuotes(
@@ -540,16 +610,12 @@ export function exposeClientQuotes(
         workOrderId: clientQuote.workOrderId,
         clientOrganizationId: clientQuote.clientOrganizationId,
         locationId: clientQuote.locationId,
-        quoteNumber: clientQuote.quoteNumber,
         status: clientQuote.status,
-        currencyCode: clientQuote.currencyCode,
-        scopeOfWork: clientQuote.scopeOfWork,
-        subtotalAmountCents: clientQuote.subtotalAmountCents,
-        taxAmountCents: clientQuote.taxAmountCents,
-        totalAmountCents: clientQuote.totalAmountCents,
+        subtotal: clientQuote.subtotal,
+        taxAmount: clientQuote.taxAmount,
+        totalAmount: clientQuote.totalAmount,
         sentAt: clientQuote.sentAt,
         respondedAt: clientQuote.respondedAt,
-        expiresAt: clientQuote.expiresAt,
         recordStatus: clientQuote.recordStatus,
         isDeleted: clientQuote.isDeleted,
         createdAt: clientQuote.createdAt,
@@ -583,15 +649,14 @@ export function exposeInvoices(
         workOrderId: invoice.workOrderId,
         clientOrganizationId: invoice.clientOrganizationId,
         locationId: invoice.locationId,
-        clientQuoteId: invoice.clientQuoteId,
         invoiceNumber: invoice.invoiceNumber,
         status: invoice.status,
-        currencyCode: invoice.currencyCode,
-        subtotalAmountCents: invoice.subtotalAmountCents,
-        taxAmountCents: invoice.taxAmountCents,
-        totalAmountCents: invoice.totalAmountCents,
-        issuedAt: invoice.issuedAt,
-        dueAt: invoice.dueAt,
+        currency: invoice.currency,
+        subtotal: invoice.subtotal,
+        taxAmount: invoice.taxAmount,
+        totalAmount: invoice.totalAmount,
+        issuedDate: invoice.issuedDate,
+        dueDate: invoice.dueDate,
         overdueAt: invoice.overdueAt,
         disputedAt: invoice.disputedAt,
         resolvedAt: invoice.resolvedAt,
@@ -680,8 +745,6 @@ export function exposeClientOrganization(
     name: clientOrganization.name,
     displayName: clientOrganization.displayName,
     status: clientOrganization.status,
-    primaryContactEmail: clientOrganization.primaryContactEmail,
-    primaryContactPhone: clientOrganization.primaryContactPhone,
     recordStatus: clientOrganization.recordStatus,
     isDeleted: clientOrganization.isDeleted,
     createdAt: clientOrganization.createdAt,
@@ -748,8 +811,6 @@ export function exposeContractorOrganizations(
         name: contractorOrganization.name,
         displayName: contractorOrganization.displayName,
         status: contractorOrganization.status,
-        primaryContactEmail: contractorOrganization.primaryContactEmail,
-        primaryContactPhone: contractorOrganization.primaryContactPhone,
         recordStatus: contractorOrganization.recordStatus,
         isDeleted: contractorOrganization.isDeleted,
         createdAt: contractorOrganization.createdAt,

@@ -1,44 +1,40 @@
 import "server-only";
 
-import type { Quote } from "@/server/repositories";
+import type { ContractorQuote } from "@/server/repositories";
 import type { EntityId } from "@/types/entity";
-import type { QuoteStatus } from "@/types/quote";
+import type { ContractorQuoteStatus, QuoteLineItem } from "@/types/quote";
 
 export interface ContractorPortalQuoteSummary {
   id: EntityId;
   workOrderId: EntityId;
-  versionNumber: number;
-  status: QuoteStatus;
-  laborAmount: number;
-  materialAmount: number;
-  otherAmount: number;
+  status: ContractorQuoteStatus;
+  lineItems: QuoteLineItem[];
+  subtotal: number;
+  taxAmount: number;
   totalAmount: number;
-  currency: Quote["currency"];
-  scopeSummary: string;
-  contractorNotes: string | null;
+  notes: string | null;
   submittedAt: string | null;
   reviewedAt: string | null;
+  rejectionReason: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
 export function toContractorPortalQuoteSummary(
-  quote: Quote,
+  quote: ContractorQuote,
 ): ContractorPortalQuoteSummary {
   return {
     id: quote.id,
     workOrderId: quote.workOrderId,
-    versionNumber: quote.versionNumber,
     status: quote.status,
-    laborAmount: quote.laborAmount,
-    materialAmount: quote.materialAmount,
-    otherAmount: quote.otherAmount,
+    lineItems: quote.lineItems,
+    subtotal: quote.subtotal ?? quote.totalAmount - quote.taxAmount,
+    taxAmount: quote.taxAmount,
     totalAmount: quote.totalAmount,
-    currency: quote.currency,
-    scopeSummary: quote.scopeSummary,
-    contractorNotes: quote.contractorNotes,
+    notes: quote.notes,
     submittedAt: quote.submittedAt,
     reviewedAt: quote.reviewedAt,
+    rejectionReason: quote.rejectionReason,
     createdAt: quote.createdAt,
     updatedAt: quote.updatedAt,
   };

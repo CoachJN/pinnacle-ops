@@ -22,7 +22,6 @@ interface FinancePageProps {
 
 export default async function FinancePage({ searchParams }: FinancePageProps) {
   await requireUserWithRole([
-    APP_ROLES.Manager,
     APP_ROLES.FinanceAdmin,
     APP_ROLES.Owner,
   ] as const);
@@ -49,14 +48,14 @@ export default async function FinancePage({ searchParams }: FinancePageProps) {
       id: workOrder.id,
       workOrderNumber: workOrder.workOrderNumber,
       title: workOrder.title,
-      status: workOrder.status,
+      lifecycleStatus: workOrder.lifecycleStatus,
       priority: workOrder.priority,
       clientOrganizationId: workOrder.clientOrganizationId,
       locationId: workOrder.locationId,
       currentInvoiceId: workOrder.currentInvoiceId,
       clientSnapshot: workOrder.clientSnapshot,
       locationSnapshot: workOrder.locationSnapshot,
-      completedAt: workOrder.completedAt,
+      completedAt: workOrder.completedAt ?? workOrder.workCompletedAt ?? null,
       updatedAt: workOrder.updatedAt,
     })),
     invoices: invoiceQueue.value.map((invoice) => ({

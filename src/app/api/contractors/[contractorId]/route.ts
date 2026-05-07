@@ -10,6 +10,7 @@ import {
   jsonOk,
   parseJsonObject,
   revalidateContractorPaths,
+  safeContractorDetail,
 } from "@/server/api/business-entities";
 import { createAccessDeniedError } from "@/server/authorization";
 
@@ -36,7 +37,10 @@ export async function GET(
     authorizeContractorRead(context, result.value);
 
     return jsonOk({
-      contractor: mapContractorOrganizationToContractor(result.value),
+      contractor: {
+        ...mapContractorOrganizationToContractor(result.value),
+        ...(await safeContractorDetail(context.repositories, result.value)),
+      },
     });
   } catch (error) {
     return jsonError(normalizePhaseTwoRouteError(error));
@@ -47,8 +51,22 @@ export async function PUT(
   request: NextRequest,
   { params }: ContractorRouteContext,
 ) {
+  return updateContractor(request, params);
+}
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: ContractorRouteContext,
+) {
+  return updateContractor(request, params);
+}
+
+async function updateContractor(
+  request: NextRequest,
+  paramsPromise: ContractorRouteContext["params"],
+) {
   try {
-    const { contractorId } = await params;
+    const { contractorId } = await paramsPromise;
     const context = await getBusinessEntityApiContext();
     assertInternalActor(context);
 
@@ -64,14 +82,20 @@ export async function PUT(
     const result = await context.services.contractors.updateContractorOrganization({
       ...context.audit,
       contractorOrganizationId: contractorId,
-      name: input.name,
-      displayName: input.company,
+      name: input.legalName,
+      displayName: input.displayName,
+      parentContractorId: input.parentContractorId,
       status: input.status,
-      primaryContactName: input.name,
-      primaryContactEmail: input.email,
-      primaryContactPhone: input.phone,
-      serviceCategories: input.serviceCategories,
-      serviceAreas: input.serviceAreas,
+      isAssignable: input.isAssignable,
+      businessEmail: input.businessEmail,
+      mainPhone: input.mainPhone,
+      altPhone: input.altPhone,
+      fax: input.fax,
+      primaryContactId: input.primaryContactId,
+      billingContactId: input.billingContactId,
+      dispatchContactId: input.dispatchContactId,
+      trades: input.trades,
+      serviceArea: input.serviceArea,
       notes: input.notes,
     });
 
@@ -82,7 +106,10 @@ export async function PUT(
     revalidateContractorPaths(result.value.id);
 
     return jsonOk({
-      contractor: mapContractorOrganizationToContractor(result.value),
+      contractor: {
+        ...mapContractorOrganizationToContractor(result.value),
+        ...(await safeContractorDetail(context.repositories, result.value)),
+      },
     });
   } catch (error) {
     return jsonError(normalizePhaseTwoRouteError(error));

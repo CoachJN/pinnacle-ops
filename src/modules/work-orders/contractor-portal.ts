@@ -1,8 +1,16 @@
 import "server-only";
 
-import type { Location, Quote, Assignment, WorkOrder } from "@/server/repositories";
-import type { ActivityLog } from "@/server/repositories";
+import type { CommunicationTimelineEntry } from "@/modules/communications";
+import type {
+  Assignment,
+  ContractorQuote,
+  Location,
+  WorkOrder,
+} from "@/server/repositories";
+import type { TimelineEntry } from "@/server/events/types";
+import type { ContactSummary } from "@/types/contact";
 import type { EntityId, IsoDateTimeString } from "@/types/entity";
+import type { ContractorQuoteStatus } from "@/types/quote";
 import type { AssignmentStatus, WorkOrderPriority, WorkOrderStatus } from "@/types/work-order";
 import {
   toContractorPortalQuoteSummary,
@@ -11,10 +19,10 @@ import {
 
 export type ContractorWorkOrderFilter =
   | "all"
-  | "quote_requested"
-  | "approved_to_proceed"
+  | "quote_required"
+  | "client_approved"
   | "in_progress"
-  | "completed";
+  | "work_completed";
 
 export interface ContractorPortalActivityEntry {
   id: EntityId;
@@ -49,12 +57,12 @@ export interface ContractorPortalWorkOrderListItem {
   clientName: string;
   locationName: string;
   serviceAddress: string;
-  status: WorkOrderStatus;
+  lifecycleStatus: WorkOrderStatus;
   priority: WorkOrderPriority;
   requestedServiceDate: IsoDateTimeString | null;
   updatedAt: IsoDateTimeString;
   assignment: ContractorPortalAssignmentSummary;
-  quoteStatus: Quote["status"] | null;
+  quoteStatus: ContractorQuoteStatus | null;
   quoteActionNeeded: boolean;
 }
 
@@ -68,6 +76,7 @@ export interface ContractorPortalWorkOrderDetail
   accessNotes: string | null;
   quote: ContractorPortalQuoteSummary | null;
   visibleActivity: ContractorPortalActivityEntry[];
+  communications: CommunicationTimelineEntry[];
   actionAvailability: ContractorPortalActionAvailability;
 }
 
@@ -79,44 +88,42 @@ export function matchesContractorPortalFilter(
     return true;
   }
 
-  if (filter === "approved_to_proceed") {
+  if (filter === "client_approved") {
     return (
-      item.status === "approved_to_proceed" ||
-      item.status === "dispatched" ||
-      item.status === "assigned" ||
-      item.status === "scheduled"
+      item.lifecycleStatus === "client_approved" ||
+      item.lifecycleStatus === "assigned" ||
+      item.lifecycleStatus === "awaiting_contractor_response" ||
+      item.lifecycleStatus === "contractor_scheduled"
     );
   }
 
-  if (filter === "completed") {
-    return item.status === "completed" || item.status === "closed";
+  if (filter === "work_completed") {
+    return item.lifecycleStatus === "work_completed" || item.lifecycleStatus === "closed";
   }
 
-  return item.status === filter;
+  return item.lifecycleStatus === filter;
 }
 
 export function getContractorPortalActionAvailability(input: {
   workOrder: WorkOrder;
   assignment: Assignment;
-  quote: Quote | null;
+  quote: ContractorQuote | null;
 }): ContractorPortalActionAvailability {
   const canRespondToAssignment = input.assignment.status === "assigned";
   const hasEditableQuote =
     input.quote !== null &&
-    (input.quote.status === "draft" ||
-      input.quote.status === "client_rejected" ||
-      input.quote.status === "superseded");
+    (input.quote.status === "draft" || input.quote.status === "rejected");
 
   return {
     canAcceptAssignment: canRespondToAssignment,
     canDeclineAssignment: canRespondToAssignment,
     canCompleteAssignment:
       input.assignment.status === "accepted" &&
-      input.workOrder.status !== "completed" &&
-      input.workOrder.status !== "closed" &&
-      input.workOrder.status !== "cancelled",
+      input.workOrder.lifecycleStatus !== "work_completed" &&
+      input.workOrder.lifecycleStatus !== "closed" &&
+      input.workOrder.lifecycleStatus !== "cancelled",
     canSubmitQuote:
-      input.workOrder.status === "quote_requested" &&
+      input.workOrder.lifecycleStatus === "quote_required" &&
       (input.assignment.status === "assigned" ||
         input.assignment.status === "accepted") &&
       (input.quote === null || hasEditableQuote),
@@ -132,7 +139,7 @@ export function isRelevantContractorPortalAssignment(
 export function toContractorPortalWorkOrderListItem(input: {
   workOrder: WorkOrder;
   assignment: Assignment;
-  quote: Quote | null;
+  quote: ContractorQuote | null;
 }): ContractorPortalWorkOrderListItem {
   const actionAvailability = getContractorPortalActionAvailability(input);
 
@@ -143,9 +150,9 @@ export function toContractorPortalWorkOrderListItem(input: {
     clientName: input.workOrder.clientSnapshot.name,
     locationName: input.workOrder.locationSnapshot.name,
     serviceAddress: input.workOrder.locationSnapshot.addressText ?? "Address unavailable",
-    status: input.workOrder.status,
+    lifecycleStatus: input.workOrder.lifecycleStatus,
     priority: input.workOrder.priority,
-    requestedServiceDate: input.workOrder.requestedServiceDate,
+    requestedServiceDate: input.workOrder.requestedServiceDate ?? null,
     updatedAt: input.workOrder.updatedAt,
     assignment: toContractorPortalAssignmentSummary(input.assignment),
     quoteStatus: input.quote?.status ?? null,
@@ -156,32 +163,35 @@ export function toContractorPortalWorkOrderListItem(input: {
 export function toContractorPortalWorkOrderDetail(input: {
   workOrder: WorkOrder;
   assignment: Assignment;
-  quote: Quote | null;
+  quote: ContractorQuote | null;
   location: Location | null;
+  siteContact: ContactSummary | null;
   visibleActivity: ContractorPortalActivityEntry[];
+  communications: CommunicationTimelineEntry[];
 }): ContractorPortalWorkOrderDetail {
   return {
     ...toContractorPortalWorkOrderListItem(input),
     description: input.workOrder.description,
-    category: input.workOrder.category,
-    locationContactName: input.location?.locationContactName ?? null,
-    locationContactPhone: input.location?.locationContactPhone ?? null,
-    locationContactEmail: input.location?.locationContactEmail ?? null,
+    category: input.workOrder.category ?? null,
+    locationContactName: input.siteContact?.displayName ?? null,
+    locationContactPhone: input.siteContact?.primaryPhone ?? null,
+    locationContactEmail: input.siteContact?.email ?? null,
     accessNotes: input.location?.accessNotes ?? null,
     quote: input.quote ? toContractorPortalQuoteSummary(input.quote) : null,
     visibleActivity: input.visibleActivity,
+    communications: input.communications,
     actionAvailability: getContractorPortalActionAvailability(input),
   };
 }
 
 export function toContractorPortalActivityEntry(
-  activity: ActivityLog,
+  activity: TimelineEntry,
 ): ContractorPortalActivityEntry {
   return {
     id: activity.id,
-    message: activity.message,
+    message: activity.summary,
     createdAt: activity.occurredAt,
-    actorLabel: getActivityActorLabel(activity),
+    actorLabel: activity.actor.displayName ?? "System",
   };
 }
 
@@ -199,27 +209,4 @@ function toContractorPortalAssignmentSummary(
     timeWindowStart: assignment.timeWindowStart,
     timeWindowEnd: assignment.timeWindowEnd,
   };
-}
-
-function getActivityActorLabel(activity: ActivityLog): string {
-  if (activity.actor.type === "system") {
-    return "System";
-  }
-
-  switch (activity.actor.role) {
-    case "coordinator":
-      return "Coordinator";
-    case "manager":
-      return "Manager";
-    case "finance_admin":
-      return "Finance";
-    case "owner":
-      return "Owner";
-    case "client_user":
-      return "Client";
-    case "contractor_user":
-      return "Contractor";
-    default:
-      return "Team";
-  }
 }

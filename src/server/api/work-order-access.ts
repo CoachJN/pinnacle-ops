@@ -9,8 +9,7 @@ export function authorizeFinanceQueueRead(input: {
 }): void {
   if (
     input.actor.actorType !== "internal" ||
-    (input.actor.role !== USER_ROLES.Manager &&
-      input.actor.role !== USER_ROLES.FinanceAdmin &&
+    (input.actor.role !== USER_ROLES.FinanceAdmin &&
       input.actor.role !== USER_ROLES.Owner)
   ) {
     throw createAccessDeniedError();

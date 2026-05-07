@@ -1,15 +1,12 @@
-export const WORK_ORDER_STATUSES = [
-  "NEW",
-  "OPEN",
-  "ASSIGNED",
-  "IN_PROGRESS",
-  "COMPLETED",
-  "READY_FOR_INVOICING",
-  "CANCELLED",
-  "CLOSED",
-] as const;
+import {
+  WORK_ORDER_LIFECYCLE_LABELS,
+  WORK_ORDER_LIFECYCLE_STATUSES,
+  type WorkOrderLifecycleStatus,
+} from "./lifecycle.ts";
 
-export type WorkOrderStatus = (typeof WORK_ORDER_STATUSES)[number];
+export const WORK_ORDER_STATUSES = WORK_ORDER_LIFECYCLE_STATUSES;
+
+export type WorkOrderStatus = WorkOrderLifecycleStatus;
 
 export const WORK_ORDER_PRIORITIES = [
   "LOW",
@@ -40,16 +37,7 @@ export const WORK_ORDER_SOURCES = [
 
 export type WorkOrderSource = (typeof WORK_ORDER_SOURCES)[number];
 
-export const WORK_ORDER_STATUS_LABELS = {
-  NEW: "New",
-  OPEN: "Open",
-  ASSIGNED: "Assigned",
-  IN_PROGRESS: "In Progress",
-  COMPLETED: "Completed",
-  READY_FOR_INVOICING: "Ready for Invoicing",
-  CANCELLED: "Cancelled",
-  CLOSED: "Closed",
-} as const satisfies Record<WorkOrderStatus, string>;
+export const WORK_ORDER_STATUS_LABELS = WORK_ORDER_LIFECYCLE_LABELS;
 
 export const WORK_ORDER_PRIORITY_LABELS = {
   LOW: "Low",

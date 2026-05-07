@@ -1,4 +1,8 @@
-import type { InvoiceFormInput, InvoiceLineItem, InvoiceStatus } from "@/types/invoice";
+import type {
+  ClientInvoiceFormInput,
+  InvoiceLineItem,
+  InvoiceStatus,
+} from "@/types/invoice";
 import {
   calculateInvoiceLineTotal,
   calculateInvoiceSubtotal,
@@ -18,7 +22,7 @@ export interface InvoiceFormErrors {
 export type InvoiceFormValidationResult =
   | {
       ok: true;
-      data: InvoiceFormInput & {
+      data: ClientInvoiceFormInput & {
         subtotal: number;
         totalAmount: number;
       };
@@ -48,13 +52,16 @@ const positiveQuantitySchema = z
   .transform((value) => roundMoney(value));
 
 export const invoiceStatusTransitions = {
-  draft: ["sent", "void"],
-  issued: ["viewed", "overdue", "paid", "void"],
-  sent: ["viewed", "overdue", "paid", "void"],
-  viewed: ["overdue", "paid", "void"],
-  overdue: ["paid"],
+  draft: ["sent", "void", "cancelled"],
+  issued: ["viewed", "overdue", "paid", "void", "disputed", "cancelled"],
+  sent: ["viewed", "overdue", "paid", "void", "disputed", "cancelled"],
+  viewed: ["overdue", "paid", "void", "disputed"],
+  overdue: ["paid", "disputed"],
+  disputed: ["resolved", "void", "sent"],
+  resolved: ["sent", "paid", "void", "disputed"],
   paid: [],
   void: [],
+  cancelled: [],
 } as const satisfies Record<InvoiceStatus, readonly InvoiceStatus[]>;
 
 export const invoiceLineItemSchema = z

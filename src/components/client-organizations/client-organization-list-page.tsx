@@ -84,8 +84,10 @@ export function ClientOrganizationListPage() {
       [
         organization.name,
         organization.displayName,
-        organization.primaryContactName,
-        organization.primaryContactEmail,
+        organization.primaryContact?.displayName,
+        organization.primaryContact?.email,
+        organization.billingContact?.displayName,
+        organization.billingContact?.email,
       ]
         .filter((value): value is string => Boolean(value))
         .some((value) => value.toLowerCase().includes(normalizedSearch)),
@@ -169,11 +171,13 @@ export function ClientOrganizationListPage() {
                   <div className="mt-3 grid gap-2 text-sm text-neutral-600 sm:grid-cols-2">
                     <p>
                       Primary contact:{" "}
-                      {organization.primaryContactName ?? "Not provided"}
+                      {organization.primaryContact?.displayName ??
+                        organization.primaryContactId ??
+                        "Not provided"}
                     </p>
                     <p>
                       Contact email:{" "}
-                      {organization.primaryContactEmail ?? "Not provided"}
+                      {organization.primaryContact?.email ?? "Not provided"}
                     </p>
                   </div>
                 </div>

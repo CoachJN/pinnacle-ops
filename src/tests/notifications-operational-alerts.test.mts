@@ -32,8 +32,8 @@ describe("recipient resolution", () => {
     const recipients = resolveInternalNotificationRecipients({
       eventType: "quote_awaiting_manager_review",
       workOrder: {
-        assignedCoordinatorUserId: "user-coordinator",
-        assignedManagerUserId: "user-manager",
+        coordinatorUserId: "user-coordinator",
+        managerUserId: "user-manager",
       },
       organizationUsers: [
         { id: "user-coordinator", role: "coordinator", displayName: "Coord" },
@@ -67,8 +67,8 @@ describe("notification service", () => {
       workOrder: {
         id: "wo-1",
         workOrderNumber: "WO-1001",
-        assignedCoordinatorUserId: "user-coordinator",
-        assignedManagerUserId: "user-manager",
+        coordinatorUserId: "user-coordinator",
+        managerUserId: "user-manager",
         clientSnapshot: { id: "client-1", name: "Acme" },
         locationSnapshot: { id: "loc-1", name: "HQ", addressText: null },
       },
@@ -101,8 +101,8 @@ describe("notification service", () => {
       workOrder: {
         id: "wo-1",
         workOrderNumber: "WO-1001",
-        assignedCoordinatorUserId: "user-coordinator",
-        assignedManagerUserId: "user-manager",
+        coordinatorUserId: "user-coordinator",
+        managerUserId: "user-manager",
         clientSnapshot: { id: "client-1", name: "Acme" },
         locationSnapshot: { id: "loc-1", name: "HQ", addressText: null },
       },

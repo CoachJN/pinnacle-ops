@@ -1,6 +1,8 @@
 import type { EntityId } from "@/types/entity";
+import type { FinancialVisibilityDomain } from "@/types/financial-controls";
 
 export type VisibilityAudience = "internal" | "client" | "contractor";
+export type VisibilityFieldMode = "hidden" | "read_only" | "editable";
 
 export interface InternalRecordVisibility {
   audience: "internal";
@@ -26,6 +28,19 @@ export type RecordVisibility =
   | InternalRecordVisibility
   | ClientRecordVisibility
   | ContractorRecordVisibility;
+
+export type FinancialVisibilityMap = Partial<
+  Record<FinancialVisibilityDomain, boolean>
+>;
+
+export type FinancialFieldVisibilityMap = Readonly<
+  Record<string, VisibilityFieldMode>
+>;
+
+export interface WorkOrderVisibilityProjection {
+  financialSections: FinancialVisibilityMap;
+  financialFields?: FinancialFieldVisibilityMap;
+}
 
 export interface VisibilityTaggedRecord {
   visibility: RecordVisibility[];

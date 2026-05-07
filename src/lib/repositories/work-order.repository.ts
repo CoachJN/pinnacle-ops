@@ -40,14 +40,20 @@ export interface UpdateWorkOrderRepositoryInput {
       | "description"
       | "clientOrganizationId"
       | "locationId"
+      | "requestedByContactId"
+      | "siteContactId"
+      | "assignedContractorId"
       | "priority"
       | "category"
+      | "requestedServiceDate"
+      | "requiresQuote"
+      | "quoteRequiredThresholdCents"
       | "requestedByName"
       | "requestedByEmail"
       | "requestedByPhone"
       | "source"
-      | "assignedCoordinatorUserId"
-      | "assignedManagerUserId"
+      | "coordinatorUserId"
+      | "managerUserId"
       | "dueDate"
       | "closedAt"
       | "isArchived"
@@ -71,8 +77,8 @@ export interface WorkOrderRepositoryListFilters {
   source?: WorkOrder["source"];
   clientOrganizationId?: EntityId;
   locationId?: EntityId;
-  assignedCoordinatorUserId?: EntityId;
-  assignedManagerUserId?: EntityId;
+  coordinatorUserId?: EntityId;
+  managerUserId?: EntityId;
   requestedByEmail?: string;
   dueDateFrom?: IsoDateTimeString;
   dueDateTo?: IsoDateTimeString;
@@ -157,8 +163,32 @@ class FirestoreWorkOrderRepository implements WorkOrderRepository {
       clientOrganizationId:
         input.data.clientOrganizationId?.trim() ?? existing.clientOrganizationId,
       locationId: input.data.locationId?.trim() ?? existing.locationId,
+      requestedByContactId:
+        input.data.requestedByContactId === undefined
+          ? existing.requestedByContactId
+          : input.data.requestedByContactId?.trim() || null,
+      siteContactId:
+        input.data.siteContactId === undefined
+          ? existing.siteContactId
+          : input.data.siteContactId?.trim() || null,
+      assignedContractorId:
+        input.data.assignedContractorId === undefined
+          ? existing.assignedContractorId
+          : input.data.assignedContractorId?.trim() || null,
       priority: input.data.priority ?? existing.priority,
       category: input.data.category ?? existing.category,
+      requestedServiceDate:
+        input.data.requestedServiceDate === undefined
+          ? existing.requestedServiceDate
+          : input.data.requestedServiceDate,
+      requiresQuote:
+        input.data.requiresQuote === undefined
+          ? existing.requiresQuote
+          : input.data.requiresQuote,
+      quoteRequiredThresholdCents:
+        input.data.quoteRequiredThresholdCents === undefined
+          ? existing.quoteRequiredThresholdCents
+          : input.data.quoteRequiredThresholdCents,
       requestedByName:
         input.data.requestedByName?.trim() ?? existing.requestedByName,
       requestedByEmail:
@@ -170,14 +200,14 @@ class FirestoreWorkOrderRepository implements WorkOrderRepository {
           ? existing.requestedByPhone
           : input.data.requestedByPhone?.trim() || null,
       source: input.data.source ?? existing.source,
-      assignedCoordinatorUserId:
-        input.data.assignedCoordinatorUserId === undefined
-          ? existing.assignedCoordinatorUserId
-          : input.data.assignedCoordinatorUserId?.trim() || null,
-      assignedManagerUserId:
-        input.data.assignedManagerUserId === undefined
-          ? existing.assignedManagerUserId
-          : input.data.assignedManagerUserId?.trim() || null,
+      coordinatorUserId:
+        input.data.coordinatorUserId === undefined
+          ? existing.coordinatorUserId
+          : input.data.coordinatorUserId?.trim() || null,
+      managerUserId:
+        input.data.managerUserId === undefined
+          ? existing.managerUserId
+          : input.data.managerUserId?.trim() || null,
       dueDate:
         input.data.dueDate === undefined ? existing.dueDate : input.data.dueDate,
       closedAt:
@@ -197,6 +227,10 @@ class FirestoreWorkOrderRepository implements WorkOrderRepository {
         clientOrganizationId:
           input.data.clientOrganizationId?.trim() ?? existing.clientOrganizationId,
         locationId: input.data.locationId?.trim() ?? existing.locationId,
+        requestedServiceDate:
+          input.data.requestedServiceDate === undefined
+            ? existing.requestedServiceDate
+            : input.data.requestedServiceDate,
         requestedByName:
           input.data.requestedByName?.trim() ?? existing.requestedByName,
         requestedByEmail:
@@ -280,19 +314,19 @@ class FirestoreWorkOrderRepository implements WorkOrderRepository {
       query = query.where("locationId", "==", filters.locationId.trim());
     }
 
-    if (filters.assignedCoordinatorUserId) {
+    if (filters.coordinatorUserId) {
       query = query.where(
-        "assignedCoordinatorUserId",
+        "coordinatorUserId",
         "==",
-        filters.assignedCoordinatorUserId.trim(),
+        filters.coordinatorUserId.trim(),
       );
     }
 
-    if (filters.assignedManagerUserId) {
+    if (filters.managerUserId) {
       query = query.where(
-        "assignedManagerUserId",
+        "managerUserId",
         "==",
-        filters.assignedManagerUserId.trim(),
+        filters.managerUserId.trim(),
       );
     }
 
@@ -395,14 +429,14 @@ function applyRepositoryFilters(
       filters.locationId ? workOrder.locationId === filters.locationId.trim() : true,
     )
     .filter((workOrder) =>
-      filters.assignedCoordinatorUserId
-        ? workOrder.assignedCoordinatorUserId ===
-          filters.assignedCoordinatorUserId.trim()
+      filters.coordinatorUserId
+        ? workOrder.coordinatorUserId ===
+          filters.coordinatorUserId.trim()
         : true,
     )
     .filter((workOrder) =>
-      filters.assignedManagerUserId
-        ? workOrder.assignedManagerUserId === filters.assignedManagerUserId.trim()
+      filters.managerUserId
+        ? workOrder.managerUserId === filters.managerUserId.trim()
         : true,
     )
     .filter((workOrder) =>
@@ -440,13 +474,17 @@ function toListItem(workOrder: WorkOrder): WorkOrderListItem {
     title: workOrder.title,
     clientOrganizationId: workOrder.clientOrganizationId,
     locationId: workOrder.locationId,
+    assignedContractorId: workOrder.assignedContractorId,
     status: workOrder.status,
     priority: workOrder.priority,
     category: workOrder.category,
+    requestedServiceDate: workOrder.requestedServiceDate,
+    requiresQuote: workOrder.requiresQuote,
+    quoteRequiredThresholdCents: workOrder.quoteRequiredThresholdCents,
     source: workOrder.source,
     requestedByName: workOrder.requestedByName,
-    assignedCoordinatorUserId: workOrder.assignedCoordinatorUserId,
-    assignedManagerUserId: workOrder.assignedManagerUserId,
+    coordinatorUserId: workOrder.coordinatorUserId,
+    managerUserId: workOrder.managerUserId,
     dueDate: workOrder.dueDate,
     createdAt: workOrder.createdAt,
     updatedAt: workOrder.updatedAt,
@@ -459,6 +497,7 @@ function buildSearchTextForWorkOrder(workOrder: {
   workOrderNumber: string;
   title: string;
   description: string;
+  requestedServiceDate?: IsoDateTimeString | null;
   requestedByName: string;
   requestedByEmail: string | null;
   requestedByPhone: string | null;
@@ -469,6 +508,7 @@ function buildSearchTextForWorkOrder(workOrder: {
     workOrder.workOrderNumber,
     workOrder.title,
     workOrder.description,
+    workOrder.requestedServiceDate,
     workOrder.requestedByName,
     workOrder.requestedByEmail,
     workOrder.requestedByPhone,

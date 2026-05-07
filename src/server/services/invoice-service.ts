@@ -1,8 +1,8 @@
 import "server-only";
 
 import type {
+  ClientInvoice,
   FirestoreRepositories,
-  Invoice,
   WorkOrder,
 } from "@/server/repositories";
 import {
@@ -31,7 +31,7 @@ import {
   isWorkOrderEligibleForInvoiceCreation,
 } from "@/modules/finance";
 import { invalidTransitionError, notFoundError, validationError } from "./errors.ts";
-import type { ActivityLogService } from "./activity-log-service.ts";
+import type { DomainEventService } from "./domain-event-service.ts";
 import { createServiceLogger } from "./observability.ts";
 import {
   canInvoiceTransition,
@@ -46,42 +46,44 @@ import {
 } from "./types.ts";
 import type { NotificationService } from "./notification-service.ts";
 
+type Invoice = ClientInvoice;
+
 export interface InvoiceService {
-  getById(invoiceId: EntityId): Promise<ServiceResult<Invoice>>;
-  getInvoiceById(invoiceId: EntityId): Promise<ServiceResult<Invoice>>;
-  listByWorkOrderId(workOrderId: EntityId): Promise<ServiceResult<Invoice[]>>;
-  getInvoicesForWorkOrder(workOrderId: EntityId): Promise<ServiceResult<Invoice[]>>;
-  listFinanceQueue(input?: ListFinanceQueueInput): Promise<ServiceResult<Invoice[]>>;
-  create(input: CreateInvoiceServiceInput): Promise<ServiceResult<Invoice>>;
+  getById(invoiceId: EntityId): Promise<ServiceResult<ClientInvoice>>;
+  getInvoiceById(invoiceId: EntityId): Promise<ServiceResult<ClientInvoice>>;
+  listByWorkOrderId(workOrderId: EntityId): Promise<ServiceResult<ClientInvoice[]>>;
+  getInvoicesForWorkOrder(workOrderId: EntityId): Promise<ServiceResult<ClientInvoice[]>>;
+  listFinanceQueue(input?: ListFinanceQueueInput): Promise<ServiceResult<ClientInvoice[]>>;
+  create(input: CreateInvoiceServiceInput): Promise<ServiceResult<ClientInvoice>>;
   createInvoiceFromWorkOrder(
     input: CreateInvoiceServiceInput,
-  ): Promise<ServiceResult<Invoice>>;
-  updateDraft(input: UpdateInvoiceDraftInput): Promise<ServiceResult<Invoice>>;
+  ): Promise<ServiceResult<ClientInvoice>>;
+  updateDraft(input: UpdateInvoiceDraftInput): Promise<ServiceResult<ClientInvoice>>;
   updateInvoiceDraft(
     input: UpdateInvoiceDraftInput,
-  ): Promise<ServiceResult<Invoice>>;
-  transition(input: TransitionInvoiceInput): Promise<ServiceResult<Invoice>>;
-  sendInvoice(input: SendInvoiceInput): Promise<ServiceResult<Invoice>>;
+  ): Promise<ServiceResult<ClientInvoice>>;
+  transition(input: TransitionInvoiceInput): Promise<ServiceResult<ClientInvoice>>;
+  sendInvoice(input: SendInvoiceInput): Promise<ServiceResult<ClientInvoice>>;
   markInvoiceViewed(
     input: MarkInvoiceViewedInput,
-  ): Promise<ServiceResult<Invoice>>;
+  ): Promise<ServiceResult<ClientInvoice>>;
   markInvoiceOverdue(
     input: MarkInvoiceOverdueInput,
-  ): Promise<ServiceResult<Invoice>>;
-  markInvoicePaid(input: MarkInvoicePaidInput): Promise<ServiceResult<Invoice>>;
-  voidInvoice(input: VoidInvoiceInput): Promise<ServiceResult<Invoice>>;
+  ): Promise<ServiceResult<ClientInvoice>>;
+  markInvoicePaid(input: MarkInvoicePaidInput): Promise<ServiceResult<ClientInvoice>>;
+  voidInvoice(input: VoidInvoiceInput): Promise<ServiceResult<ClientInvoice>>;
   prepareInvoiceForAccountingSync(
     invoiceId: EntityId,
   ): Promise<ServiceResult<AccountingSyncPayload>>;
   markInvoiceSyncPending(
     input: InvoiceSyncMutationInput,
-  ): Promise<ServiceResult<Invoice>>;
+  ): Promise<ServiceResult<ClientInvoice>>;
   markInvoiceSyncSuccess(
     input: InvoiceSyncSuccessInput,
-  ): Promise<ServiceResult<Invoice>>;
+  ): Promise<ServiceResult<ClientInvoice>>;
   markInvoiceSyncFailed(
     input: InvoiceSyncMutationInput,
-  ): Promise<ServiceResult<Invoice>>;
+  ): Promise<ServiceResult<ClientInvoice>>;
 }
 
 export interface ListFinanceQueueInput {
@@ -179,9 +181,9 @@ export interface AccountingSyncPayload {
 }
 
 export function createInvoiceService(
-  repositories: Pick<FirestoreRepositories, "workOrders" | "invoices">,
+  repositories: Pick<FirestoreRepositories, "workOrders" | "clientInvoices">,
   dependencies: {
-    activityLogs: ActivityLogService;
+    domainEvents: DomainEventService;
     notifications?: NotificationService;
   },
 ): InvoiceService {
@@ -191,18 +193,18 @@ export function createInvoiceService(
 class FirestoreInvoiceService implements InvoiceService {
   private readonly repositories: Pick<
     FirestoreRepositories,
-    "workOrders" | "invoices"
+    "workOrders" | "clientInvoices"
   >;
 
   private readonly dependencies: {
-    activityLogs: ActivityLogService;
+    domainEvents: DomainEventService;
     notifications?: NotificationService;
   };
 
   constructor(
-    repositories: Pick<FirestoreRepositories, "workOrders" | "invoices">,
+    repositories: Pick<FirestoreRepositories, "workOrders" | "clientInvoices">,
     dependencies: {
-      activityLogs: ActivityLogService;
+      domainEvents: DomainEventService;
       notifications?: NotificationService;
     },
   ) {
@@ -215,7 +217,7 @@ class FirestoreInvoiceService implements InvoiceService {
   }
 
   async getInvoiceById(invoiceId: EntityId): Promise<ServiceResult<Invoice>> {
-    const invoice = await this.repositories.invoices.getById(invoiceId);
+    const invoice = await this.repositories.clientInvoices.getById(invoiceId);
     if (!invoice || invoice.isDeleted) {
       return serviceFail(notFoundError("Invoice could not be found."));
     }
@@ -232,7 +234,7 @@ class FirestoreInvoiceService implements InvoiceService {
   async getInvoicesForWorkOrder(
     workOrderId: EntityId,
   ): Promise<ServiceResult<Invoice[]>> {
-    const invoices = await this.repositories.invoices.listByWorkOrderId(workOrderId);
+    const invoices = await this.repositories.clientInvoices.listByWorkOrderId(workOrderId);
     return serviceOk(invoices.items);
   }
 
@@ -240,7 +242,7 @@ class FirestoreInvoiceService implements InvoiceService {
     input: ListFinanceQueueInput = {},
   ): Promise<ServiceResult<Invoice[]>> {
     const statuses = input.statuses?.length ? new Set(input.statuses) : null;
-    const invoices = await this.repositories.invoices.listFinanceQueue({
+    const invoices = await this.repositories.clientInvoices.listFinanceQueue({
       limit: statuses ? undefined : input.limit,
     });
     const filtered = statuses
@@ -272,19 +274,19 @@ class FirestoreInvoiceService implements InvoiceService {
       return serviceFail(notFoundError("Work order could not be found."));
     }
 
-    if (!isWorkOrderEligibleForInvoiceCreation(workOrder.status)) {
+    if (!isWorkOrderEligibleForInvoiceCreation(workOrder.lifecycleStatus)) {
       return serviceFail(
         validationError(
-          "Invoices can only be created for completed or ready for invoicing work orders.",
+          "Invoices can only be created for work_completed, completion_review, or ready_for_invoicing work orders.",
         ),
       );
     }
 
-    const existingInvoices = await this.repositories.invoices.listByWorkOrderId(
+    const existingInvoices = await this.repositories.clientInvoices.listByWorkOrderId(
       workOrder.id,
     );
     const eligibility = buildInvoiceCreationEligibility({
-      workOrderStatus: workOrder.status,
+      workOrderStatus: workOrder.lifecycleStatus,
       hasActiveInvoice: existingInvoices.items.some(
         (invoice) => invoice.status !== "void",
       ),
@@ -298,7 +300,7 @@ class FirestoreInvoiceService implements InvoiceService {
       return normalized;
     }
 
-    const id = this.repositories.invoices.newId();
+    const id = this.repositories.clientInvoices.newId();
     const invoice: Invoice = {
       id,
       ...createAuditFields(input),
@@ -333,7 +335,7 @@ class FirestoreInvoiceService implements InvoiceService {
       },
     };
 
-    await this.repositories.invoices.create(invoice);
+    await this.repositories.clientInvoices.create(invoice);
     await this.repositories.workOrders.save(
       touchAuditFields(
         {
@@ -343,26 +345,6 @@ class FirestoreInvoiceService implements InvoiceService {
         input,
       ),
     );
-    await this.dependencies.activityLogs.record({
-      ...input,
-      workOrderId: workOrder.id,
-      action: "invoice.created",
-      eventType: "invoice_created",
-      message: `Created invoice draft ${invoice.invoiceNumber}.`,
-      entityType: "invoice",
-      entityId: invoice.id,
-      entityLabel: invoice.invoiceNumber,
-      visibility: "internal",
-      changes: [
-        { field: "status", to: invoice.status },
-        { field: "totalAmount", to: invoice.totalAmount },
-      ],
-      metadata: {
-        invoiceNumber: invoice.invoiceNumber,
-        totalAmount: invoice.totalAmount,
-        currency: invoice.currency,
-      },
-    });
     logger.info("use_case.completed", {
       action: "invoice.created",
       resource: {
@@ -435,23 +417,7 @@ class FirestoreInvoiceService implements InvoiceService {
       input,
     );
 
-    await this.repositories.invoices.save(updated);
-    await this.dependencies.activityLogs.record({
-      ...input,
-      workOrderId: updated.workOrderId,
-      action: "invoice.updated",
-      eventType: "invoice_updated",
-      message: `Updated invoice draft ${updated.invoiceNumber}.`,
-      entityType: "invoice",
-      entityId: updated.id,
-      entityLabel: updated.invoiceNumber,
-      visibility: "internal",
-      metadata: {
-        invoiceNumber: updated.invoiceNumber,
-        totalAmount: updated.totalAmount,
-        currency: updated.currency,
-      },
-    });
+    await this.repositories.clientInvoices.save(updated);
     logger.info("use_case.completed", {
       action: "invoice.updated",
       resource: {
@@ -518,32 +484,41 @@ class FirestoreInvoiceService implements InvoiceService {
       { ...input, now: timestamp },
     );
 
-    await this.repositories.invoices.save(transitioned);
+    await this.repositories.clientInvoices.save(transitioned);
     await this.applyWorkOrderReaction(
       workOrder.value,
       invoice.value,
       transitioned,
       { ...input, now: timestamp },
     );
-    await this.dependencies.activityLogs.record({
-      ...input,
-      now: timestamp,
-      workOrderId: transitioned.workOrderId,
-      action: "invoice.status_changed",
-      eventType: mapInvoiceActivityEventType(input.toStatus),
-      message: buildInvoiceActivityMessage(invoice.value, input.toStatus),
-      entityType: "invoice",
-      entityId: transitioned.id,
-      entityLabel: transitioned.invoiceNumber,
-      visibility: "internal",
-      changes: [
-        { field: "status", from: invoice.value.status, to: input.toStatus },
-      ],
-      metadata: {
-        fromStatus: invoice.value.status,
-        toStatus: input.toStatus,
-      },
-    });
+    if (input.toStatus === "sent" || input.toStatus === "paid") {
+      await this.dependencies.domainEvents.record({
+        ...input,
+        now: timestamp,
+        workOrderId: transitioned.workOrderId,
+        type: input.toStatus === "sent" ? "invoice_sent" : "payment_recorded",
+        visibility: input.toStatus === "sent" ? "client" : "finance",
+        lifecycleStatus: workOrder.value.lifecycleStatus,
+        entity: {
+          entityType: "invoice",
+          entityId: transitioned.id,
+          label: transitioned.invoiceNumber,
+        },
+        summary: buildInvoiceActivityMessage(invoice.value, input.toStatus),
+        payload:
+          input.toStatus === "sent"
+            ? {
+                invoiceId: transitioned.id,
+                invoiceStatus: transitioned.status,
+                totalAmount: transitioned.totalAmount,
+              }
+            : {
+                invoiceId: transitioned.id,
+                invoiceStatus: transitioned.status,
+                paymentReference: transitioned.paymentReference ?? null,
+              },
+      });
+    }
     logger.info("use_case.completed", {
       action: "invoice.status_changed",
       resource: {
@@ -703,7 +678,7 @@ class FirestoreInvoiceService implements InvoiceService {
       },
       input,
     );
-    await this.repositories.invoices.save(updated);
+    await this.repositories.clientInvoices.save(updated);
     return serviceOk(updated);
   }
 
@@ -729,7 +704,7 @@ class FirestoreInvoiceService implements InvoiceService {
       },
       input,
     );
-    await this.repositories.invoices.save(updated);
+    await this.repositories.clientInvoices.save(updated);
     return serviceOk(updated);
   }
 
@@ -737,7 +712,7 @@ class FirestoreInvoiceService implements InvoiceService {
     workOrderId: EntityId,
     invoiceId: EntityId,
   ): Promise<ServiceResult<Invoice>> {
-    const invoice = await this.repositories.invoices.getById(invoiceId);
+    const invoice = await this.repositories.clientInvoices.getById(invoiceId);
     if (!invoice || invoice.isDeleted || invoice.workOrderId !== workOrderId) {
       return serviceFail(
         notFoundError("Invoice could not be found for this work order."),
@@ -773,39 +748,45 @@ class FirestoreInvoiceService implements InvoiceService {
   ): Promise<void> {
     if (
       invoice.status === "sent" &&
-      (workOrder.status === "completed" || workOrder.status === "ready_for_invoicing")
+      (
+        workOrder.lifecycleStatus === "work_completed" ||
+        workOrder.lifecycleStatus === "completion_review" ||
+        workOrder.lifecycleStatus === "ready_for_invoicing"
+      )
     ) {
       const transitionedWorkOrder: WorkOrder = touchAuditFields(
         {
           ...workOrder,
-          status: "invoiced",
+          lifecycleStatus: "invoiced",
+          invoiceSentAt: invoice.sentAt ?? input.now,
         },
         input,
       );
       await this.repositories.workOrders.save(transitionedWorkOrder);
       await this.recordWorkOrderFinanceTransition(
         transitionedWorkOrder,
-        workOrder.status,
-        transitionedWorkOrder.status,
+        workOrder.lifecycleStatus,
+        transitionedWorkOrder.lifecycleStatus,
         previousInvoice.id,
         previousInvoice.invoiceNumber,
         input,
       );
     }
 
-    if (invoice.status === "paid" && workOrder.status === "invoiced") {
+    if (invoice.status === "paid" && workOrder.lifecycleStatus === "invoiced") {
       const transitionedWorkOrder: WorkOrder = touchAuditFields(
         {
           ...workOrder,
-          status: "paid",
+          lifecycleStatus: "paid",
+          paidAt: invoice.paidAt ?? input.now,
         },
         input,
       );
       await this.repositories.workOrders.save(transitionedWorkOrder);
       await this.recordWorkOrderFinanceTransition(
         transitionedWorkOrder,
-        workOrder.status,
-        transitionedWorkOrder.status,
+        workOrder.lifecycleStatus,
+        transitionedWorkOrder.lifecycleStatus,
         previousInvoice.id,
         previousInvoice.invoiceNumber,
         input,
@@ -814,21 +795,23 @@ class FirestoreInvoiceService implements InvoiceService {
 
     if (invoice.status === "void") {
       const nextStatus: WorkOrderStatus =
-        workOrder.status === "invoiced" ? "ready_for_invoicing" : workOrder.status;
+        workOrder.lifecycleStatus === "invoiced"
+          ? "ready_for_invoicing"
+          : workOrder.lifecycleStatus;
       const transitionedWorkOrder: WorkOrder = touchAuditFields(
         {
           ...workOrder,
           currentInvoiceId: null,
-          status: nextStatus,
+          lifecycleStatus: nextStatus,
         },
         input,
       );
       await this.repositories.workOrders.save(transitionedWorkOrder);
 
-      if (nextStatus !== workOrder.status) {
+      if (nextStatus !== workOrder.lifecycleStatus) {
         await this.recordWorkOrderFinanceTransition(
           transitionedWorkOrder,
-          workOrder.status,
+          workOrder.lifecycleStatus,
           nextStatus,
           previousInvoice.id,
           previousInvoice.invoiceNumber,
@@ -846,22 +829,13 @@ class FirestoreInvoiceService implements InvoiceService {
     invoiceNumber: string,
     input: TransitionInvoiceInput & { now: string },
   ): Promise<void> {
-    await this.dependencies.activityLogs.record({
+    await this.dependencies.domainEvents.recordTransition({
       ...input,
       workOrderId: workOrder.id,
-      action: "work_order.status_changed",
-      eventType: "work_order_status_changed",
-      message: `Moved ${workOrder.workOrderNumber} from ${fromStatus} to ${toStatus} after finance updated invoice ${invoiceNumber}.`,
-      entityType: "workOrder",
-      entityId: workOrder.id,
-      entityLabel: workOrder.workOrderNumber,
+      fromLifecycleStatus: fromStatus,
+      toLifecycleStatus: toStatus,
       visibility: "internal",
-      changes: [
-        { field: "status", from: fromStatus, to: toStatus },
-      ],
       metadata: {
-        fromStatus,
-        toStatus,
         source: "invoice_workflow",
         invoiceId,
         invoiceNumber,
@@ -963,7 +937,7 @@ function applyStatusMutation(
 
 function validateInvoiceTransitionPrerequisites(
   workOrder: {
-    status: WorkOrderStatus;
+    lifecycleStatus: WorkOrderStatus;
     currentInvoiceId: EntityId | null;
   },
   invoice: Invoice,
@@ -978,9 +952,11 @@ function validateInvoiceTransitionPrerequisites(
   }
 
   if (toStatus === "sent") {
-    if (!isWorkOrderEligibleForInvoiceCreation(workOrder.status)) {
+    if (!isWorkOrderEligibleForInvoiceCreation(workOrder.lifecycleStatus)) {
       return serviceFail(
-        validationError("Invoices can only be sent when the work order is completed or ready for invoicing."),
+        validationError(
+          "Invoices can only be sent when the work order is work_completed, completion_review, or ready_for_invoicing.",
+        ),
       );
     }
 
@@ -1006,20 +982,20 @@ function validateInvoiceTransitionPrerequisites(
     }
   }
 
-  if (toStatus === "viewed" && workOrder.status !== "invoiced") {
+  if (toStatus === "viewed" && workOrder.lifecycleStatus !== "invoiced") {
     return serviceFail(
       validationError("Invoices can only be marked viewed after the work order is invoiced."),
     );
   }
 
-  if (toStatus === "paid" && workOrder.status !== "invoiced") {
+  if (toStatus === "paid" && workOrder.lifecycleStatus !== "invoiced") {
     return serviceFail(
       validationError("Invoices can only be marked paid after the work order is invoiced."),
     );
   }
 
   if (toStatus === "overdue") {
-    if (workOrder.status !== "invoiced") {
+    if (workOrder.lifecycleStatus !== "invoiced") {
       return serviceFail(
         validationError("Invoices can only be marked overdue after the work order is invoiced."),
       );
@@ -1047,23 +1023,6 @@ function compareFinanceQueuePriority(
 ): number {
   return financeQueuePriority(mapInvoiceStatusToQueueState(left))
     - financeQueuePriority(mapInvoiceStatusToQueueState(right));
-}
-
-function mapInvoiceActivityEventType(toStatus: InvoiceStatus): string {
-  switch (toStatus) {
-    case "sent":
-      return "invoice_sent";
-    case "viewed":
-      return "invoice_viewed";
-    case "paid":
-      return "invoice_paid";
-    case "overdue":
-      return "invoice_overdue";
-    case "void":
-      return "invoice_voided";
-    default:
-      return "invoice_status_changed";
-  }
 }
 
 function buildInvoiceActivityMessage(

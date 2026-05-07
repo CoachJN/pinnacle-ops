@@ -6,6 +6,7 @@ import {
   readOptionalString,
   type UnknownRecord,
 } from "@/lib/validation/common";
+import { CONTACT_RELATIONSHIP_TYPE_VALUES } from "@/types/contact";
 import {
   assertNoUnknownFields,
   createValidationSchema,
@@ -26,10 +27,9 @@ const createClientOrganizationAllowedFields = [
   "name",
   "displayName",
   "status",
-  "primaryContactName",
-  "primaryContactEmail",
-  "primaryContactPhone",
-  "billingEmail",
+  "primaryContactId",
+  "billingContactId",
+  "linkedContacts",
   "notes",
 ] as const;
 
@@ -53,16 +53,15 @@ export const createClientOrganizationSchema = createValidationSchema(
       name: requireString(payload.name, "name"),
       displayName: readOptionalString(payload.displayName),
       status: parseOptionalClientOrganizationStatus(payload.status),
-      primaryContactName: readOptionalString(payload.primaryContactName),
-      primaryContactEmail: parseOptionalEmail(
-        payload.primaryContactEmail,
-        "primaryContactEmail",
+      primaryContactId: parseOptionalEntityId(
+        payload.primaryContactId,
+        "primaryContactId",
       ),
-      primaryContactPhone: parseOptionalPhone(
-        payload.primaryContactPhone,
-        "primaryContactPhone",
+      billingContactId: parseOptionalEntityId(
+        payload.billingContactId,
+        "billingContactId",
       ),
-      billingEmail: parseOptionalEmail(payload.billingEmail, "billingEmail"),
+      linkedContacts: parseOptionalContactLinks(payload.linkedContacts, "linkedContacts"),
       notes: readOptionalString(payload.notes),
     };
   },
@@ -85,22 +84,15 @@ export const updateClientOrganizationSchema = createValidationSchema(
       name: parseOptionalRequiredString(payload.name, "name"),
       displayName: parseOptionalNullString(payload.displayName, "displayName"),
       status: parseOptionalClientOrganizationStatus(payload.status),
-      primaryContactName: parseOptionalNullString(
-        payload.primaryContactName,
-        "primaryContactName",
+      primaryContactId: parseOptionalNullableEntityId(
+        payload.primaryContactId,
+        "primaryContactId",
       ),
-      primaryContactEmail: parseOptionalNullableEmail(
-        payload.primaryContactEmail,
-        "primaryContactEmail",
+      billingContactId: parseOptionalNullableEntityId(
+        payload.billingContactId,
+        "billingContactId",
       ),
-      primaryContactPhone: parseOptionalNullablePhone(
-        payload.primaryContactPhone,
-        "primaryContactPhone",
-      ),
-      billingEmail: parseOptionalNullableEmail(
-        payload.billingEmail,
-        "billingEmail",
-      ),
+      linkedContacts: parseOptionalContactLinks(payload.linkedContacts, "linkedContacts"),
       notes: parseOptionalNullString(payload.notes, "notes"),
     });
   },
@@ -164,6 +156,84 @@ function parseOptionalNullString(
   }
 
   return normalizeOptionalNullString(value) ?? null;
+}
+
+function parseOptionalEntityId(
+  value: unknown,
+  fieldName: string,
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  return requireString(value, fieldName);
+}
+
+function parseOptionalNullableEntityId(
+  value: unknown,
+  fieldName: string,
+): string | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === null) {
+    return null;
+  }
+
+  return requireString(value, fieldName);
+}
+
+function parseOptionalContactLinks(
+  value: unknown,
+  fieldName: string,
+):
+  | Array<{
+      contactId: string;
+      relationshipType: (typeof CONTACT_RELATIONSHIP_TYPE_VALUES)[number];
+      notes?: string | null;
+    }>
+  | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value)) {
+    throw new ValidationError(`${fieldName} must be an array.`);
+  }
+
+  return value.map((item, index) => parseContactLink(item, `${fieldName}[${index}]`));
+}
+
+function parseContactLink(
+  value: unknown,
+  fieldName: string,
+): {
+  contactId: string;
+  relationshipType: (typeof CONTACT_RELATIONSHIP_TYPE_VALUES)[number];
+  notes?: string | null;
+} {
+  const payload = requirePlainObject(value, `${fieldName} must be a plain object.`);
+  assertNoUnknownFields(
+    payload,
+    ["contactId", "relationshipType", "notes"],
+    fieldName,
+  );
+
+  const relationshipType = requireString(
+    payload.relationshipType,
+    `${fieldName}.relationshipType`,
+  ) as (typeof CONTACT_RELATIONSHIP_TYPE_VALUES)[number];
+
+  if (!CONTACT_RELATIONSHIP_TYPE_VALUES.includes(relationshipType)) {
+    throw new ValidationError(`${fieldName}.relationshipType is invalid.`);
+  }
+
+  return pruneUndefined({
+    contactId: requireString(payload.contactId, `${fieldName}.contactId`),
+    relationshipType,
+    notes: parseOptionalNullString(payload.notes, `${fieldName}.notes`),
+  });
 }
 
 function parseOptionalEmail(value: unknown, fieldName: string): string | undefined {

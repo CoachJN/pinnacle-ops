@@ -36,8 +36,8 @@ import type { EntityId } from "@/types/entity";
 import type {
   ClientQuote,
   ContractorQuote,
-  Invoice,
-} from "@/types/financial";
+} from "@/types/quote";
+import type { ClientInvoice as Invoice } from "@/types/invoice";
 import type { PermissionEntity } from "@/types/permissions";
 import { PERMISSION_ENTITIES } from "@/types/permissions";
 import type { Assignment, WorkOrder } from "@/types/work-order";

@@ -3,10 +3,16 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ActionFeedback } from "@/components/shared/action-feedback";
+import {
+  ContactLinkManager,
+  formatRelationshipTypeLabel,
+} from "@/components/shared/contact-link-manager";
 import { ClientOrganizationStatusBadge } from "@/components/client-organizations/client-organization-status-badge";
 import type { ClientOrganizationDetail } from "@/components/client-organizations/types";
 import { LocationStatusBadge } from "@/components/locations/location-status-badge";
 import type { LocationSummary } from "@/components/locations/types";
+import type { ContactLinkInput, ContactSummary } from "@/types/contact";
+import type { ContactRoleSlotAssignment } from "@/lib/contact-linking";
 
 interface ClientOrganizationDetailPageProps {
   clientOrganizationId: string;
@@ -18,6 +24,10 @@ interface ClientOrganizationResponse {
 
 interface LocationsResponse {
   locations: LocationSummary[];
+}
+
+interface ContactsResponse {
+  contacts: ContactSummary[];
 }
 
 interface ApiErrorResponse {
@@ -32,7 +42,13 @@ export function ClientOrganizationDetailPage({
   const [organization, setOrganization] =
     useState<ClientOrganizationDetail | null>(null);
   const [locations, setLocations] = useState<LocationSummary[]>([]);
+  const [contacts, setContacts] = useState<ContactSummary[]>([]);
+  const [editableLinks, setEditableLinks] = useState<ContactLinkInput[]>([]);
+  const [roleSlots, setRoleSlots] = useState<
+    ContactRoleSlotAssignment<"primaryContactId" | "billingContactId">[]
+  >([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSavingContacts, setIsSavingContacts] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -43,15 +59,17 @@ export function ClientOrganizationDetailPage({
       setErrorMessage(null);
 
       try {
-        const [organizationResponse, locationsResponse] = await Promise.all([
-          fetch(`/api/client-organizations/${clientOrganizationId}`, {
-            cache: "no-store",
-          }),
-          fetch(
-            `/api/locations?clientOrganizationId=${encodeURIComponent(clientOrganizationId)}&limit=100`,
-            { cache: "no-store" },
-          ),
-        ]);
+        const [organizationResponse, locationsResponse, contactsResponse] =
+          await Promise.all([
+            fetch(`/api/client-organizations/${clientOrganizationId}`, {
+              cache: "no-store",
+            }),
+            fetch(
+              `/api/locations?clientOrganizationId=${encodeURIComponent(clientOrganizationId)}&limit=100`,
+              { cache: "no-store" },
+            ),
+            fetch("/api/contacts", { cache: "no-store" }),
+          ]);
 
         const organizationPayload = (await organizationResponse.json()) as
           | ClientOrganizationResponse
@@ -59,33 +77,45 @@ export function ClientOrganizationDetailPage({
         const locationsPayload = (await locationsResponse.json()) as
           | LocationsResponse
           | ApiErrorResponse;
+        const contactsPayload = (await contactsResponse.json()) as
+          | ContactsResponse
+          | ApiErrorResponse;
 
         if (!organizationResponse.ok) {
-          const errorPayload = organizationPayload as ApiErrorResponse;
           throw new Error(
             getApiErrorMessage(
-              errorPayload,
+              organizationPayload as ApiErrorResponse,
               "Unable to load the client organization.",
             ),
           );
         }
 
         if (!locationsResponse.ok) {
-          const errorPayload = locationsPayload as ApiErrorResponse;
           throw new Error(
             getApiErrorMessage(
-              errorPayload,
+              locationsPayload as ApiErrorResponse,
               "Unable to load associated locations.",
             ),
           );
         }
 
+        if (!contactsResponse.ok) {
+          throw new Error(
+            getApiErrorMessage(
+              contactsPayload as ApiErrorResponse,
+              "Unable to load contacts.",
+            ),
+          );
+        }
+
         if (!isCancelled) {
-          const organizationSuccessPayload =
-            organizationPayload as ClientOrganizationResponse;
-          const locationsSuccessPayload = locationsPayload as LocationsResponse;
-          setOrganization(organizationSuccessPayload.clientOrganization);
-          setLocations(locationsSuccessPayload.locations);
+          const nextOrganization =
+            (organizationPayload as ClientOrganizationResponse).clientOrganization;
+          setOrganization(nextOrganization);
+          setLocations((locationsPayload as LocationsResponse).locations);
+          setContacts((contactsPayload as ContactsResponse).contacts);
+          setEditableLinks(toEditableLinks(nextOrganization));
+          setRoleSlots(toClientRoleSlots(nextOrganization));
         }
       } catch (error) {
         if (!isCancelled) {
@@ -108,6 +138,55 @@ export function ClientOrganizationDetailPage({
       isCancelled = true;
     };
   }, [clientOrganizationId]);
+
+  async function handleSaveContacts() {
+    if (!organization) {
+      return;
+    }
+
+    setIsSavingContacts(true);
+    setErrorMessage(null);
+
+    try {
+      const response = await fetch(`/api/client-organizations/${organization.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          primaryContactId:
+            roleSlots.find((slot) => slot.key === "primaryContactId")?.contactId ?? null,
+          billingContactId:
+            roleSlots.find((slot) => slot.key === "billingContactId")?.contactId ?? null,
+          linkedContacts: editableLinks,
+        }),
+      });
+
+      const payload = (await response.json()) as
+        | ClientOrganizationResponse
+        | ApiErrorResponse;
+
+      if (!response.ok) {
+        throw new Error(
+          getApiErrorMessage(
+            payload as ApiErrorResponse,
+            "Unable to update linked contacts.",
+          ),
+        );
+      }
+
+      const nextOrganization = (payload as ClientOrganizationResponse).clientOrganization;
+      setOrganization(nextOrganization);
+      setEditableLinks(toEditableLinks(nextOrganization));
+      setRoleSlots(toClientRoleSlots(nextOrganization));
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Unable to update linked contacts.",
+      );
+    } finally {
+      setIsSavingContacts(false);
+    }
+  }
 
   if (isLoading) {
     return (
@@ -163,12 +242,20 @@ export function ClientOrganizationDetailPage({
             </p>
           </div>
 
-          <Link
-            className="inline-flex rounded-full bg-neutral-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800"
-            href={`/locations/new?clientOrganizationId=${organization.id}`}
-          >
-            Create location
-          </Link>
+          <div className="flex flex-wrap gap-3">
+            <Link
+              className="inline-flex rounded-full border border-neutral-300 px-4 py-2 text-sm font-semibold text-neutral-700 transition hover:border-neutral-500 hover:text-neutral-950"
+              href={`/client-organizations/${organization.id}/edit`}
+            >
+              Edit client
+            </Link>
+            <Link
+              className="inline-flex rounded-full bg-neutral-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800"
+              href={`/locations/new?clientOrganizationId=${organization.id}`}
+            >
+              Create location
+            </Link>
+          </div>
         </div>
       </section>
 
@@ -178,11 +265,50 @@ export function ClientOrganizationDetailPage({
             Organization summary
           </h2>
           <dl className="mt-5 grid gap-4 sm:grid-cols-2">
-            <DetailItem label="Primary contact" value={organization.primaryContactName} />
-            <DetailItem label="Primary email" value={organization.primaryContactEmail} />
-            <DetailItem label="Primary phone" value={organization.primaryContactPhone} />
-            <DetailItem label="Billing email" value={organization.billingEmail} />
+            <DetailItem
+              label="Primary contact slot"
+              value={organization.primaryContact?.displayName ?? organization.primaryContactId}
+            />
+            <DetailItem
+              label="Billing contact slot"
+              value={organization.billingContact?.displayName ?? organization.billingContactId}
+            />
           </dl>
+          <div className="mt-5 rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-neutral-500">
+              Linked contacts
+            </p>
+            <div className="mt-3 space-y-3">
+              {(organization.linkedContacts ?? []).length > 0 ? (
+                organization.linkedContacts?.map((linkedContact) => (
+                  <div
+                    className="rounded-2xl border border-neutral-200 bg-white p-4"
+                    key={`${linkedContact.contactId}-${linkedContact.relationshipType}`}
+                  >
+                    <p className="text-sm font-semibold text-neutral-950">
+                      {linkedContact.contact.displayName}
+                    </p>
+                    <p className="mt-1 text-xs uppercase tracking-[0.18em] text-neutral-500">
+                      {formatRelationshipTypeLabel(linkedContact.relationshipType)}
+                      {linkedContact.isPrimary ? " • primary slot" : ""}
+                    </p>
+                    <p className="mt-2 text-sm text-neutral-600">
+                      {linkedContact.contact.email ?? "No email"} •{" "}
+                      {linkedContact.contact.primaryPhone ?? "No phone"}
+                    </p>
+                    <p className="mt-1 text-sm text-neutral-600">
+                      Preferred language:{" "}
+                      {linkedContact.contact.preferredLanguage ?? "unknown"}
+                    </p>
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm text-neutral-600">
+                  No normalized contacts are linked yet.
+                </p>
+              )}
+            </div>
+          </div>
           <div className="mt-5 rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-neutral-500">
               Notes
@@ -209,6 +335,26 @@ export function ClientOrganizationDetailPage({
             </p>
           </div>
         </aside>
+      </div>
+
+      <ContactLinkManager
+        contacts={contacts}
+        description="Manage linked client contacts directly here. Unlinking a role-assigned contact clears that role in the same change."
+        linkedContacts={editableLinks}
+        onLinkedContactsChange={setEditableLinks}
+        onRoleSlotsChange={setRoleSlots}
+        roleSlots={roleSlots}
+        title="Manage linked contacts"
+      />
+      <div className="flex justify-end">
+        <button
+          className="inline-flex rounded-full bg-neutral-950 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={isSavingContacts}
+          onClick={handleSaveContacts}
+          type="button"
+        >
+          {isSavingContacts ? "Saving contacts..." : "Save linked contacts"}
+        </button>
       </div>
 
       <section className="rounded-3xl border border-neutral-200 bg-white shadow-sm">
@@ -291,6 +437,38 @@ function DetailItem({
       <dd className="mt-2 text-sm text-neutral-700">{value ?? "Not provided"}</dd>
     </div>
   );
+}
+
+function toEditableLinks(
+  organization: Pick<ClientOrganizationDetail, "linkedContacts">,
+): ContactLinkInput[] {
+  return (
+    organization.linkedContacts?.map((link) => ({
+      contactId: link.contactId,
+      relationshipType: link.relationshipType,
+      notes: link.notes ?? null,
+    })) ?? []
+  );
+}
+
+function toClientRoleSlots(
+  organization: Pick<ClientOrganizationDetail, "primaryContactId" | "billingContactId">,
+): ContactRoleSlotAssignment<"primaryContactId" | "billingContactId">[] {
+  return [
+    {
+      key: "primaryContactId",
+      label: "Primary",
+      relationshipType: "primary",
+      contactId: organization.primaryContactId ?? null,
+      isPrimary: true,
+    },
+    {
+      key: "billingContactId",
+      label: "Billing",
+      relationshipType: "billing",
+      contactId: organization.billingContactId ?? null,
+    },
+  ];
 }
 
 function formatLocationLine(location: LocationSummary): string {

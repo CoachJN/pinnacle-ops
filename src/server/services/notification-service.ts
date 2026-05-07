@@ -13,10 +13,10 @@ import {
 import { APP_ROLES } from "@/lib/rbac/roles";
 import type {
   Assignment,
+  ClientInvoice,
+  ClientQuote,
   FirestoreRepositories,
-  Invoice,
   InternalNotification,
-  Quote,
   WorkOrder,
 } from "@/server/repositories";
 import type { EntityId } from "@/types/entity";
@@ -45,13 +45,13 @@ export interface CaptureOperationalEventInput extends ServiceAuditContext {
     WorkOrder,
     | "id"
     | "workOrderNumber"
-    | "assignedCoordinatorUserId"
-    | "assignedManagerUserId"
+    | "coordinatorUserId"
+    | "managerUserId"
     | "clientSnapshot"
     | "locationSnapshot"
   > | null;
-  readonly invoice?: Pick<Invoice, "id" | "invoiceNumber"> | null;
-  readonly quote?: Pick<Quote, "id" | "versionNumber"> | null;
+  readonly invoice?: Pick<ClientInvoice, "id" | "invoiceNumber"> | null;
+  readonly quote?: Pick<ClientQuote, "id"> | null;
   readonly assignment?: Pick<Assignment, "id"> | null;
   readonly contractorName?: string | null;
   readonly fromStatus?: string | null;
@@ -179,7 +179,7 @@ function buildMessageContext(
     assignmentId: input.assignment?.id ?? null,
     workOrderNumber: input.workOrder?.workOrderNumber ?? null,
     invoiceNumber: input.invoice?.invoiceNumber ?? null,
-    quoteLabel: input.quote ? `Quote v${input.quote.versionNumber}` : null,
+    quoteLabel: input.quote ? `Quote ${input.quote.id}` : null,
     assignmentLabel: input.assignment ? `Assignment ${input.assignment.id}` : null,
     contractorName: input.contractorName ?? null,
     clientName: input.workOrder?.clientSnapshot.name ?? null,

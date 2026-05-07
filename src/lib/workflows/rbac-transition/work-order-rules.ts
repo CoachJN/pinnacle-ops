@@ -14,31 +14,33 @@ type WorkOrderPair = readonly [WorkOrderLifecycleStatus, WorkOrderLifecycleStatu
 
 const coordinatorWorkOrderTransitions = [
   [WORK_ORDER_STATUS.New, WORK_ORDER_STATUS.Triage],
-  [WORK_ORDER_STATUS.Triage, WORK_ORDER_STATUS.QuotingRequired],
-  [WORK_ORDER_STATUS.QuotingRequired, WORK_ORDER_STATUS.AwaitingQuote],
-  [WORK_ORDER_STATUS.AwaitingQuote, WORK_ORDER_STATUS.QuoteReceived],
-  [WORK_ORDER_STATUS.ApprovedToProceed, WORK_ORDER_STATUS.Scheduling],
-  [WORK_ORDER_STATUS.Scheduling, WORK_ORDER_STATUS.Scheduled],
+  [WORK_ORDER_STATUS.Triage, WORK_ORDER_STATUS.Assigned],
+  [WORK_ORDER_STATUS.Triage, WORK_ORDER_STATUS.QuoteRequired],
+  [WORK_ORDER_STATUS.Assigned, WORK_ORDER_STATUS.AwaitingContractorResponse],
+  [WORK_ORDER_STATUS.AwaitingContractorResponse, WORK_ORDER_STATUS.ContractorScheduled],
+  [WORK_ORDER_STATUS.ClientApproved, WORK_ORDER_STATUS.Assigned],
+  [WORK_ORDER_STATUS.ClientApproved, WORK_ORDER_STATUS.ContractorScheduled],
+  [WORK_ORDER_STATUS.CompletionReview, WORK_ORDER_STATUS.Assigned],
   [WORK_ORDER_STATUS.InProgress, WORK_ORDER_STATUS.WorkCompleted],
 ] as const satisfies readonly WorkOrderPair[];
 
 const managerWorkOrderTransitions = [
-  [WORK_ORDER_STATUS.Triage, WORK_ORDER_STATUS.QuotingRequired],
-  [WORK_ORDER_STATUS.Triage, WORK_ORDER_STATUS.ApprovedToProceed],
-  [WORK_ORDER_STATUS.QuoteReceived, WORK_ORDER_STATUS.QuoteReview],
-  [WORK_ORDER_STATUS.QuoteReview, WORK_ORDER_STATUS.AwaitingClientApproval],
-  [WORK_ORDER_STATUS.AwaitingClientApproval, WORK_ORDER_STATUS.ApprovedToProceed],
-  [WORK_ORDER_STATUS.WorkCompleted, WORK_ORDER_STATUS.QaReview],
-  [WORK_ORDER_STATUS.QaReview, WORK_ORDER_STATUS.ReadyForInvoicing],
+  [WORK_ORDER_STATUS.ContractorQuoteReceived, WORK_ORDER_STATUS.QuoteUnderReview],
+  [WORK_ORDER_STATUS.QuoteUnderReview, WORK_ORDER_STATUS.ClientApprovalRequested],
+  [WORK_ORDER_STATUS.WorkCompleted, WORK_ORDER_STATUS.CompletionReview],
+  [WORK_ORDER_STATUS.CompletionReview, WORK_ORDER_STATUS.ReadyForInvoicing],
   [WORK_ORDER_STATUS.Escalated, WORK_ORDER_STATUS.Triage],
 ] as const satisfies readonly WorkOrderPair[];
 
 const financeAdminWorkOrderTransitions = [
-  [WORK_ORDER_STATUS.ReadyForInvoicing, WORK_ORDER_STATUS.Completed],
+  [WORK_ORDER_STATUS.ReadyForInvoicing, WORK_ORDER_STATUS.Invoiced],
+  [WORK_ORDER_STATUS.Invoiced, WORK_ORDER_STATUS.Paid],
+  [WORK_ORDER_STATUS.Paid, WORK_ORDER_STATUS.Closed],
 ] as const satisfies readonly WorkOrderPair[];
 
 const contractorWorkOrderTransitions = [
-  [WORK_ORDER_STATUS.Scheduled, WORK_ORDER_STATUS.InProgress],
+  [WORK_ORDER_STATUS.QuoteRequired, WORK_ORDER_STATUS.ContractorQuoteReceived],
+  [WORK_ORDER_STATUS.ContractorScheduled, WORK_ORDER_STATUS.InProgress],
   [WORK_ORDER_STATUS.InProgress, WORK_ORDER_STATUS.WorkCompleted],
 ] as const satisfies readonly WorkOrderPair[];
 

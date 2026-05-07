@@ -5,6 +5,10 @@ import {
   type ActivityLogService,
 } from "@/server/services/activity-log-service";
 import {
+  createDomainEventService,
+  type DomainEventService,
+} from "@/server/services/domain-event-service";
+import {
   createAssignmentService,
   type AssignmentService,
 } from "@/server/services/assignment-service";
@@ -12,6 +16,14 @@ import {
   createClientLocationService,
   type ClientLocationService,
 } from "@/server/services/client-location-service";
+import {
+  createContactService,
+  type ContactService,
+} from "@/server/services/contact-service";
+import {
+  createCommunicationServices,
+  type CommunicationDomainServices,
+} from "@/server/services/communication-service";
 import {
   createContractorService,
   type ContractorService,
@@ -21,17 +33,50 @@ import {
   type InvoiceService,
 } from "@/server/services/invoice-service";
 import {
+  createIntakeServices,
+  type IntakeDomainServices,
+} from "@/server/services/intake-service";
+import {
   createNotificationService,
   type NotificationService,
 } from "@/server/services/notification-service";
 import {
-  createQuoteService,
-  type QuoteService,
-} from "@/server/services/quote-service";
+  createProviderServices,
+  type ProviderDomainServices,
+} from "@/server/services/provider-service";
 import {
   createQuoteWorkflowService,
   type QuoteWorkflowService,
 } from "@/server/services/quote-workflow-service";
+import {
+  createTimelineService,
+  type TimelineService,
+} from "@/server/services/timeline-service";
+import {
+  createDeliveryServices,
+  type DeliveryDomainServices,
+} from "@/modules/delivery";
+import {
+  createEscalationServices,
+  type EscalationDomainServices,
+} from "@/modules/escalation";
+import {
+  createTransportServices,
+  type TransportDomainServices,
+} from "@/modules/transport";
+import {
+  createProviderRuntimeServices,
+  type ProviderRuntimeDomainServices,
+} from "@/modules/provider-runtime";
+import { createTransportAttemptRepository } from "@/modules/transport";
+import {
+  createRuntimeServices,
+  type RuntimeDomainServices,
+} from "@/modules/runtime/server/worker-runtime-service";
+import {
+  createSlaServices,
+  type SlaDomainServices,
+} from "@/modules/sla";
 import type { FirestoreRepositories } from "@/server/repositories";
 import { createFirestoreRepositories } from "@/server/repositories";
 import {
@@ -43,11 +88,22 @@ export type {
   ActivityLogService,
   AssignmentService,
   ClientLocationService,
+  CommunicationDomainServices,
+  ContactService,
   ContractorService,
+  DomainEventService,
   InvoiceService,
+  IntakeDomainServices,
   NotificationService,
-  QuoteService,
+  ProviderDomainServices,
+  RuntimeDomainServices,
+  DeliveryDomainServices,
+  EscalationDomainServices,
+  TransportDomainServices,
+  ProviderRuntimeDomainServices,
+  SlaDomainServices,
   QuoteWorkflowService,
+  TimelineService,
   WorkOrderService,
 };
 export type {
@@ -69,11 +125,22 @@ export interface DomainServices {
   activityLogs: ActivityLogService;
   assignments: AssignmentService;
   clientLocations: ClientLocationService;
+  communications: CommunicationDomainServices;
+  contacts: ContactService;
   contractors: ContractorService;
+  domainEvents: DomainEventService;
   invoices: InvoiceService;
+  intake: IntakeDomainServices;
   notifications: NotificationService;
-  quotes: QuoteService;
+  providers: ProviderDomainServices;
+  runtime: RuntimeDomainServices;
+  delivery: DeliveryDomainServices;
+  escalation: EscalationDomainServices;
+  transport: TransportDomainServices;
+  providerRuntime: ProviderRuntimeDomainServices;
+  sla: SlaDomainServices;
   quoteWorkflow: QuoteWorkflowService;
+  timeline: TimelineService;
   workOrders: WorkOrderService;
 }
 
@@ -81,29 +148,82 @@ export function createDomainServices(
   repositories: FirestoreRepositories = createFirestoreRepositories(),
 ): DomainServices {
   const activityLogs = createActivityLogService(repositories);
+  const domainEvents = createDomainEventService(repositories);
   const clientLocations = createClientLocationService(repositories);
+  const communications = createCommunicationServices(repositories, { domainEvents });
+  const contacts = createContactService(repositories);
   const contractors = createContractorService(repositories);
   const notifications = createNotificationService(repositories);
+  const workOrders = createWorkOrderService(repositories, {
+    domainEvents,
+    clientLocations,
+    notifications,
+  });
+  const timeline = createTimelineService(repositories, { domainEvents });
+  const intake = createIntakeServices(repositories, {
+    communications,
+    domainEvents,
+    timeline,
+    workOrders,
+  });
+  const providers = createProviderServices(repositories, {
+    domainEvents,
+    intake,
+  });
+  const sla = createSlaServices(repositories, {
+    domainEvents,
+  });
+  const escalation = createEscalationServices(repositories, {
+    domainEvents,
+  });
+  const delivery = createDeliveryServices(repositories, {
+    domainEvents,
+  });
+  const transportRepository = createTransportAttemptRepository(repositories);
+  const providerRuntime = createProviderRuntimeServices({
+    domainEvents,
+    attempts: transportRepository,
+    getDeliveryPlanById: repositories.deliveryPlans.getById.bind(repositories.deliveryPlans),
+    saveDeliveryPlan: async (plan) => {
+      await repositories.deliveryPlans.save(plan);
+    },
+  });
+  const transport = createTransportServices(repositories, {
+    domainEvents,
+    deliveryPolicy: delivery.policy,
+    providerRuntime: providerRuntime.capture,
+  });
+  const runtime = createRuntimeServices(repositories, {
+    domainEvents,
+    slaScheduler: sla.scheduler,
+  });
 
   return {
     activityLogs,
     assignments: createAssignmentService(repositories, {
-      activityLogs,
+      domainEvents,
       notifications,
     }),
     clientLocations,
+    communications,
+    contacts,
     contractors,
-    invoices: createInvoiceService(repositories, { activityLogs, notifications }),
+    domainEvents,
+    invoices: createInvoiceService(repositories, { domainEvents, notifications }),
+    intake,
     notifications,
-    quotes: createQuoteService(repositories, { activityLogs, notifications }),
+    providers,
+    runtime,
+    delivery,
+    escalation,
+    transport,
+    providerRuntime,
+    sla,
     quoteWorkflow: createQuoteWorkflowService(repositories, {
-      activityLogs,
+      domainEvents,
       notifications,
     }),
-    workOrders: createWorkOrderService(repositories, {
-      activityLogs,
-      clientLocations,
-      notifications,
-    }),
+    timeline,
+    workOrders,
   };
 }

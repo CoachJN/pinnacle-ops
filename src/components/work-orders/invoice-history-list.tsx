@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { Invoice } from "@/types/invoice";
+import type { ClientInvoice } from "@/types/invoice";
 import { formatDate, formatDateTime } from "@/components/work-orders/formatting";
 import { formatInvoiceCurrency } from "@/lib/invoices/money";
 import { InvoiceStatusBadge } from "@/components/invoices/invoice-status-badge";
@@ -8,8 +8,8 @@ export function InvoiceHistoryList({
   buildInvoiceHref,
   invoices,
 }: {
-  buildInvoiceHref?: (invoice: Invoice) => string;
-  invoices: Invoice[];
+  buildInvoiceHref?: (invoice: ClientInvoice) => string;
+  invoices: ClientInvoice[];
 }) {
   if (invoices.length === 0) {
     return (

@@ -10,8 +10,13 @@ export interface WorkOrderFormValues {
   description: string;
   clientOrganizationId: string;
   locationId: string;
+  requestedByContactId: string;
+  siteContactId: string;
   priority: WorkOrderPriority;
   category: WorkOrderCategory;
+  requestedServiceDate: string;
+  requiresQuote: boolean;
+  quoteRequiredThreshold: string;
   requestedByName: string;
   requestedByEmail: string;
   requestedByPhone: string;
@@ -28,8 +33,13 @@ export interface WorkOrderCreatePayload {
   description: string;
   clientOrganizationId: string;
   locationId: string;
+  requestedByContactId?: string;
+  siteContactId?: string;
   priority: WorkOrderPriority;
   category: WorkOrderCategory;
+  requestedServiceDate?: string;
+  requiresQuote?: boolean;
+  quoteRequiredThresholdCents?: number | null;
   requestedByName: string;
   requestedByEmail?: string;
   requestedByPhone?: string;

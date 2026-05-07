@@ -17,18 +17,6 @@ describe("location payload validation", () => {
     );
   });
 
-  test("rejects invalid email fields", () => {
-    assert.throws(
-      () =>
-        createLocationSchema.parse({
-          clientOrganizationId: "client-1",
-          name: "Pinnacle Tower",
-          locationContactEmail: "not-an-email",
-        }),
-      /locationContactEmail must be a valid email address\./i,
-    );
-  });
-
   test("rejects malformed postal code values when they are not non-empty strings", () => {
     assert.throws(
       () =>
@@ -51,6 +39,36 @@ describe("location payload validation", () => {
         }),
       /postalCode must be a non-empty string\./i,
     );
+  });
+
+  test("accepts null optional create fields from form payloads", () => {
+    const parsed = createLocationSchema.parse({
+      clientOrganizationId: "client-1",
+      name: "Pinnacle Tower",
+      code: null,
+      addressLine1: null,
+      addressLine2: null,
+      city: null,
+      region: null,
+      postalCode: null,
+      countryCode: null,
+      accessNotes: null,
+      notes: null,
+      status: "active",
+    });
+
+    assert.equal(parsed.clientOrganizationId, "client-1");
+    assert.equal(parsed.name, "Pinnacle Tower");
+    assert.equal(parsed.status, "active");
+    assert.equal(parsed.code, undefined);
+    assert.equal(parsed.addressLine1, undefined);
+    assert.equal(parsed.addressLine2, undefined);
+    assert.equal(parsed.city, undefined);
+    assert.equal(parsed.region, undefined);
+    assert.equal(parsed.postalCode, undefined);
+    assert.equal(parsed.countryCode, undefined);
+    assert.equal(parsed.accessNotes, undefined);
+    assert.equal(parsed.notes, undefined);
   });
 
   test("rejects unknown fields where schema is strict", () => {

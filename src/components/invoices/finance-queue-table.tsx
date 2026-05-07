@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { FinanceQueueFilter } from "@/modules/finance";
+import type { InvoiceStatus } from "@/types/invoice";
 import { InvoiceStatusBadge } from "@/components/invoices/invoice-status-badge";
 import { formatInvoiceCurrency } from "@/lib/invoices/money";
 import { formatDate, formatDateTime } from "@/components/work-orders/formatting";
@@ -12,7 +13,7 @@ interface FinanceQueueTableItem {
     id: string;
     workOrderNumber: string;
     title: string;
-    status: string;
+    lifecycleStatus: string;
     clientSnapshot?: {
       name: string;
     } | null;
@@ -24,7 +25,7 @@ interface FinanceQueueTableItem {
   invoice: {
     id: string;
     invoiceNumber: string;
-    status: "draft" | "sent" | "viewed" | "overdue" | "paid" | "void" | "issued";
+    status: InvoiceStatus;
     dueDate: string;
     totalAmount: number;
     currency: "CAD" | "USD";

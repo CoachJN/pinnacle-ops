@@ -29,6 +29,19 @@ export const INVOICE_CONTROL_ACTIONS = {
 export type InvoiceControlAction =
   (typeof INVOICE_CONTROL_ACTIONS)[keyof typeof INVOICE_CONTROL_ACTIONS];
 
+export const FINANCIAL_VISIBILITY_DOMAINS = {
+  ContractorQuotes: "contractor_quotes",
+  ClientQuotes: "client_quotes",
+  ContractorInvoices: "contractor_invoices",
+  ClientInvoices: "client_invoices",
+  BillingData: "billing_data",
+  PaymentStatus: "payment_status",
+  ProfitabilityData: "profitability_data",
+} as const;
+
+export type FinancialVisibilityDomain =
+  (typeof FINANCIAL_VISIBILITY_DOMAINS)[keyof typeof FINANCIAL_VISIBILITY_DOMAINS];
+
 export const FINANCIAL_VISIBILITY_LAYERS = {
   ContractorRawPricing: "contractor_raw_pricing",
   ClientSellPrice: "client_sell_price",
@@ -45,6 +58,17 @@ const allInternalRoles = [
   USER_ROLES.Owner,
 ] as const satisfies readonly UserRole[];
 const quoteControlRoles = [
+  USER_ROLES.Manager,
+  USER_ROLES.FinanceAdmin,
+  USER_ROLES.Owner,
+] as const satisfies readonly UserRole[];
+const contractorCommercialRoles = [
+  USER_ROLES.Coordinator,
+  USER_ROLES.Manager,
+  USER_ROLES.FinanceAdmin,
+  USER_ROLES.Owner,
+] as const satisfies readonly UserRole[];
+const clientCommercialRoles = [
   USER_ROLES.Manager,
   USER_ROLES.FinanceAdmin,
   USER_ROLES.Owner,
@@ -134,9 +158,31 @@ export const INVOICE_CONTROL_MATRIX = {
   [INVOICE_CONTROL_ACTIONS.Reopen]: [USER_ROLES.Owner],
 } as const satisfies Record<InvoiceControlAction, readonly UserRole[]>;
 
+export const FINANCIAL_DOMAIN_VISIBILITY_MATRIX = {
+  [FINANCIAL_VISIBILITY_DOMAINS.ContractorQuotes]: [
+    ...contractorCommercialRoles,
+    USER_ROLES.ContractorUser,
+  ],
+  [FINANCIAL_VISIBILITY_DOMAINS.ClientQuotes]: [
+    ...clientCommercialRoles,
+    USER_ROLES.ClientUser,
+  ],
+  [FINANCIAL_VISIBILITY_DOMAINS.ContractorInvoices]: contractorCommercialRoles,
+  [FINANCIAL_VISIBILITY_DOMAINS.ClientInvoices]: [
+    ...financeRoles,
+    USER_ROLES.ClientUser,
+  ],
+  [FINANCIAL_VISIBILITY_DOMAINS.BillingData]: financeRoles,
+  [FINANCIAL_VISIBILITY_DOMAINS.PaymentStatus]: [
+    ...financeRoles,
+    USER_ROLES.ClientUser,
+  ],
+  [FINANCIAL_VISIBILITY_DOMAINS.ProfitabilityData]: financeRoles,
+} as const satisfies Record<FinancialVisibilityDomain, readonly UserRole[]>;
+
 export const FINANCIAL_VISIBILITY_MATRIX = {
-  [FINANCIAL_VISIBILITY_LAYERS.ContractorRawPricing]: allInternalRoles,
-  [FINANCIAL_VISIBILITY_LAYERS.ClientSellPrice]: allInternalRoles,
+  [FINANCIAL_VISIBILITY_LAYERS.ContractorRawPricing]: contractorCommercialRoles,
+  [FINANCIAL_VISIBILITY_LAYERS.ClientSellPrice]: clientCommercialRoles,
   [FINANCIAL_VISIBILITY_LAYERS.MarkupMargin]: financeRoles,
 } as const satisfies Record<FinancialVisibilityLayer, readonly UserRole[]>;
 
@@ -174,6 +220,15 @@ export function roleCanViewFinancialLayer(
   );
 }
 
+export function roleCanViewFinancialDomain(
+  role: UserRole,
+  domain: FinancialVisibilityDomain,
+): boolean {
+  return (
+    FINANCIAL_DOMAIN_VISIBILITY_MATRIX[domain] as readonly UserRole[]
+  ).includes(role);
+}
+
 export function getRolesForContractorQuoteAction(
   action: QuoteControlAction,
 ): readonly UserRole[] {
@@ -190,6 +245,12 @@ export function getRolesForInvoiceAction(
   action: InvoiceControlAction,
 ): readonly UserRole[] {
   return INVOICE_CONTROL_MATRIX[action];
+}
+
+export function getRolesForFinancialVisibilityDomain(
+  domain: FinancialVisibilityDomain,
+): readonly UserRole[] {
+  return FINANCIAL_DOMAIN_VISIBILITY_MATRIX[domain];
 }
 
 export function assertFinancialControlInvariants(): void {

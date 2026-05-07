@@ -143,10 +143,8 @@ function mapClientOrganization(
     name: entity.name,
     displayName: entity.displayName ?? undefined,
     status: entity.status,
-    primaryContactName: entity.primaryContactName ?? undefined,
-    primaryContactEmail: entity.primaryContactEmail ?? undefined,
-    primaryContactPhone: entity.primaryContactPhone ?? undefined,
-    billingEmail: entity.billingEmail ?? undefined,
+    primaryContactId: entity.primaryContactId ?? undefined,
+    billingContactId: entity.billingContactId ?? undefined,
     notes: entity.notes ?? undefined,
   };
 }

@@ -46,6 +46,10 @@ interface QuoteWorkflowResponse {
   contractorQuotes: ContractorQuoteRecord[];
   clientQuotes: ClientQuoteRecord[];
   activeClientQuote: ClientQuoteRecord | null;
+  visibility: {
+    showContractorQuotes: boolean;
+    showClientQuotes: boolean;
+  };
   capabilities: {
     canSubmitContractorQuote: boolean;
     canReviewContractorQuote: boolean;
@@ -201,77 +205,79 @@ export function WorkOrderQuotePanel({ workOrderId }: { workOrderId: string }) {
         </div>
       ) : null}
 
-      <div className="mt-6">
-        <h3 className="text-sm font-semibold text-neutral-950">Contractor quote history</h3>
-        <div className="mt-3 space-y-3">
-          {data?.contractorQuotes.map((quote) => (
-            <div key={quote.id} className="rounded-lg border border-neutral-200 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-neutral-950">{quote.status}</p>
-                  <p className="text-xs text-neutral-500">Created {formatDateTime(quote.createdAt)}</p>
+      {data?.visibility.showContractorQuotes ? (
+        <div className="mt-6">
+          <h3 className="text-sm font-semibold text-neutral-950">Contractor quote history</h3>
+          <div className="mt-3 space-y-3">
+            {data.contractorQuotes.map((quote) => (
+              <div key={quote.id} className="rounded-lg border border-neutral-200 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-neutral-950">{quote.status}</p>
+                    <p className="text-xs text-neutral-500">Created {formatDateTime(quote.createdAt)}</p>
+                  </div>
+                  <p className="text-sm font-semibold text-neutral-950">
+                    {formatCurrency(quote.totalAmount)}
+                  </p>
                 </div>
-                <p className="text-sm font-semibold text-neutral-950">
-                  {formatCurrency(quote.totalAmount)}
-                </p>
-              </div>
-              <LineItemReadOnly items={quote.lineItems} />
-              {quote.notes ? <p className="mt-3 text-sm text-neutral-700">{quote.notes}</p> : null}
-              {quote.rejectionReason ? (
-                <p className="mt-2 text-sm text-rose-700">Rejected: {quote.rejectionReason}</p>
-              ) : null}
-              <div className="mt-4 flex flex-wrap gap-3">
-                {data.capabilities.canReviewContractorQuote &&
-                (quote.status === "submitted" || quote.status === "under_review") ? (
-                  <>
+                <LineItemReadOnly items={quote.lineItems} />
+                {quote.notes ? <p className="mt-3 text-sm text-neutral-700">{quote.notes}</p> : null}
+                {quote.rejectionReason ? (
+                  <p className="mt-2 text-sm text-rose-700">Rejected: {quote.rejectionReason}</p>
+                ) : null}
+                <div className="mt-4 flex flex-wrap gap-3">
+                  {data.capabilities.canReviewContractorQuote &&
+                  (quote.status === "submitted" || quote.status === "under_review") ? (
+                    <>
+                      <ActionButton
+                        disabled={saving}
+                        label="Accept"
+                        onClick={() =>
+                          void submitAction({
+                            action: "review_contractor_quote",
+                            contractorQuoteId: quote.id,
+                            decision: "accept",
+                          })
+                        }
+                      />
+                      <ActionButton
+                        disabled={saving}
+                        label="Reject"
+                        tone="danger"
+                        onClick={() =>
+                          void submitAction({
+                            action: "review_contractor_quote",
+                            contractorQuoteId: quote.id,
+                            decision: "reject",
+                            rejectionReason,
+                          })
+                        }
+                      />
+                    </>
+                  ) : null}
+                  {data.capabilities.canCreateClientQuote &&
+                  quote.status === "accepted" &&
+                  !data.activeClientQuote ? (
                     <ActionButton
                       disabled={saving}
-                      label="Accept"
+                      label="Create client quote"
                       onClick={() =>
                         void submitAction({
-                          action: "review_contractor_quote",
+                          action: "create_client_quote_from_contractor_quote",
                           contractorQuoteId: quote.id,
-                          decision: "accept",
                         })
                       }
                     />
-                    <ActionButton
-                      disabled={saving}
-                      label="Reject"
-                      tone="danger"
-                      onClick={() =>
-                        void submitAction({
-                          action: "review_contractor_quote",
-                          contractorQuoteId: quote.id,
-                          decision: "reject",
-                          rejectionReason,
-                        })
-                      }
-                    />
-                  </>
-                ) : null}
-                {data.capabilities.canCreateClientQuote &&
-                quote.status === "accepted" &&
-                !data.activeClientQuote ? (
-                  <ActionButton
-                    disabled={saving}
-                    label="Create client quote"
-                    onClick={() =>
-                      void submitAction({
-                        action: "create_client_quote_from_contractor_quote",
-                        contractorQuoteId: quote.id,
-                      })
-                    }
-                  />
-                ) : null}
+                  ) : null}
+                </div>
               </div>
-            </div>
-          ))}
-          {data?.contractorQuotes.length === 0 ? (
-            <p className="text-sm text-neutral-600">No contractor quotes yet.</p>
-          ) : null}
+            ))}
+            {data.contractorQuotes.length === 0 ? (
+              <p className="text-sm text-neutral-600">No contractor quotes yet.</p>
+            ) : null}
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {data?.capabilities.canReviewContractorQuote ? (
         <label className="mt-4 block text-sm font-medium text-neutral-700">
@@ -313,72 +319,74 @@ export function WorkOrderQuotePanel({ workOrderId }: { workOrderId: string }) {
         </div>
       ) : null}
 
-      <div className="mt-6">
-        <h3 className="text-sm font-semibold text-neutral-950">Client quote history</h3>
-        <div className="mt-3 space-y-3">
-          {data?.clientQuotes.map((quote) => (
-            <div key={quote.id} className="rounded-lg border border-neutral-200 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-neutral-950">{quote.status}</p>
-                  <p className="text-xs text-neutral-500">Created {formatDateTime(quote.createdAt)}</p>
+      {data?.visibility.showClientQuotes ? (
+        <div className="mt-6">
+          <h3 className="text-sm font-semibold text-neutral-950">Client quote history</h3>
+          <div className="mt-3 space-y-3">
+            {data.clientQuotes.map((quote) => (
+              <div key={quote.id} className="rounded-lg border border-neutral-200 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-neutral-950">{quote.status}</p>
+                    <p className="text-xs text-neutral-500">Created {formatDateTime(quote.createdAt)}</p>
+                  </div>
+                  <p className="text-sm font-semibold text-neutral-950">
+                    {formatCurrency(quote.totalAmount)}
+                  </p>
                 </div>
-                <p className="text-sm font-semibold text-neutral-950">
-                  {formatCurrency(quote.totalAmount)}
-                </p>
+                <LineItemReadOnly items={quote.lineItems} />
+                {quote.notes ? <p className="mt-3 text-sm text-neutral-700">{quote.notes}</p> : null}
+                {quote.rejectionReason ? (
+                  <p className="mt-2 text-sm text-rose-700">Rejected: {quote.rejectionReason}</p>
+                ) : null}
+                <div className="mt-4 flex flex-wrap gap-3">
+                  {data.capabilities.canSendClientQuote && quote.status === "draft" ? (
+                    <ActionButton
+                      disabled={saving}
+                      label="Send client quote"
+                      onClick={() =>
+                        void submitAction({
+                          action: "send_client_quote",
+                          clientQuoteId: quote.id,
+                        })
+                      }
+                    />
+                  ) : null}
+                  {data.capabilities.canApproveClientQuote && quote.status === "sent" ? (
+                    <ActionButton
+                      disabled={saving}
+                      label="Approve"
+                      onClick={() =>
+                        void submitAction({
+                          action: "approve_client_quote",
+                          clientQuoteId: quote.id,
+                        })
+                      }
+                    />
+                  ) : null}
+                  {data.capabilities.canRejectClientQuote && quote.status === "sent" ? (
+                    <ActionButton
+                      disabled={saving}
+                      label="Reject"
+                      tone="danger"
+                      onClick={() =>
+                        void submitAction({
+                          action: "reject_client_quote",
+                          clientQuoteId: quote.id,
+                          rejectionReason,
+                        })
+                      }
+                    />
+                  ) : null}
+                </div>
               </div>
-              <LineItemReadOnly items={quote.lineItems} />
-              {quote.notes ? <p className="mt-3 text-sm text-neutral-700">{quote.notes}</p> : null}
-              {quote.rejectionReason ? (
-                <p className="mt-2 text-sm text-rose-700">Rejected: {quote.rejectionReason}</p>
-              ) : null}
-              <div className="mt-4 flex flex-wrap gap-3">
-                {data.capabilities.canSendClientQuote && quote.status === "draft" ? (
-                  <ActionButton
-                    disabled={saving}
-                    label="Send client quote"
-                    onClick={() =>
-                      void submitAction({
-                        action: "send_client_quote",
-                        clientQuoteId: quote.id,
-                      })
-                    }
-                  />
-                ) : null}
-                {data.capabilities.canApproveClientQuote && quote.status === "sent" ? (
-                  <ActionButton
-                    disabled={saving}
-                    label="Approve"
-                    onClick={() =>
-                      void submitAction({
-                        action: "approve_client_quote",
-                        clientQuoteId: quote.id,
-                      })
-                    }
-                  />
-                ) : null}
-                {data.capabilities.canRejectClientQuote && quote.status === "sent" ? (
-                  <ActionButton
-                    disabled={saving}
-                    label="Reject"
-                    tone="danger"
-                    onClick={() =>
-                      void submitAction({
-                        action: "reject_client_quote",
-                        clientQuoteId: quote.id,
-                        rejectionReason,
-                      })
-                    }
-                  />
-                ) : null}
-              </div>
-            </div>
-          ))}
-          {data?.clientQuotes.length === 0 ? (
-            <p className="text-sm text-neutral-600">No client-facing quotes yet.</p>
-          ) : null}
+            ))}
+            {data.clientQuotes.length === 0 ? (
+              <p className="text-sm text-neutral-600">No client-facing quotes yet.</p>
+            ) : null}
+          </div>
         </div>
-      </div>
+      ) : null}
     </section>
   );
 }

@@ -5,5 +5,5 @@ import { INTERNAL_APP_ROLES } from "@/lib/rbac/roles";
 export default async function NewClientOrganizationPage() {
   await requireUserWithRole(INTERNAL_APP_ROLES);
 
-  return <ClientOrganizationEditorPage />;
+  return <ClientOrganizationEditorPage mode="create" />;
 }
