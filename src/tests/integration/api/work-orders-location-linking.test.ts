@@ -3,10 +3,10 @@ import { describe, test } from "node:test";
 
 import {
   createPhaseTwoServiceHarness,
-  makeAuditContext,
   makeClientOrganization,
   makeLocation,
   makeOwnerActor,
+  makeWorkOrderMutationContext,
 } from "../../support/phase-two-fixtures.ts";
 
 describe("work order location linkage integration", () => {
@@ -17,7 +17,7 @@ describe("work order location linkage integration", () => {
     });
 
     const result = await harness.workOrders.create({
-      ...makeAuditContext(makeOwnerActor()),
+      ...makeWorkOrderMutationContext(makeOwnerActor()),
       title: "Generator repair",
       description: "Investigate generator alarm.",
       priority: "medium",
@@ -44,7 +44,7 @@ describe("work order location linkage integration", () => {
     });
 
     const result = await harness.workOrders.create({
-      ...makeAuditContext(makeOwnerActor()),
+      ...makeWorkOrderMutationContext(makeOwnerActor()),
       title: "Generator repair",
       description: "Investigate generator alarm.",
       priority: "medium",
@@ -79,7 +79,7 @@ describe("work order location linkage integration", () => {
     });
 
     const result = await harness.workOrders.create({
-      ...makeAuditContext(makeOwnerActor()),
+      ...makeWorkOrderMutationContext(makeOwnerActor()),
       title: "Generator repair",
       description: "Investigate generator alarm.",
       priority: "medium",
@@ -105,12 +105,18 @@ describe("work order location linkage integration", () => {
     });
 
     const result = await harness.workOrders.create({
-      ...makeAuditContext(makeOwnerActor()),
+      ...makeWorkOrderMutationContext(makeOwnerActor()),
       title: "Generator repair",
       description: "Investigate generator alarm.",
       priority: "medium",
       clientOrganizationId: "client-1",
       locationId: "loc-1",
+      requestedByName: "Smoke Test Requester",
+      requestedByEmail: "requester@example.com",
+      requestedByPhone: "555-0100",
+      requiresQuote: true,
+      quoteRequiredThresholdCents: 25000,
+      dueDate: "2026-05-09T00:00:00.000Z",
     });
 
     assert.equal(result.ok, true);
@@ -122,5 +128,12 @@ describe("work order location linkage integration", () => {
     assert.equal(result.value.locationId, "loc-1");
     assert.equal(result.value.clientSnapshot.id, "client-1");
     assert.equal(result.value.locationSnapshot.id, "loc-1");
+    assert.equal(result.value.requestedByName, "Smoke Test Requester");
+    assert.equal(result.value.requestedByEmail, "requester@example.com");
+    assert.equal(result.value.requestedByPhone, "555-0100");
+    assert.equal(result.value.requiresQuote, true);
+    assert.equal(result.value.quoteRequiredThresholdCents, 25000);
+    assert.equal(result.value.quoteSummaryStatus, "required");
+    assert.equal(result.value.dueDate, "2026-05-09T00:00:00.000Z");
   });
 });

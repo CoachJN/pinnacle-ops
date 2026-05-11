@@ -25,6 +25,17 @@ export function createEventReplayService(
     async replay(input) {
       const timestamp = input.now ?? nowIso();
       if (input.eventId) {
+        const directLookup = "getById" in repositories.domainEvents
+          ? await repositories.domainEvents.getById(input.eventId)
+          : null;
+        if (directLookup && directLookup.organizationId === input.organizationId) {
+          return subscribers.processEvent({
+            event: directLookup,
+            now: timestamp,
+            force: input.force,
+          });
+        }
+
         return subscribers.processEventById({
           organizationId: input.organizationId,
           eventId: input.eventId,

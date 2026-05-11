@@ -294,7 +294,7 @@ function buildMatrixCases(): readonly WorkflowVerificationMatrixCase[] {
       lifecycle: "work-order",
       from: WORK_ORDER_STATUS.AwaitingClientApproval,
       to: WORK_ORDER_STATUS.ApprovedToProceed,
-      role: PLATFORM_ROLES.Manager,
+      role: PLATFORM_ROLES.ClientUser,
       expectedOk: true,
       dependency: "quote-approved",
     },

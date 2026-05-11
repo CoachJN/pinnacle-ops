@@ -10,7 +10,12 @@ import { createProviderHealthService, type ProviderHealthService } from "./provi
 import { createProviderReceiptDiagnosticsService, type ProviderReceiptDiagnosticsService } from "./provider-receipt-diagnostics-service";
 import type { TransportAttemptRepository } from "@/modules/transport";
 import type { DomainEventService } from "@/server/services";
+import type { AtomicPersistenceService } from "@/server/services/atomic-persistence-service";
 import { createFirestoreProviderRuntimeStorage, type ProviderRuntimeStorage } from "./provider-runtime-storage";
+import { createProviderWebhookSecurityService, type ProviderWebhookSecurityService } from "./provider-webhook-security";
+import type { ProviderConnectionRepository } from "@/server/repositories";
+import { isAlreadyExistsError } from "@/lib/idempotency/already-exists";
+import { buildStableEntityId } from "@/lib/idempotency/stable-entity-id";
 
 export interface ProviderReceiptCaptureService {
   recordAdapterReceipt(input: {
@@ -35,6 +40,7 @@ export interface ProviderRuntimeDomainServices {
   capture: ProviderReceiptCaptureService;
   normalizer: ProviderReceiptNormalizer;
   webhooks: ProviderWebhookRuntime;
+  webhookSecurity: ProviderWebhookSecurityService;
   reconciliation: ProviderReconciliationService;
   health: ProviderHealthService;
   diagnostics: ProviderReceiptDiagnosticsService;
@@ -45,19 +51,25 @@ export function createProviderRuntimeServices(
   dependencies: {
     domainEvents: DomainEventService;
     attempts: TransportAttemptRepository;
+    providerConnections: ProviderConnectionRepository;
     getDeliveryPlanById: (id: string) => Promise<DeliveryPlan | null>;
     saveDeliveryPlan: (plan: DeliveryPlan) => Promise<void>;
     storage?: ProviderRuntimeStorage;
+    atomicPersistence?: AtomicPersistenceService;
   },
 ): ProviderRuntimeDomainServices {
   const storage = dependencies.storage ?? createFirestoreProviderRuntimeStorage();
   const normalizer = createProviderReceiptNormalizer();
   const capture = createProviderReceiptCaptureService(storage.receipts, dependencies.domainEvents);
+  const webhookSecurity = createProviderWebhookSecurityService({
+    providerConnections: dependencies.providerConnections,
+  });
   const webhooks = createProviderWebhookRuntime({
     receipts: storage.receipts,
     webhookEvents: storage.webhookEvents,
     normalizer,
     domainEvents: dependencies.domainEvents,
+    atomicPersistence: dependencies.atomicPersistence,
   });
   const reconciliation = createProviderReconciliationService({
     receipts: storage.receipts,
@@ -73,6 +85,7 @@ export function createProviderRuntimeServices(
     capture,
     normalizer,
     webhooks,
+    webhookSecurity,
     reconciliation,
     health,
     diagnostics,
@@ -94,16 +107,11 @@ function createProviderReceiptCaptureService(
         input.providerReceiptId ?? input.providerMessageId ?? input.deliveryAttemptId,
         input.normalizedStatus,
       ].join(":");
-      const existing = await receipts.findByIdempotencyKey({
-        organizationId: input.organizationId,
-        idempotencyKey,
-      });
-      if (existing) {
-        return;
-      }
-
       const receipt = {
-        id: receipts.newId(),
+        id: buildStableEntityId("provider-receipt", [
+          input.organizationId,
+          idempotencyKey,
+        ]),
         organizationId: input.organizationId,
         tenantId: input.organizationId,
         providerType: input.providerType as ProviderReceipt["providerType"],
@@ -127,7 +135,14 @@ function createProviderReceiptCaptureService(
         updatedAt: input.now,
         metadata: input.metadata ?? {},
       };
-      await receipts.create(receipt);
+      try {
+        await receipts.create(receipt);
+      } catch (error) {
+        if (!isAlreadyExistsError(error)) {
+          throw error;
+        }
+        return;
+      }
       await domainEvents.record({
         organizationId: input.organizationId,
         actor: { userId: "system", role: "system" },

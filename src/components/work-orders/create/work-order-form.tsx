@@ -23,6 +23,11 @@ import { ClientSelector } from "./client-selector";
 import { syncSelectedContacts } from "./contact-selection";
 import { LocationSelector } from "./location-selector";
 import { PrioritySelector } from "./priority-selector";
+import {
+  formatQuoteThresholdInput,
+  isValidCurrencyThresholdInput,
+  parseQuoteThresholdDollarsToCents,
+} from "./quote-threshold";
 import type {
   ApiErrorResponse,
   CreateWorkOrderSuccessResponse,
@@ -493,8 +498,15 @@ export function WorkOrderForm({
                 label="Quote threshold"
                 name="quoteRequiredThreshold"
                 onChange={(event) => updateField("quoteRequiredThreshold", event.target.value)}
-                placeholder="Optional cents"
-                type="number"
+                onBlur={(event) =>
+                  updateField(
+                    "quoteRequiredThreshold",
+                    formatQuoteThresholdInput(event.target.value),
+                  )
+                }
+                placeholder="Optional amount, for example 250.00"
+                inputMode="decimal"
+                type="text"
                 value={values.quoteRequiredThreshold}
               />
             </div>
@@ -533,9 +545,10 @@ function validateForm(
 
   if (
     values.quoteRequiredThreshold &&
-    !/^\d+$/.test(values.quoteRequiredThreshold)
+    !isValidCurrencyThresholdInput(values.quoteRequiredThreshold)
   ) {
-    errors.quoteRequiredThreshold = "Enter the quote threshold in cents.";
+    errors.quoteRequiredThreshold =
+      "Enter the quote threshold as dollars and cents, for example 250.00.";
   }
 
   if (!values.requiresQuote && values.quoteRequiredThreshold) {
@@ -568,9 +581,9 @@ function parsePayload(values: WorkOrderFormValues): WorkOrderCreatePayload | nul
       ? new Date(`${values.requestedServiceDate}T00:00:00.000Z`).toISOString()
       : undefined,
     requiresQuote: values.requiresQuote || undefined,
-    quoteRequiredThresholdCents: values.quoteRequiredThreshold
-      ? Number.parseInt(values.quoteRequiredThreshold, 10)
-      : undefined,
+    quoteRequiredThresholdCents: parseQuoteThresholdDollarsToCents(
+      values.quoteRequiredThreshold,
+    ),
     requestedByName: values.requestedByName.trim(),
     requestedByEmail: values.requestedByEmail.trim() || undefined,
     requestedByPhone: values.requestedByPhone.trim() || undefined,
@@ -641,8 +654,11 @@ function TextField({
   label,
   name,
   onChange,
+  onBlur,
   placeholder,
   required = false,
+  inputMode,
+  step,
   type = "text",
   value,
 }: {
@@ -650,8 +666,11 @@ function TextField({
   label: string;
   name: string;
   onChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onBlur?: (event: ChangeEvent<HTMLInputElement>) => void;
   placeholder?: string;
   required?: boolean;
+  inputMode?: "decimal" | "email" | "numeric" | "tel" | "text";
+  step?: string;
   type?: "date" | "email" | "number" | "tel" | "text";
   value: string;
 }) {
@@ -661,9 +680,12 @@ function TextField({
       {required ? <span className="text-rose-700"> *</span> : null}
       <input
         className="mt-1 w-full rounded-2xl border border-neutral-300 bg-white px-4 py-3 text-sm text-neutral-950 shadow-sm outline-none transition placeholder:text-neutral-400 focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200"
+        inputMode={inputMode}
         name={name}
+        onBlur={onBlur}
         onChange={onChange}
         placeholder={placeholder}
+        step={step}
         type={type}
         value={value}
       />

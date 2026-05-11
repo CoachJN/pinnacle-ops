@@ -95,4 +95,11 @@ export const APP_PRIMARY_NAV_ITEMS: readonly NavigationItem[] = [
     allowedRoles: FINANCE_NAV_ROLES,
     match: "prefix",
   },
+  {
+    id: "settings",
+    label: "Settings",
+    href: APP_PATHS.settings,
+    allowedRoles: INTERNAL_APP_ROLES,
+    match: "prefix",
+  },
 ] as const;

@@ -2,6 +2,9 @@ import "server-only";
 
 import type { FirestoreRepositories } from "@/server/repositories";
 import type { DomainServices } from "@/server/services";
+import { createOperatorGuardrailService } from "@/modules/scheduler/server/operator-guardrail-service";
+import type { SchedulerRepositories } from "@/modules/scheduler/server/scheduler-task-repository";
+import { createFirestoreSchedulerRepositories } from "@/modules/scheduler/server/scheduler-task-repository";
 import { createRuntimeAlertService } from "./runtime-alert-service";
 import { createRuntimeAuditService } from "./runtime-audit-service";
 import { createRuntimeCommandCenterService } from "./runtime-command-center-service";
@@ -30,6 +33,7 @@ export function createRuntimeOperationsPlatform(
   >,
   services: Pick<DomainServices, "runtime" | "providerRuntime" | "delivery">,
   observabilityRepositories: RuntimeObservabilityRepositories = createFirestoreRuntimeObservabilityRepositories(),
+  schedulerRepositories: SchedulerRepositories = createFirestoreSchedulerRepositories(),
 ) {
   const health = createRuntimeHealthService();
   const projection = createRuntimeProjectionService(
@@ -43,6 +47,7 @@ export function createRuntimeOperationsPlatform(
   const deadLetters = createDeadLetterOperationsService(repositories);
   const replay = createReplayOperationsService(repositories, services.providerRuntime);
   const commandCenter = createRuntimeCommandCenterService(projection, health, alerts);
+  const guardrails = createOperatorGuardrailService(schedulerRepositories);
   const observability = createRuntimeObservabilityService(
     repositories,
     projection,
@@ -56,10 +61,13 @@ export function createRuntimeOperationsPlatform(
     repositories,
     services,
     observabilityRepositories,
+    schedulerRepositories,
+    guardrails,
   );
 
   return {
     repositories: observabilityRepositories,
+    schedulerRepositories,
     health,
     projection,
     alerts,

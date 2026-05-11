@@ -42,13 +42,6 @@ export const workOrderStandardScenario = makeScenario({
       description: "Coordinator marks quote required.",
       to: WORK_ORDER_STATUS.QuotingRequired,
       role: PLATFORM_ROLES.Coordinator,
-      assertions: [assertTransitionSucceeded()],
-    }),
-    workOrderTransitionStep({
-      stepKey: "wo-quote-required-awaiting-quote",
-      description: "Coordinator moves quote request to awaiting quote.",
-      to: WORK_ORDER_STATUS.AwaitingQuote,
-      role: PLATFORM_ROLES.Coordinator,
       assertions: [
         assertTransitionSucceeded(),
         assertOrchestrationCreated("REQUEST_QUOTE_FOLLOW_UP"),
@@ -58,9 +51,9 @@ export const workOrderStandardScenario = makeScenario({
     simulateQuoteStateStep({ stepKey: "quote-submitted-simulated", status: QUOTE_STATUS.Submitted }),
     workOrderTransitionStep({
       stepKey: "wo-awaiting-quote-quote-received",
-      description: "Coordinator marks quote received after dependency simulation.",
+      description: "Contractor quote submission advances the work order to quote received.",
       to: WORK_ORDER_STATUS.QuoteReceived,
-      role: PLATFORM_ROLES.Coordinator,
+      role: PLATFORM_ROLES.ContractorUser,
       assertions: [assertTransitionSucceeded()],
     }),
     workOrderTransitionStep({
@@ -84,9 +77,9 @@ export const workOrderStandardScenario = makeScenario({
     simulateQuoteStateStep({ stepKey: "client-approval-simulated", status: QUOTE_STATUS.ClientApproved }),
     workOrderTransitionStep({
       stepKey: "wo-approved-to-proceed",
-      description: "Manager approves work order after client quote approval.",
+      description: "Client approval advances the work order to approved.",
       to: WORK_ORDER_STATUS.ApprovedToProceed,
-      role: PLATFORM_ROLES.Manager,
+      role: PLATFORM_ROLES.ClientUser,
       assertions: [
         assertTransitionSucceeded(),
         assertReactionTriggered("COORDINATOR_WORK_READY_ALERT"),
@@ -95,8 +88,8 @@ export const workOrderStandardScenario = makeScenario({
     }),
     workOrderTransitionStep({
       stepKey: "wo-scheduling",
-      description: "Coordinator moves work into scheduling.",
-      to: WORK_ORDER_STATUS.Scheduling,
+      description: "Coordinator assigns the approved work.",
+      to: WORK_ORDER_STATUS.Assigned,
       role: PLATFORM_ROLES.Coordinator,
       assertions: [assertTransitionSucceeded()],
     }),
@@ -161,14 +154,28 @@ export const workOrderStandardScenario = makeScenario({
         assertSlaTimerCreated("invoice.payment-follow-up"),
       ],
     }),
+    workOrderTransitionStep({
+      stepKey: "wo-invoiced",
+      description: "Finance marks the work order invoiced after invoice send.",
+      to: WORK_ORDER_STATUS.Invoiced,
+      role: PLATFORM_ROLES.FinanceAdmin,
+      assertions: [assertTransitionSucceeded()],
+    }),
     invoiceTransitionStep({
       stepKey: "invoice-paid",
       description: "Finance marks invoice paid.",
       to: INVOICE_STATUS.Paid,
     }),
     workOrderTransitionStep({
+      stepKey: "wo-paid",
+      description: "Finance marks the work order paid after invoice payment.",
+      to: WORK_ORDER_STATUS.Paid,
+      role: PLATFORM_ROLES.FinanceAdmin,
+      assertions: [assertTransitionSucceeded()],
+    }),
+    workOrderTransitionStep({
       stepKey: "wo-completed",
-      description: "Finance completes the ready-for-invoicing work order.",
+      description: "Finance closes the paid work order.",
       to: WORK_ORDER_STATUS.Completed,
       role: PLATFORM_ROLES.FinanceAdmin,
       assertions: [assertTransitionSucceeded()],

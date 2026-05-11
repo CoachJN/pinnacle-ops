@@ -164,11 +164,7 @@ export interface ProviderSyncRun {
     | "nextRetryAt"
   > | null;
   errorSummary: string | null;
-  claim: {
-    claimedBy: string | null;
-    claimedAt: IsoDateTimeString | null;
-    releasedAt: IsoDateTimeString | null;
-  };
+  claim: ProviderSyncRunClaimState;
   metadata: Record<string, unknown>;
   createdAt: IsoDateTimeString;
   updatedAt: IsoDateTimeString;
@@ -306,7 +302,21 @@ export interface ProviderSyncRunClaim {
   runId: EntityId;
   claimedBy: string;
   claimedAt: IsoDateTimeString;
+  claimToken: string;
+  leaseExpiresAt: IsoDateTimeString;
+}
+
+export interface ProviderSyncRunClaimState {
+  claimedBy: string | null;
+  claimToken: string | null;
+  claimVersion: number;
+  claimedAt: IsoDateTimeString | null;
   leaseExpiresAt: IsoDateTimeString | null;
+  heartbeatAt: IsoDateTimeString | null;
+  releasedAt: IsoDateTimeString | null;
+  reclaimedAt: IsoDateTimeString | null;
+  reclaimedBy: string | null;
+  reclaimCount: number;
 }
 
 export interface ProviderReplayJobRequest {

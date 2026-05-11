@@ -22,6 +22,8 @@ import type { DomainEventService } from "@/server/services";
 import { conflictError, notFoundError, validationError } from "@/server/services/errors";
 import { nowIso, serviceFail, serviceOk, type ServiceAuditContext, type ServiceResult } from "@/server/services/types";
 import { EVENT_VISIBILITIES } from "@/server/events/types";
+import { isAlreadyExistsError } from "@/lib/idempotency/already-exists";
+import { buildStableEntityId } from "@/lib/idempotency/stable-entity-id";
 import { createDeadLetterService, type DeadLetterService } from "./dead-letter-service";
 import { createEventProcessingRepository } from "./event-processing-repository";
 import {
@@ -42,6 +44,7 @@ import { createWorkerLeaseService, type WorkerLeaseService } from "./worker-leas
 import { createWorkerQueueRepository, type WorkerQueueRepository } from "./worker-queue-repository";
 import type { FirestoreRepositories } from "@/server/repositories";
 import type { SlaSchedulerService } from "@/modules/sla";
+import type { RuntimeCapacityGuardrailService } from "@/modules/runtime-capacity";
 
 export interface WorkerRuntimeService {
   enqueue(
@@ -76,6 +79,7 @@ export function createRuntimeServices(
     retryPolicy?: WorkerRetryPolicy;
     subscriberRegistry?: RuntimeEventSubscriberRegistry;
     slaScheduler?: SlaSchedulerService;
+    capacityGuardrails?: RuntimeCapacityGuardrailService;
   },
 ): RuntimeDomainServices {
   const repository = createWorkerQueueRepository(repositories);
@@ -89,6 +93,7 @@ export function createRuntimeServices(
     diagnostics,
     dependencies.domainEvents,
     dependencies.retryPolicy ?? DEFAULT_WORKER_RETRY_POLICY,
+    dependencies.capacityGuardrails,
   );
   const registry = dependencies.subscriberRegistry ?? createEventSubscriberRegistry();
   const eventToJob = createEventToJobService(jobs, {
@@ -117,6 +122,7 @@ class FirestoreWorkerRuntimeService implements WorkerRuntimeService {
     private readonly diagnostics: RuntimeDiagnosticsService,
     private readonly domainEvents: DomainEventService,
     private readonly retryPolicy: WorkerRetryPolicy,
+    private readonly capacityGuardrails?: RuntimeCapacityGuardrailService,
   ) {}
 
   async enqueue(
@@ -132,27 +138,29 @@ class FirestoreWorkerRuntimeService implements WorkerRuntimeService {
       return serviceFail(validationError("Worker idempotencyKey is required."));
     }
 
-    const existing = await this.repository.findJobByIdempotencyKey({
-      organizationId: input.organizationId,
-      type: input.type,
-      idempotencyKey: input.idempotencyKey,
-    });
-    if (existing) {
-      const existingPayload = JSON.stringify(existing.payload);
-      const nextPayload = JSON.stringify(input.payload);
-      if (existing.payloadVersion !== input.payloadVersion || existingPayload !== nextPayload) {
+    if (this.capacityGuardrails) {
+      const guardrail = await this.capacityGuardrails.evaluateEnqueue({
+        organizationId: input.organizationId,
+        tenantId: input.tenantId ?? input.organizationId,
+        jobType: input.type,
+        now: input.now ?? nowIso(),
+      });
+      if (!guardrail.allowed) {
         return serviceFail(
-          conflictError("Idempotency key is already bound to a different worker payload."),
+          conflictError(guardrail.reason ?? "Runtime capacity guardrail blocked the enqueue."),
         );
       }
-      return serviceOk(existing);
     }
 
     const timestamp = input.now ?? nowIso();
     const job: WorkerJob = {
-      id: this.repository.newJobId(),
+      id: buildStableEntityId("runtime-job", [
+        input.organizationId,
+        input.type,
+        input.idempotencyKey,
+      ]),
       organizationId: input.organizationId,
-      tenantId: input.organizationId,
+      tenantId: input.tenantId ?? input.organizationId,
       type: input.type,
       status: WORKER_JOB_STATUSES.Queued,
       payload: input.payload,
@@ -166,13 +174,44 @@ class FirestoreWorkerRuntimeService implements WorkerRuntimeService {
       runAfter: input.runAfter ?? timestamp,
       leasedBy: null,
       leaseExpiresAt: null,
+      lease: {
+        workerId: null,
+        claimToken: null,
+        leaseVersion: 0,
+        claimedAt: null,
+        leaseExpiresAt: null,
+        heartbeatAt: null,
+        reclaimedAt: null,
+        reclaimedBy: null,
+        reclaimCount: 0,
+      },
       createdAt: timestamp,
       updatedAt: timestamp,
       lastError: null,
       completedAt: null,
     };
 
-    await this.repository.createJob(job);
+    try {
+      await this.repository.createJob(job);
+    } catch (error) {
+      if (!isAlreadyExistsError(error)) {
+        throw error;
+      }
+
+      const existing = await this.repository.getJobById(job.id);
+      if (!existing) {
+        throw error;
+      }
+
+      const existingPayload = JSON.stringify(existing.payload);
+      const nextPayload = JSON.stringify(input.payload);
+      if (existing.payloadVersion !== input.payloadVersion || existingPayload !== nextPayload) {
+        return serviceFail(
+          conflictError("Idempotency key is already bound to a different worker payload."),
+        );
+      }
+      return serviceOk(existing);
+    }
     await this.recordRuntimeEvent(input, job, "runtime_job_queued", "Runtime job queued.", {
       jobId: job.id,
       jobType: job.type,
@@ -207,7 +246,13 @@ class FirestoreWorkerRuntimeService implements WorkerRuntimeService {
   }
 
   async complete(input: CompleteWorkerJobInput): Promise<ServiceResult<WorkerExecutionResult>> {
-    const job = await this.requireOwnedJob(input.organizationId, input.jobId, input.workerId);
+    const job = await this.requireOwnedJob(
+      input.organizationId,
+      input.jobId,
+      input.workerId,
+      input.claimToken,
+      input.now,
+    );
     if (!job.ok) {
       return job;
     }
@@ -219,15 +264,31 @@ class FirestoreWorkerRuntimeService implements WorkerRuntimeService {
       });
     }
 
-    const updated: WorkerJob = {
-      ...job.value,
-      status: WORKER_JOB_STATUSES.Succeeded,
-      leasedBy: null,
-      leaseExpiresAt: null,
-      updatedAt: input.now,
-      completedAt: input.now,
-    };
-    await this.repository.saveJob(updated);
+    const updated = await this.repository.mutateWithActiveLease({
+      organizationId: input.organizationId,
+      jobId: input.jobId,
+      workerId: input.workerId,
+      claimToken: input.claimToken,
+      now: input.now,
+      mutate: (current) => ({
+        ...current,
+        status: WORKER_JOB_STATUSES.Succeeded,
+        leasedBy: null,
+        leaseExpiresAt: null,
+        updatedAt: input.now,
+        completedAt: input.now,
+        lease: {
+          ...current.lease,
+          workerId: null,
+          claimToken: null,
+          leaseExpiresAt: null,
+          heartbeatAt: input.now,
+        },
+      }),
+    });
+    if (!updated) {
+      return serviceFail(conflictError("Worker job lease changed or expired before completion."));
+    }
     await this.recordRuntimeEvent(
       toSystemAuditContext(updated.organizationId, input.now),
       updated,
@@ -248,7 +309,13 @@ class FirestoreWorkerRuntimeService implements WorkerRuntimeService {
   }
 
   async fail(input: FailWorkerJobInput): Promise<ServiceResult<WorkerExecutionResult>> {
-    const existing = await this.requireOwnedJob(input.organizationId, input.jobId, input.workerId);
+    const existing = await this.requireOwnedJob(
+      input.organizationId,
+      input.jobId,
+      input.workerId,
+      input.claimToken,
+      input.now,
+    );
     if (!existing.ok) {
       return existing;
     }
@@ -260,13 +327,30 @@ class FirestoreWorkerRuntimeService implements WorkerRuntimeService {
       });
     }
 
-    const baseJob: WorkerJob = {
-      ...existing.value,
-      lastError: sanitizeWorkerError(input.error),
-      updatedAt: input.now,
-      leasedBy: null,
-      leaseExpiresAt: null,
-    };
+    const baseJob = await this.repository.mutateWithActiveLease({
+      organizationId: input.organizationId,
+      jobId: input.jobId,
+      workerId: input.workerId,
+      claimToken: input.claimToken,
+      now: input.now,
+      mutate: (current) => ({
+        ...current,
+        lastError: sanitizeWorkerError(input.error),
+        updatedAt: input.now,
+        leasedBy: null,
+        leaseExpiresAt: null,
+        lease: {
+          ...current.lease,
+          workerId: null,
+          claimToken: null,
+          leaseExpiresAt: null,
+          heartbeatAt: input.now,
+        },
+      }),
+    });
+    if (!baseJob) {
+      return serviceFail(conflictError("Worker job lease changed or expired before failure handling."));
+    }
 
     await this.recordRuntimeEvent(
       toSystemAuditContext(baseJob.organizationId, input.now),
@@ -281,18 +365,43 @@ class FirestoreWorkerRuntimeService implements WorkerRuntimeService {
       },
     );
 
-    if (!(baseJob.lastError?.retryable ?? false) || baseJob.attemptCount >= baseJob.maxAttempts) {
+    let suppressRetryReason: string | null = null;
+    if ((baseJob.lastError?.retryable ?? false) && this.capacityGuardrails) {
+      const retryDecision = await this.capacityGuardrails.evaluateRetrySuppression({
+        organizationId: baseJob.organizationId,
+        tenantId: baseJob.tenantId,
+        jobType: baseJob.type,
+        now: input.now,
+      });
+      if (retryDecision.suppress) {
+        suppressRetryReason = retryDecision.reason ?? "Retry suppressed by runtime capacity guardrails.";
+      }
+    }
+
+    if (
+      !(baseJob.lastError?.retryable ?? false) ||
+      baseJob.attemptCount >= baseJob.maxAttempts ||
+      Boolean(suppressRetryReason)
+    ) {
       const deadLettered: WorkerJob = {
         ...baseJob,
         status: WORKER_JOB_STATUSES.DeadLettered,
         completedAt: input.now,
+        lastError:
+          suppressRetryReason && baseJob.lastError
+            ? {
+                ...baseJob.lastError,
+                retryable: false,
+                message: suppressRetryReason,
+              }
+            : baseJob.lastError,
       };
       await this.repository.saveJob(deadLettered);
       const routed = await this.deadLetters.routeJob({
         deadLetterId: this.repository.newDeadLetterId(),
         job: deadLettered,
         now: input.now,
-        errorSummary: baseJob.lastError?.message ?? "Worker job failed.",
+        errorSummary: suppressRetryReason ?? baseJob.lastError?.message ?? "Worker job failed.",
       });
       if (!routed.ok) {
         return routed;
@@ -307,6 +416,7 @@ class FirestoreWorkerRuntimeService implements WorkerRuntimeService {
           jobType: deadLettered.type,
           deadLetterRecordId: routed.value.id,
           attemptCount: deadLettered.attemptCount,
+          retrySuppressed: Boolean(suppressRetryReason),
         },
       );
       return serviceOk({
@@ -391,6 +501,8 @@ class FirestoreWorkerRuntimeService implements WorkerRuntimeService {
     organizationId: string,
     jobId: string,
     workerId: string,
+    claimToken: string,
+    now: string,
   ): Promise<ServiceResult<WorkerJob>> {
     const job = await this.repository.getJobById(jobId);
     if (!job || job.organizationId !== organizationId) {
@@ -399,8 +511,11 @@ class FirestoreWorkerRuntimeService implements WorkerRuntimeService {
     if (job.status === WORKER_JOB_STATUSES.Succeeded) {
       return serviceOk(job);
     }
-    if (job.leasedBy !== workerId) {
+    if (job.leasedBy !== workerId || job.lease.claimToken !== claimToken) {
       return serviceFail(conflictError("Worker job lease is owned by another worker."));
+    }
+    if (job.leaseExpiresAt === null || job.leaseExpiresAt <= now) {
+      return serviceFail(conflictError("Worker job lease has expired and must be reclaimed."));
     }
     return serviceOk(job);
   }

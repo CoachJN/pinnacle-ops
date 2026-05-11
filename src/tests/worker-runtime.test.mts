@@ -63,6 +63,7 @@ test("worker runtime enqueue is idempotent and completion is duplicate-safe", as
     organizationId: "org-1",
     jobId: claimed.value?.id ?? "",
     workerId: "worker-1",
+    claimToken: claimed.value?.lease.claimToken ?? "",
     now: "2026-05-06T12:03:10.000Z",
   });
   assert.equal(running.ok, true);
@@ -72,6 +73,7 @@ test("worker runtime enqueue is idempotent and completion is duplicate-safe", as
     organizationId: "org-1",
     jobId: claimed.value?.id ?? "",
     workerId: "worker-1",
+    claimToken: running.ok ? running.value.lease.claimToken ?? "" : "",
     now: "2026-05-06T12:03:20.000Z",
   });
   assert.equal(completed.ok, true);
@@ -81,6 +83,7 @@ test("worker runtime enqueue is idempotent and completion is duplicate-safe", as
     organizationId: "org-1",
     jobId: claimed.value?.id ?? "",
     workerId: "worker-1",
+    claimToken: running.ok ? running.value.lease.claimToken ?? "" : "",
     now: "2026-05-06T12:03:30.000Z",
   });
   assert.equal(completedAgain.ok, true);
@@ -92,4 +95,40 @@ test("worker runtime enqueue is idempotent and completion is duplicate-safe", as
     harness.events.map((event) => event.type),
     ["runtime_job_queued", "runtime_job_succeeded"],
   );
+});
+
+test("worker runtime enqueue is deterministic under overlapping duplicate delivery", async () => {
+  const harness = createRuntimeHarness();
+
+  const [first, second] = await Promise.all([
+    harness.runtime.jobs.enqueue({
+      organizationId: "org-1",
+      actor: { userId: "system", role: "system" },
+      now: "2026-05-06T13:00:00.000Z",
+      type: "provider.sync",
+      payload: { connectionId: "conn-atomic-1" },
+      payloadVersion: "v1",
+      idempotencyKey: "provider.sync:conn-atomic-1:delta-1",
+      correlationId: "corr-atomic-1",
+      causationId: "cause-atomic-1",
+      sourceEventId: "event-atomic-1",
+    }),
+    harness.runtime.jobs.enqueue({
+      organizationId: "org-1",
+      actor: { userId: "system", role: "system" },
+      now: "2026-05-06T13:00:00.000Z",
+      type: "provider.sync",
+      payload: { connectionId: "conn-atomic-1" },
+      payloadVersion: "v1",
+      idempotencyKey: "provider.sync:conn-atomic-1:delta-1",
+      correlationId: "corr-atomic-1",
+      causationId: "cause-atomic-1",
+      sourceEventId: "event-atomic-1",
+    }),
+  ]);
+
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.equal(harness.jobs.length, 1);
+  assert.equal(first.value.id, second.value.id);
 });

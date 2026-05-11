@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ActionFeedback } from "@/components/shared/action-feedback";
 import {
   WORK_ORDER_CATEGORY_LABELS,
@@ -13,16 +13,22 @@ import {
   type WorkOrderStatus,
 } from "@/modules/work-orders";
 import type { ContactSummary } from "@/types/contact";
-import { AssignmentPanel } from "./assignment-panel";
 import { formatDate, formatDateTime } from "./formatting";
-import { WorkOrderAttachmentsPanel } from "./work-order-attachments-panel";
-import { WorkOrderClientLocationPanel } from "./work-order-client-location-panel";
-import { WorkOrderDetailHeader } from "./work-order-detail-header";
-import { WorkOrderNotesPanel } from "./work-order-notes-panel";
-import { WorkOrderOverviewPanel } from "./work-order-overview-panel";
-import { WorkOrderQuotePanel } from "./work-order-quote-panel";
-import { WorkOrderRequesterPanel } from "./work-order-requester-panel";
-import { WorkOrderFinancePanel } from "./work-order-finance-panel";
+import { WorkOrderCommunicationsTab } from "./work-order-communications-tab";
+import {
+  deriveWorkOrderOperationalSummary,
+  type WorkOrderTimelineEntry,
+} from "./work-order-display-model";
+import { deriveWorkOrderFinancialSummary } from "./work-order-financial-model";
+import { WorkOrderFinanceTab } from "./work-order-finance-tab";
+import type { WorkOrderFileAttachment } from "./work-order-files-model";
+import { WorkOrderFilesTab } from "./work-order-files-tab";
+import { WorkOrderHeader } from "./work-order-header";
+import { WorkOrderHistoryAuditTab } from "./work-order-history-audit-tab";
+import { WorkOrderOverviewTab } from "./work-order-overview-tab";
+import { WorkOrderSidebar } from "./work-order-sidebar";
+import { WorkOrderTabs, type WorkOrderTabId } from "./work-order-tabs";
+import { WorkOrderWorkflowTab } from "./work-order-workflow-tab";
 
 interface WorkOrderDetailPageProps {
   workOrderId: string;
@@ -50,19 +56,6 @@ interface WorkOrderNoteItem {
   authorDisplayName: string;
   createdAt: string;
   updatedAt: string;
-}
-
-interface WorkOrderAttachmentItem {
-  id: string;
-  workOrderId: string;
-  fileName: string;
-  contentType: string;
-  sizeBytes: number;
-  storagePath: string;
-  uploadedBy: string;
-  uploadedByDisplayName: string;
-  createdAt: string;
-  accessPath: string;
 }
 
 interface AssignmentItem {
@@ -123,8 +116,10 @@ interface WorkOrderDetailRecord {
   locationId: string;
   requestedByContactId?: string | null;
   siteContactId?: string | null;
-  assignedContractorId: string | null;
-  status: WorkOrderStatus;
+  assignedContractorId?: string | null;
+  assignedContractorOrgId?: string | null;
+  status?: WorkOrderStatus;
+  lifecycleStatus?: WorkOrderStatus;
   priority: WorkOrderPriority;
   category: WorkOrderCategory;
   requestedServiceDate: string | null;
@@ -139,7 +134,8 @@ interface WorkOrderDetailRecord {
   closedAt: string | null;
   related: RelatedSummary;
   notes: WorkOrderNoteItem[];
-  attachments: WorkOrderAttachmentItem[];
+  attachments: WorkOrderFileAttachment[];
+  timeline: WorkOrderTimelineEntry[];
   assignments: AssignmentItem[];
   activeAssignment: AssignmentItem | null;
   activeAssignmentId: string | null;
@@ -185,115 +181,142 @@ interface ApiErrorResponse {
 
 type PageState = "loading" | "ready" | "not_found" | "forbidden" | "error";
 
-export function WorkOrderDetailPage({
-  workOrderId,
-}: WorkOrderDetailPageProps) {
+export function WorkOrderDetailPage({ workOrderId }: WorkOrderDetailPageProps) {
   const router = useRouter();
   const [pageState, setPageState] = useState<PageState>("loading");
-  const [workOrder, setWorkOrder] = useState<WorkOrderDetailRecord | null>(null);
-  const [contactsById, setContactsById] = useState<Record<string, ContactSummary>>(
-    {},
+  const [workOrder, setWorkOrder] = useState<WorkOrderDetailRecord | null>(
+    null,
   );
+  const [contactsById, setContactsById] = useState<
+    Record<string, ContactSummary>
+  >({});
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [statusTone, setStatusTone] = useState<"success" | "error" | "info">(
     "info",
   );
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
-  const [pendingStatus, setPendingStatus] = useState<WorkOrderStatus | null>(null);
-  const [assignmentMessage, setAssignmentMessage] = useState<string | null>(null);
-  const [assignmentTone, setAssignmentTone] = useState<"success" | "error" | "info">(
-    "info",
+  const [pendingStatus, setPendingStatus] = useState<WorkOrderStatus | null>(
+    null,
   );
+  const [assignmentMessage, setAssignmentMessage] = useState<string | null>(
+    null,
+  );
+  const [assignmentTone, setAssignmentTone] = useState<
+    "success" | "error" | "info"
+  >("info");
   const [isMutatingAssignment, setIsMutatingAssignment] = useState(false);
-  const [internalAssignmentMessage, setInternalAssignmentMessage] = useState<string | null>(null);
+  const [internalAssignmentMessage, setInternalAssignmentMessage] = useState<
+    string | null
+  >(null);
   const [internalAssignmentTone, setInternalAssignmentTone] = useState<
     "success" | "error" | "info"
   >("info");
-  const [isSavingInternalAssignment, setIsSavingInternalAssignment] = useState(false);
+  const [isSavingInternalAssignment, setIsSavingInternalAssignment] =
+    useState(false);
   const [contractorOrganizationId, setContractorOrganizationId] = useState("");
   const [scheduledDate, setScheduledDate] = useState("");
   const [timeWindowStart, setTimeWindowStart] = useState("");
   const [timeWindowEnd, setTimeWindowEnd] = useState("");
   const [assignmentNotes, setAssignmentNotes] = useState("");
-  const [selectedCoordinatorUserId, setSelectedCoordinatorUserId] = useState("");
+  const [activeTab, setActiveTab] = useState<WorkOrderTabId>("overview");
+  const [pendingSectionId, setPendingSectionId] = useState<string | null>(null);
+  const [selectedCoordinatorUserId, setSelectedCoordinatorUserId] =
+    useState("");
   const [selectedManagerUserId, setSelectedManagerUserId] = useState("");
 
-  async function loadWorkOrderDetail(options: { silent?: boolean } = {}) {
-    if (!options.silent) {
-      setPageState("loading");
-    }
-    setErrorMessage(null);
-    setStatusMessage(null);
+  const loadWorkOrderDetail = useCallback(
+    async (options: { silent?: boolean } = {}) => {
+      if (!options.silent) {
+        setPageState("loading");
+      }
+      setErrorMessage(null);
+      setStatusMessage(null);
 
-    const response = await fetch(`/api/work-orders/${workOrderId}`, {
-      cache: "no-store",
-    });
-    const payload = (await response.json()) as
-      | WorkOrderDetailSuccessResponse
-      | ApiErrorResponse;
-
-    if (!response.ok) {
-      const errorPayload = payload as ApiErrorResponse;
-      const nextState = mapResponseStatusToPageState(response.status);
-      setPageState(nextState);
-      throw new Error(
-        getApiErrorMessage(errorPayload, "Unable to load work order details."),
-      );
-    }
-
-    const successPayload = payload as WorkOrderDetailSuccessResponse;
-    const nextWorkOrder = successPayload.data?.workOrder ?? null;
-    if (!nextWorkOrder) {
-      setPageState("error");
-      throw new Error("Work order details were returned in an unexpected format.");
-    }
-
-    setWorkOrder(nextWorkOrder);
-    const contactIds = [
-      nextWorkOrder.requestedByContactId,
-      nextWorkOrder.siteContactId,
-    ]
-      .filter(Boolean)
-      .join(",");
-    if (contactIds) {
-      const params = new URLSearchParams({ ids: contactIds });
-      params.set("locationId", nextWorkOrder.locationId);
-      const contactsResponse = await fetch(`/api/contacts?${params.toString()}`, {
+      const response = await fetch(`/api/work-orders/${workOrderId}`, {
         cache: "no-store",
       });
-      const contactsPayload = (await contactsResponse.json()) as {
-        contacts: ContactSummary[];
-      };
-      if (contactsResponse.ok) {
-        setContactsById(
-          Object.fromEntries(
-            contactsPayload.contacts.map((contact) => [contact.id, contact]),
+      const payload = (await response.json()) as
+        | WorkOrderDetailSuccessResponse
+        | ApiErrorResponse;
+
+      if (!response.ok) {
+        const errorPayload = payload as ApiErrorResponse;
+        const nextState = mapResponseStatusToPageState(response.status);
+        setPageState(nextState);
+        throw new Error(
+          getApiErrorMessage(
+            errorPayload,
+            "Unable to load work order details.",
           ),
         );
       }
-    } else {
-      setContactsById({});
-    }
-    setContractorOrganizationId(
-      nextWorkOrder.activeAssignment?.contractorOrganizationId ?? "",
-    );
-    setScheduledDate(toDateInputValue(nextWorkOrder.activeAssignment?.scheduledDate ?? null));
-    setTimeWindowStart(
-      toDateTimeLocalValue(nextWorkOrder.activeAssignment?.timeWindowStart ?? null),
-    );
-    setTimeWindowEnd(
-      toDateTimeLocalValue(nextWorkOrder.activeAssignment?.timeWindowEnd ?? null),
-    );
-    setAssignmentNotes(nextWorkOrder.activeAssignment?.notes ?? "");
-    setSelectedCoordinatorUserId(
-      nextWorkOrder.internalAssignees.coordinator?.id ?? "",
-    );
-    setSelectedManagerUserId(
-      nextWorkOrder.internalAssignees.manager?.id ?? "",
-    );
-    setPageState("ready");
-  }
+
+      const successPayload = payload as WorkOrderDetailSuccessResponse;
+      const nextWorkOrder = successPayload.data?.workOrder ?? null;
+      if (!nextWorkOrder) {
+        setPageState("error");
+        throw new Error(
+          "Work order details were returned in an unexpected format.",
+        );
+      }
+
+      setWorkOrder(nextWorkOrder);
+      const contactIds = [
+        nextWorkOrder.requestedByContactId,
+        nextWorkOrder.siteContactId,
+      ]
+        .filter(Boolean)
+        .join(",");
+      if (contactIds) {
+        const params = new URLSearchParams({ ids: contactIds });
+        params.set("locationId", nextWorkOrder.locationId);
+        const contactsResponse = await fetch(
+          `/api/contacts?${params.toString()}`,
+          {
+            cache: "no-store",
+          },
+        );
+        const contactsPayload = (await contactsResponse.json()) as {
+          contacts: ContactSummary[];
+        };
+        if (contactsResponse.ok) {
+          setContactsById(
+            Object.fromEntries(
+              contactsPayload.contacts.map((contact) => [contact.id, contact]),
+            ),
+          );
+        }
+      } else {
+        setContactsById({});
+      }
+      setContractorOrganizationId(
+        nextWorkOrder.activeAssignment?.contractorOrganizationId ?? "",
+      );
+      setScheduledDate(
+        toDateInputValue(nextWorkOrder.activeAssignment?.scheduledDate ?? null),
+      );
+      setTimeWindowStart(
+        toDateTimeLocalValue(
+          nextWorkOrder.activeAssignment?.timeWindowStart ?? null,
+        ),
+      );
+      setTimeWindowEnd(
+        toDateTimeLocalValue(
+          nextWorkOrder.activeAssignment?.timeWindowEnd ?? null,
+        ),
+      );
+      setAssignmentNotes(nextWorkOrder.activeAssignment?.notes ?? "");
+      setSelectedCoordinatorUserId(
+        nextWorkOrder.internalAssignees.coordinator?.id ?? "",
+      );
+      setSelectedManagerUserId(
+        nextWorkOrder.internalAssignees.manager?.id ?? "",
+      );
+      setPageState("ready");
+    },
+    [workOrderId],
+  );
 
   useEffect(() => {
     let isCancelled = false;
@@ -315,7 +338,25 @@ export function WorkOrderDetailPage({
     return () => {
       isCancelled = true;
     };
-  }, [workOrderId]);
+  }, [loadWorkOrderDetail]);
+
+  useEffect(() => {
+    if (!pendingSectionId) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(pendingSectionId)?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+      setPendingSectionId(null);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [activeTab, pendingSectionId]);
 
   async function handleStatusChange(nextStatus: WorkOrderStatus) {
     if (isUpdatingStatus) {
@@ -353,16 +394,20 @@ export function WorkOrderDetailPage({
         throw new Error("Status update returned an unexpected response.");
       }
 
+      const updatedStatus =
+        updatedWorkOrder.status ?? updatedWorkOrder.lifecycleStatus ?? "new";
       setWorkOrder(updatedWorkOrder);
       setStatusTone("success");
       setStatusMessage(
-        `Status updated to ${WORK_ORDER_STATUS_LABELS[updatedWorkOrder.status]}.`,
+        `Status updated to ${WORK_ORDER_STATUS_LABELS[updatedStatus]}.`,
       );
       router.refresh();
     } catch (error) {
       setStatusTone("error");
       setStatusMessage(
-        error instanceof Error ? error.message : "Unable to update work order status.",
+        error instanceof Error
+          ? error.message
+          : "Unable to update work order status.",
       );
     } finally {
       setIsUpdatingStatus(false);
@@ -392,7 +437,9 @@ export function WorkOrderDetailPage({
         | ApiErrorResponse;
 
       if (!response.ok) {
-        throw new Error(getApiErrorMessage(payload, "Unable to update assignment."));
+        throw new Error(
+          getApiErrorMessage(payload, "Unable to update assignment."),
+        );
       }
 
       const updatedWorkOrder =
@@ -407,12 +454,20 @@ export function WorkOrderDetailPage({
       setContractorOrganizationId(
         updatedWorkOrder.activeAssignment?.contractorOrganizationId ?? "",
       );
-      setScheduledDate(toDateInputValue(updatedWorkOrder.activeAssignment?.scheduledDate ?? null));
+      setScheduledDate(
+        toDateInputValue(
+          updatedWorkOrder.activeAssignment?.scheduledDate ?? null,
+        ),
+      );
       setTimeWindowStart(
-        toDateTimeLocalValue(updatedWorkOrder.activeAssignment?.timeWindowStart ?? null),
+        toDateTimeLocalValue(
+          updatedWorkOrder.activeAssignment?.timeWindowStart ?? null,
+        ),
       );
       setTimeWindowEnd(
-        toDateTimeLocalValue(updatedWorkOrder.activeAssignment?.timeWindowEnd ?? null),
+        toDateTimeLocalValue(
+          updatedWorkOrder.activeAssignment?.timeWindowEnd ?? null,
+        ),
       );
       setAssignmentNotes(updatedWorkOrder.activeAssignment?.notes ?? "");
       setSelectedCoordinatorUserId(
@@ -490,16 +545,19 @@ export function WorkOrderDetailPage({
     setInternalAssignmentMessage(null);
 
     try {
-      const response = await fetch(`/api/work-orders/${workOrder.id}/assign-internal`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      const response = await fetch(
+        `/api/work-orders/${workOrder.id}/assign-internal`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            coordinatorUserId: selectedCoordinatorUserId || null,
+            managerUserId: selectedManagerUserId || null,
+          }),
         },
-        body: JSON.stringify({
-          coordinatorUserId: selectedCoordinatorUserId || null,
-          managerUserId: selectedManagerUserId || null,
-        }),
-      });
+      );
       const payload = (await response.json()) as
         | WorkOrderDetailSuccessResponse
         | ApiErrorResponse;
@@ -513,7 +571,9 @@ export function WorkOrderDetailPage({
       const updatedWorkOrder =
         (payload as WorkOrderDetailSuccessResponse).data?.workOrder ?? null;
       if (!updatedWorkOrder) {
-        throw new Error("Internal assignment update returned an unexpected response.");
+        throw new Error(
+          "Internal assignment update returned an unexpected response.",
+        );
       }
 
       setWorkOrder(updatedWorkOrder);
@@ -579,163 +639,309 @@ export function WorkOrderDetailPage({
     );
   }
 
+  const requesterContact = workOrder.requestedByContactId
+    ? (contactsById[workOrder.requestedByContactId] ?? null)
+    : null;
+  const siteContact = workOrder.siteContactId
+    ? (contactsById[workOrder.siteContactId] ?? null)
+    : null;
+  const clientDisplayName =
+    workOrder.related.clientOrganization.displayName ??
+    workOrder.related.clientOrganization.name ??
+    workOrder.clientOrganizationId;
+  const coordinatorLabel =
+    workOrder.internalAssignees.coordinator?.label ?? "Unassigned";
+  const managerLabel =
+    workOrder.internalAssignees.manager?.label ?? "Unassigned";
+  const assignedContractorLabel =
+    workOrder.assignedContractor?.label ?? "Unassigned";
+  const currentStatus = workOrder.status ?? workOrder.lifecycleStatus ?? "new";
+  const currentStatusLabel = WORK_ORDER_STATUS_LABELS[currentStatus];
+  const categoryLabel = WORK_ORDER_CATEGORY_LABELS[workOrder.category];
+  const quoteRequirementLabel = workOrder.requiresQuote
+    ? "Required"
+    : "Not required";
+  const quoteThresholdLabel = formatQuoteThreshold(
+    workOrder.quoteRequiredThresholdCents,
+  );
+  const createInvoiceHref = workOrder.sectionVisibility.showFinancePanel
+    ? `/dashboard/work-orders/${workOrder.id}/invoice/new`
+    : null;
+  const overviewSummary = deriveWorkOrderOperationalSummary({
+    activeAssignmentStatus: workOrder.activeAssignment?.status ?? null,
+    assignedContractorLabel,
+    coordinatorLabel,
+    createdAt: workOrder.createdAt,
+    dueDate: workOrder.dueDate,
+    closedAt: workOrder.closedAt,
+    managerLabel,
+    requiresQuote: workOrder.requiresQuote,
+    status: currentStatus,
+  });
+  const headerFinancialSummary = deriveWorkOrderFinancialSummary({
+    activeClientQuote: null,
+    clientQuotes: [],
+    contractorQuotes: [],
+    invoices: [],
+    requiresQuote: workOrder.requiresQuote,
+    workOrderStatus: currentStatus,
+  });
+
+  function openWorkspaceTarget(tabId: WorkOrderTabId, sectionId?: string) {
+    setActiveTab(tabId);
+    setPendingSectionId(sectionId ?? null);
+  }
+
   return (
-    <section className="space-y-6">
+    <section className="space-y-4 pb-8">
       <BackLink />
 
-      <WorkOrderDetailHeader
-        allowedTransitions={workOrder.allowedTransitions}
-        categoryLabel={WORK_ORDER_CATEGORY_LABELS[workOrder.category]}
-        createdAtLabel={formatDateTime(workOrder.createdAt)}
-        dueDateLabel={formatDate(workOrder.dueDate)}
-        isUpdatingStatus={isUpdatingStatus}
-        onStatusChange={handleStatusChange}
-        pendingStatus={pendingStatus}
+      <WorkOrderHeader
+        agingLabel={overviewSummary.ageLabel}
+        assignedContractorLabel={assignedContractorLabel}
+        coordinatorLabel={coordinatorLabel}
+        createInvoiceHref={createInvoiceHref}
+        financialSignalLabel={headerFinancialSummary.headerSignal}
+        managerLabel={managerLabel}
+        nextActionLabel={overviewSummary.nextAction.label}
+        onOpenAddNote={() =>
+          openWorkspaceTarget("workflow", "workflow-operational-notes")
+        }
+        onOpenAssignment={() =>
+          openWorkspaceTarget("workflow", "workflow-assignment-dispatch")
+        }
+        onOpenQuoteWorkflow={() =>
+          openWorkspaceTarget("quotes-finance", "quote-workflow")
+        }
+        onOpenStatusActions={() =>
+          openWorkspaceTarget("workflow", "workflow-available-actions")
+        }
         priorityLabel={WORK_ORDER_PRIORITY_LABELS[workOrder.priority]}
-        status={workOrder.status}
-        statusActionEnabled={workOrder.allowedActions.canUpdateStatus}
-        statusLabel={WORK_ORDER_STATUS_LABELS[workOrder.status]}
-        statusMessage={statusMessage}
-        statusTone={statusTone}
-        updatedAtLabel={formatDateTime(workOrder.updatedAt)}
+        priorityToneClassName={priorityBadgeClassNames[workOrder.priority]}
+        riskLabel={overviewSummary.riskLabel}
+        statusLabel={currentStatusLabel}
+        statusToneClassName={statusBadgeClassNames[currentStatus]}
+        title={workOrder.title}
         workOrderNumber={workOrder.workOrderNumber}
-        workOrderTitle={workOrder.title}
       />
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(20rem,1fr)]">
-        <section className="space-y-6">
-          <WorkOrderOverviewPanel
-            categoryLabel={WORK_ORDER_CATEGORY_LABELS[workOrder.category]}
-            createdAtLabel={formatDateTime(workOrder.createdAt)}
-            description={workOrder.description}
-            dueDateLabel={formatDate(workOrder.dueDate)}
-            closedAtLabel={formatDateTime(workOrder.closedAt)}
-            priorityLabel={WORK_ORDER_PRIORITY_LABELS[workOrder.priority]}
-            quoteRequirementLabel={workOrder.requiresQuote ? "Required" : "Not required"}
-            quoteThresholdLabel={formatQuoteThreshold(workOrder.quoteRequiredThresholdCents)}
-            requestedServiceDateLabel={formatDate(workOrder.requestedServiceDate)}
-            statusLabel={WORK_ORDER_STATUS_LABELS[workOrder.status]}
-            updatedAtLabel={formatDateTime(workOrder.updatedAt)}
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.9fr)_minmax(18rem,0.74fr)] xl:items-start">
+        <section className="min-w-0 space-y-4">
+          <WorkOrderTabs
+            activeTab={activeTab}
+            attachmentCount={workOrder.attachments.length}
+            onChange={setActiveTab}
           />
 
-          <WorkOrderQuotePanel workOrderId={workOrder.id} />
+          <div className="min-w-0 border border-neutral-200/80 bg-[linear-gradient(180deg,#ffffff,#fafaf9)] p-4 sm:p-4">
+            {activeTab === "overview" ? (
+              <WorkOrderOverviewTab
+                activeAssignmentStatus={
+                  workOrder.activeAssignment?.status ?? null
+                }
+                assignments={workOrder.assignments}
+                assignedContractorLabel={assignedContractorLabel}
+                attachments={workOrder.attachments}
+                categoryLabel={categoryLabel}
+                clientDisplayName={clientDisplayName}
+                closedAt={workOrder.closedAt}
+                closedAtLabel={formatDateTime(workOrder.closedAt)}
+                createdAtLabel={formatDateTime(workOrder.createdAt)}
+                createdAt={workOrder.createdAt}
+                description={workOrder.description}
+                dueDate={workOrder.dueDate}
+                dueDateLabel={formatDate(workOrder.dueDate)}
+                locationName={
+                  workOrder.related.location.name ?? workOrder.locationId
+                }
+                managerLabel={managerLabel}
+                notes={workOrder.notes}
+                onOpenTab={(tabId) => openWorkspaceTarget(tabId)}
+                priorityLabel={WORK_ORDER_PRIORITY_LABELS[workOrder.priority]}
+                quoteRequirementLabel={quoteRequirementLabel}
+                requestedByEmail={workOrder.requestedByEmail}
+                requestedByName={workOrder.requestedByName}
+                requestedByPhone={workOrder.requestedByPhone}
+                requestedServiceDateLabel={formatDate(
+                  workOrder.requestedServiceDate,
+                )}
+                requiresQuote={workOrder.requiresQuote}
+                status={currentStatus}
+                statusLabel={currentStatusLabel}
+                timeline={workOrder.timeline}
+                title={workOrder.title}
+                updatedAtLabel={formatDateTime(workOrder.updatedAt)}
+                coordinatorLabel={coordinatorLabel}
+              />
+            ) : null}
 
-          {workOrder.sectionVisibility.showFinancePanel ? (
-            <WorkOrderFinancePanel
-              onFinanceUpdated={() => loadWorkOrderDetail({ silent: true })}
-              workOrderStatus={workOrder.status}
-              workOrderId={workOrder.id}
-            />
-          ) : null}
+            {activeTab === "workflow" ? (
+              <WorkOrderWorkflowTab
+                activeAssignment={workOrder.activeAssignment}
+                allowedActions={workOrder.allowedActions}
+                allowedTransitions={workOrder.allowedTransitions}
+                assignmentMessage={assignmentMessage}
+                assignmentNotes={assignmentNotes}
+                assignments={workOrder.assignments}
+                assignmentTone={assignmentTone}
+                assignableContractors={workOrder.assignableContractors}
+                assignableInternalUsers={workOrder.assignableInternalUsers}
+                assignedContractorLabel={assignedContractorLabel}
+                contractorOrganizationId={contractorOrganizationId}
+                currentStatus={currentStatus}
+                dueDate={workOrder.dueDate}
+                internalAssignees={workOrder.internalAssignees}
+                internalAssignmentMessage={internalAssignmentMessage}
+                internalAssignmentTone={internalAssignmentTone}
+                isMutatingAssignment={isMutatingAssignment}
+                isSavingInternalAssignment={isSavingInternalAssignment}
+                isUpdatingStatus={isUpdatingStatus}
+                notes={workOrder.notes}
+                onAcceptAssignment={() =>
+                  void handleAssignmentMutation(
+                    `/api/work-orders/${workOrder.id}/assignments/${workOrder.activeAssignment?.id}/accept`,
+                  )
+                }
+                onAssignmentNotesChange={setAssignmentNotes}
+                onCompleteAssignment={() =>
+                  void handleAssignmentMutation(
+                    `/api/work-orders/${workOrder.id}/assignments/${workOrder.activeAssignment?.id}/complete`,
+                    { notes: assignmentNotes.trim() || null },
+                  )
+                }
+                onContractorOrganizationIdChange={setContractorOrganizationId}
+                onDeclineAssignment={() =>
+                  void handleAssignmentMutation(
+                    `/api/work-orders/${workOrder.id}/assignments/${workOrder.activeAssignment?.id}/decline`,
+                    { notes: assignmentNotes.trim() || null },
+                  )
+                }
+                onNotesChange={(notes) => {
+                  setWorkOrder((currentWorkOrder) =>
+                    currentWorkOrder
+                      ? {
+                          ...currentWorkOrder,
+                          notes,
+                        }
+                      : currentWorkOrder,
+                  );
+                }}
+                onSaveContractorAssignment={() => void handleAssignOrReassign()}
+                onSaveInternalAssignment={() =>
+                  void handleSaveInternalAssignment()
+                }
+                onScheduledDateChange={setScheduledDate}
+                onSelectedCoordinatorUserIdChange={setSelectedCoordinatorUserId}
+                onSelectedManagerUserIdChange={setSelectedManagerUserId}
+                onStatusChange={handleStatusChange}
+                onTimeWindowEndChange={setTimeWindowEnd}
+                onTimeWindowStartChange={setTimeWindowStart}
+                pendingStatus={pendingStatus}
+                requestedServiceDate={workOrder.requestedServiceDate}
+                scheduledDate={scheduledDate}
+                canAddNote={workOrder.allowedActions.canAddNote}
+                selectedCoordinatorUserId={selectedCoordinatorUserId}
+                selectedManagerUserId={selectedManagerUserId}
+                statusMessage={statusMessage}
+                statusTone={statusTone}
+                timeWindowEnd={timeWindowEnd}
+                timeWindowStart={timeWindowStart}
+                workOrderId={workOrder.id}
+              />
+            ) : null}
 
-          <AssignmentPanel
-            activeAssignment={workOrder.activeAssignment}
-            allowedActions={workOrder.allowedActions}
-            assignmentMessage={assignmentMessage}
-            assignmentNotes={assignmentNotes}
-            assignments={workOrder.assignments}
-            assignmentTone={assignmentTone}
-            assignableContractors={workOrder.assignableContractors}
-            assignableInternalUsers={workOrder.assignableInternalUsers}
-            assignedContractorLabel={workOrder.assignedContractor?.label ?? "Unassigned"}
-            contractorOrganizationId={contractorOrganizationId}
-            internalAssignees={workOrder.internalAssignees}
-            internalAssignmentMessage={internalAssignmentMessage}
-            internalAssignmentTone={internalAssignmentTone}
-            isMutatingAssignment={isMutatingAssignment}
-            isSavingInternalAssignment={isSavingInternalAssignment}
-            onAcceptAssignment={() =>
-              void handleAssignmentMutation(
-                `/api/work-orders/${workOrder.id}/assignments/${workOrder.activeAssignment?.id}/accept`,
-              )
-            }
-            onAssignmentNotesChange={setAssignmentNotes}
-            onCompleteAssignment={() =>
-              void handleAssignmentMutation(
-                `/api/work-orders/${workOrder.id}/assignments/${workOrder.activeAssignment?.id}/complete`,
-                { notes: assignmentNotes.trim() || null },
-              )
-            }
-            onContractorOrganizationIdChange={setContractorOrganizationId}
-            onDeclineAssignment={() =>
-              void handleAssignmentMutation(
-                `/api/work-orders/${workOrder.id}/assignments/${workOrder.activeAssignment?.id}/decline`,
-                { notes: assignmentNotes.trim() || null },
-              )
-            }
-            onSaveContractorAssignment={() => void handleAssignOrReassign()}
-            onSaveInternalAssignment={() => void handleSaveInternalAssignment()}
-            onScheduledDateChange={setScheduledDate}
-            onSelectedCoordinatorUserIdChange={setSelectedCoordinatorUserId}
-            onSelectedManagerUserIdChange={setSelectedManagerUserId}
-            onTimeWindowEndChange={setTimeWindowEnd}
-            onTimeWindowStartChange={setTimeWindowStart}
-            scheduledDate={scheduledDate}
-            selectedCoordinatorUserId={selectedCoordinatorUserId}
-            selectedManagerUserId={selectedManagerUserId}
-            timeWindowEnd={timeWindowEnd}
-            timeWindowStart={timeWindowStart}
-          />
+            {activeTab === "quotes-finance" ? (
+              <WorkOrderFinanceTab
+                onFinanceUpdated={() => loadWorkOrderDetail({ silent: true })}
+                quoteRequiredThresholdCents={
+                  workOrder.quoteRequiredThresholdCents
+                }
+                requiresQuote={workOrder.requiresQuote}
+                showFinancePanel={workOrder.sectionVisibility.showFinancePanel}
+                workOrderId={workOrder.id}
+                workOrderStatus={currentStatus}
+              />
+            ) : null}
 
-          <WorkOrderNotesPanel
-            canAddNote={workOrder.allowedActions.canAddNote}
-            notes={workOrder.notes}
-            onNotesChange={(notes) => {
-              setWorkOrder((currentWorkOrder) =>
-                currentWorkOrder
-                  ? {
-                      ...currentWorkOrder,
-                      notes,
-                    }
-                  : currentWorkOrder,
-              );
-            }}
-            workOrderId={workOrder.id}
-          />
-          <WorkOrderAttachmentsPanel
-            attachments={workOrder.attachments}
-            canAddAttachment={workOrder.allowedActions.canAddAttachment}
-            onAttachmentsChange={(attachments) => {
-              setWorkOrder((currentWorkOrder) =>
-                currentWorkOrder
-                  ? {
-                      ...currentWorkOrder,
-                      attachments,
-                    }
-                  : currentWorkOrder,
-              );
-            }}
-            workOrderId={workOrder.id}
-          />
+            {activeTab === "communications" ? (
+              <WorkOrderCommunicationsTab
+                assignedContractorLabel={assignedContractorLabel}
+                assignments={workOrder.assignments}
+                canAddNote={workOrder.allowedActions.canAddNote}
+                notes={workOrder.notes}
+                onNotesChange={(notes) => {
+                  setWorkOrder((currentWorkOrder) =>
+                    currentWorkOrder
+                      ? {
+                          ...currentWorkOrder,
+                          notes,
+                        }
+                      : currentWorkOrder,
+                  );
+                }}
+                timeline={workOrder.timeline}
+                workOrderId={workOrder.id}
+              />
+            ) : null}
+
+            {activeTab === "files" ? (
+              <WorkOrderFilesTab
+                attachments={workOrder.attachments}
+                canAddAttachment={workOrder.allowedActions.canAddAttachment}
+                onAttachmentsChange={(attachments) => {
+                  setWorkOrder((currentWorkOrder) =>
+                    currentWorkOrder
+                      ? {
+                          ...currentWorkOrder,
+                          attachments,
+                        }
+                      : currentWorkOrder,
+                  );
+                }}
+                workOrderId={workOrder.id}
+              />
+            ) : null}
+
+            {activeTab === "history-audit" ? (
+              <WorkOrderHistoryAuditTab
+                assignments={workOrder.assignments}
+                attachments={workOrder.attachments}
+                currentStatus={currentStatus}
+                notes={workOrder.notes}
+                timeline={workOrder.timeline}
+                updatedAt={workOrder.updatedAt}
+                workOrderId={workOrder.id}
+              />
+            ) : null}
+          </div>
         </section>
 
-        <aside className="space-y-6">
-          <WorkOrderClientLocationPanel
-            clientDisplayName={
-              workOrder.related.clientOrganization.displayName ??
-              workOrder.related.clientOrganization.name ??
-              workOrder.clientOrganizationId
-            }
+        <aside className="min-w-0">
+          <WorkOrderSidebar
+            clientDisplayName={clientDisplayName}
             clientId={workOrder.clientOrganizationId}
+            coordinatorLabel={coordinatorLabel}
+            createdAtLabel={formatDateTime(workOrder.createdAt)}
+            dueDateLabel={formatDate(workOrder.dueDate)}
             locationCode={workOrder.related.location.code}
             locationId={workOrder.locationId}
-            locationName={workOrder.related.location.name ?? workOrder.locationId}
-          />
-
-          <WorkOrderRequesterPanel
-            requesterContact={
-              workOrder.requestedByContactId
-                ? contactsById[workOrder.requestedByContactId] ?? null
-                : null
+            locationName={
+              workOrder.related.location.name ?? workOrder.locationId
             }
-            requesterEmail={workOrder.requestedByEmail}
-            requesterName={workOrder.requestedByName}
-            requesterPhone={workOrder.requestedByPhone}
-            siteContact={
-              workOrder.siteContactId
-                ? contactsById[workOrder.siteContactId] ?? null
-                : null
-            }
+            managerLabel={managerLabel}
+            priorityLabel={WORK_ORDER_PRIORITY_LABELS[workOrder.priority]}
+            quoteRequirementLabel={quoteRequirementLabel}
+            quoteThresholdLabel={quoteThresholdLabel}
+            requestedByEmail={workOrder.requestedByEmail}
+            requestedByName={workOrder.requestedByName}
+            requestedByPhone={workOrder.requestedByPhone}
+            requestedServiceDateLabel={formatDate(
+              workOrder.requestedServiceDate,
+            )}
+            requesterContact={requesterContact}
+            siteContact={siteContact}
+            statusLabel={currentStatusLabel}
+            updatedAtLabel={formatDateTime(workOrder.updatedAt)}
           />
         </aside>
       </div>
@@ -769,8 +975,8 @@ function WorkOrderDetailState({
       <section
         className={
           tone === "error"
-            ? "rounded-3xl border border-rose-200 bg-rose-50 p-6 shadow-sm"
-            : "rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm"
+            ? "border border-rose-200 bg-rose-50 p-5"
+            : "border border-neutral-200 bg-white p-5"
         }
       >
         <h1
@@ -798,18 +1004,18 @@ function WorkOrderDetailState({
 
 function WorkOrderDetailLoadingState() {
   return (
-    <section className="space-y-6">
+    <section className="space-y-4">
       <div className="h-6 w-40 animate-pulse rounded-xl bg-neutral-200" />
-      <div className="h-56 animate-pulse rounded-3xl bg-neutral-100" />
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(20rem,1fr)]">
-        <div className="space-y-6">
-          <div className="h-64 animate-pulse rounded-3xl bg-neutral-100" />
-          <div className="h-72 animate-pulse rounded-3xl bg-neutral-100" />
-          <div className="h-64 animate-pulse rounded-3xl bg-neutral-100" />
+      <div className="h-48 animate-pulse border border-neutral-200 bg-neutral-100" />
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(18rem,1fr)]">
+        <div className="space-y-4">
+          <div className="h-56 animate-pulse border border-neutral-200 bg-neutral-100" />
+          <div className="h-64 animate-pulse border border-neutral-200 bg-neutral-100" />
+          <div className="h-56 animate-pulse border border-neutral-200 bg-neutral-100" />
         </div>
-        <div className="space-y-6">
-          <div className="h-56 animate-pulse rounded-3xl bg-neutral-100" />
-          <div className="h-48 animate-pulse rounded-3xl bg-neutral-100" />
+        <div className="space-y-4">
+          <div className="h-48 animate-pulse border border-neutral-200 bg-neutral-100" />
+          <div className="h-40 animate-pulse border border-neutral-200 bg-neutral-100" />
         </div>
       </div>
     </section>
@@ -839,8 +1045,42 @@ function formatQuoteThreshold(value: number | null): string {
   }).format(value / 100);
 }
 
+const statusBadgeClassNames = {
+  new: "border-sky-200 bg-sky-50 text-sky-800",
+  triage: "border-cyan-200 bg-cyan-50 text-cyan-800",
+  assigned: "border-violet-200 bg-violet-50 text-violet-800",
+  awaiting_contractor_response:
+    "border-indigo-200 bg-indigo-50 text-indigo-800",
+  quote_required: "border-amber-200 bg-amber-50 text-amber-900",
+  contractor_quote_received: "border-teal-200 bg-teal-50 text-teal-800",
+  quote_under_review: "border-lime-200 bg-lime-50 text-lime-900",
+  client_approval_requested: "border-yellow-200 bg-yellow-50 text-yellow-900",
+  client_approved: "border-emerald-200 bg-emerald-50 text-emerald-800",
+  contractor_scheduled: "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-800",
+  in_progress: "border-amber-200 bg-amber-50 text-amber-900",
+  work_completed: "border-green-200 bg-green-50 text-green-800",
+  completion_review: "border-blue-200 bg-blue-50 text-blue-800",
+  ready_for_invoicing: "border-sky-200 bg-sky-50 text-sky-900",
+  invoiced: "border-cyan-200 bg-cyan-50 text-cyan-900",
+  paid: "border-emerald-200 bg-emerald-50 text-emerald-900",
+  closed: "border-neutral-300 bg-neutral-100 text-neutral-700",
+  on_hold: "border-stone-300 bg-stone-100 text-stone-700",
+  escalated: "border-rose-200 bg-rose-50 text-rose-900",
+  cancelled: "border-rose-200 bg-rose-50 text-rose-800",
+} as const satisfies Record<WorkOrderStatus, string>;
+
+const priorityBadgeClassNames = {
+  LOW: "border-neutral-300 bg-white text-neutral-700",
+  MEDIUM: "border-sky-200 bg-sky-50 text-sky-800",
+  HIGH: "border-amber-200 bg-amber-50 text-amber-900",
+  URGENT: "border-rose-200 bg-rose-50 text-rose-800",
+} as const satisfies Record<WorkOrderPriority, string>;
+
 function getApiErrorMessage(
-  payload: WorkOrderDetailSuccessResponse | WorkOrderStatusSuccessResponse | ApiErrorResponse,
+  payload:
+    | WorkOrderDetailSuccessResponse
+    | WorkOrderStatusSuccessResponse
+    | ApiErrorResponse,
   fallback: string,
 ): string {
   if ("error" in payload && payload.error?.message) {

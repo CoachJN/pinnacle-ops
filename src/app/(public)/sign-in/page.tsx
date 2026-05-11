@@ -23,7 +23,7 @@ export default async function SignInPage({
     <section className="w-full max-w-md rounded-3xl border border-neutral-200 bg-white p-8 shadow-sm sm:p-10">
       <div className="space-y-3">
         <p className="text-xs font-semibold uppercase tracking-[0.28em] text-neutral-500">
-          Pinnacle Ops
+          PinnOps
         </p>
         <h1 className="text-3xl font-semibold tracking-tight text-neutral-950">
           Sign in

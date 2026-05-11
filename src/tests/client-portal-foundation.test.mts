@@ -61,6 +61,11 @@ test("client work order projection omits internal collaboration fields", () => {
 
   assert.equal("notes" in projected, false);
   assert.equal("attachments" in projected, false);
+  assert.equal("coordinatorUserId" in projected, false);
+  assert.equal("managerUserId" in projected, false);
+  assert.equal("assignedContractorId" in projected, false);
+  assert.equal("requestedByContactId" in projected, false);
+  assert.equal("siteContactId" in projected, false);
   assert.equal(projected.activeQuote?.status, "sent");
 });
 

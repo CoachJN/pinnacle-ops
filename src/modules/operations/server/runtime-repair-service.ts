@@ -1,5 +1,13 @@
 import "server-only";
 
+import {
+  REPAIR_CONFIRMATION_STATUSES,
+} from "@/modules/scheduler/domain/operator-guardrail";
+import {
+  createOperatorGuardrailService,
+  type OperatorGuardrailService,
+} from "@/modules/scheduler/server/operator-guardrail-service";
+import type { SchedulerRepositories } from "@/modules/scheduler/server/scheduler-task-repository";
 import { createDeadLetterReplayService } from "@/modules/runtime/server/dead-letter-replay-service";
 import { createEventReplayService } from "@/modules/runtime/server/event-replay-service";
 import { createTransportAttemptRepository, buildTransportAttemptJobIdempotencyKey } from "@/modules/transport";
@@ -24,6 +32,15 @@ export interface RuntimeRepairService {
     targetId: string;
     idempotencyKey?: string;
     force?: boolean;
+    reason?: string | null;
+    dryRun?: boolean;
+    now?: string;
+  }): Promise<ServiceResult<RuntimeRepairAction>>;
+  confirm(input: {
+    organizationId: string;
+    actor: ServiceActor;
+    confirmationId: string;
+    reason?: string | null;
     now?: string;
   }): Promise<ServiceResult<RuntimeRepairAction>>;
 }
@@ -39,6 +56,8 @@ export function createRuntimeRepairService(
   >,
   services: Pick<DomainServices, "runtime" | "providerRuntime" | "delivery">,
   observabilityRepositories: RuntimeObservabilityRepositories,
+  schedulerRepositories: SchedulerRepositories,
+  guardrails: OperatorGuardrailService = createOperatorGuardrailService(schedulerRepositories),
 ): RuntimeRepairService {
   const deadLetterReplay = createDeadLetterReplayService(
     {
@@ -60,13 +79,27 @@ export function createRuntimeRepairService(
       const timestamp = input.now ?? nowIso();
       const idempotencyKey =
         input.idempotencyKey ??
-        [input.actionType, input.targetId, String(Boolean(input.force))].join(":");
+        [
+          input.actionType,
+          input.targetId,
+          String(Boolean(input.force)),
+          String(Boolean(input.dryRun)),
+        ].join(":");
       const existing = await observabilityRepositories.repairActions.findByIdempotencyKey({
         organizationId: input.organizationId,
         idempotencyKey,
       });
       if (existing) {
         return serviceOk(existing);
+      }
+      const guardrail = guardrails.validateRequest({
+        actionType: input.actionType,
+        batchSize: 1,
+        reason: input.reason,
+        dryRun: input.dryRun,
+      });
+      if (!guardrail.ok) {
+        return guardrail;
       }
 
       const requested = await observabilityRepositories.repairActions.create({
@@ -86,6 +119,8 @@ export function createRuntimeRepairService(
         summary: `Requested runtime repair action ${input.actionType}.`,
         metadata: {
           force: Boolean(input.force),
+          dryRun: Boolean(input.dryRun),
+          reason: input.reason?.trim() || null,
         },
         result: {},
         requestedAt: timestamp,
@@ -94,230 +129,330 @@ export function createRuntimeRepairService(
         updatedAt: timestamp,
       });
 
-      try {
-        switch (input.actionType) {
-          case RUNTIME_REPAIR_ACTION_TYPES.DeadLetterReplay: {
-            const replayed = await deadLetterReplay.replay({
-              organizationId: input.organizationId,
-              deadLetterId: input.targetId,
-              actor: input.actor,
-              force: input.force,
-              now: timestamp,
-            });
-            if (!replayed.ok) {
-              return failAction(
-                observabilityRepositories,
-                requested,
-                replayed.error.safeMessage,
-                timestamp,
-              );
-            }
-            return completeAction(observabilityRepositories, requested, {
-              status: RUNTIME_REPAIR_ACTION_STATUSES.Completed,
-              summary: "Dead-letter replay enqueued successfully.",
-              result: {
-                jobId: replayed.value.id,
-              },
-              completedAt: timestamp,
-            });
-          }
-          case RUNTIME_REPAIR_ACTION_TYPES.StuckRuntimeRequeue: {
-            const job = await repositories.runtimeJobs.getById(input.targetId);
-            if (!job || job.organizationId !== input.organizationId) {
-              return failAction(observabilityRepositories, requested, "Runtime job not found.", timestamp);
-            }
-            const isStuck =
-              (job.status === "leased" || job.status === "running") &&
-              job.leaseExpiresAt !== null &&
-              job.leaseExpiresAt <= timestamp;
-            if (!isStuck && !input.force) {
-              return completeAction(observabilityRepositories, requested, {
-                status: RUNTIME_REPAIR_ACTION_STATUSES.Noop,
-                summary: "Runtime job is not currently stuck.",
-                result: {
-                  jobId: job.id,
-                },
-                completedAt: timestamp,
-              });
-            }
-            const requeued = await services.runtime.jobs.enqueue({
-              organizationId: input.organizationId,
-              actor: input.actor,
-              now: timestamp,
-              type: job.type,
-              payloadVersion: job.payloadVersion,
-              payload: {
-                ...job.payload,
-                repairOf: {
-                  runtimeJobId: job.id,
-                  repairedAt: timestamp,
-                },
-              },
-              idempotencyKey: `${idempotencyKey}:enqueue`,
-              correlationId: job.correlationId,
-              causationId: requested.id,
-              sourceEventId: job.sourceEventId,
-              maxAttempts: job.maxAttempts,
-              runAfter: timestamp,
-            });
-            if (!requeued.ok) {
-              return failAction(
-                observabilityRepositories,
-                requested,
-                requeued.error.safeMessage,
-                timestamp,
-              );
-            }
-            return completeAction(observabilityRepositories, requested, {
-              status: RUNTIME_REPAIR_ACTION_STATUSES.Completed,
-              summary: "Stuck runtime job was requeued safely.",
-              result: {
-                originalJobId: job.id,
-                replayedJobId: requeued.value.id,
-              },
-              completedAt: timestamp,
-            });
-          }
-          case RUNTIME_REPAIR_ACTION_TYPES.EventReplayRetry: {
-            const replayed = await eventReplay.replay({
-              organizationId: input.organizationId,
-              eventId: input.targetId,
-              force: input.force,
-              now: timestamp,
-            });
-            if (!replayed.ok) {
-              return failAction(
-                observabilityRepositories,
-                requested,
-                replayed.error.safeMessage,
-                timestamp,
-              );
-            }
-            return completeAction(observabilityRepositories, requested, {
-              status: RUNTIME_REPAIR_ACTION_STATUSES.Completed,
-              summary: "Durable event replay completed.",
-              result: {
-                processedCount: replayed.value.length,
-              },
-              completedAt: timestamp,
-            });
-          }
-          case RUNTIME_REPAIR_ACTION_TYPES.ProviderReconciliationRetry: {
-            const reconciled =
-              await services.providerRuntime.reconciliation.reconcileReceipt({
-                organizationId: input.organizationId,
-                receiptId: input.targetId,
-                now: timestamp,
-              });
-            if (!reconciled.ok) {
-              return failAction(
-                observabilityRepositories,
-                requested,
-                reconciled.error.safeMessage,
-                timestamp,
-              );
-            }
-            return completeAction(observabilityRepositories, requested, {
-              status: RUNTIME_REPAIR_ACTION_STATUSES.Completed,
-              summary: "Provider reconciliation retried successfully.",
-              result: {
-                receiptId: reconciled.value.receiptId,
-                status: reconciled.value.status,
-                reason: reconciled.value.reason,
-              },
-              completedAt: timestamp,
-            });
-          }
-          case RUNTIME_REPAIR_ACTION_TYPES.DeliveryRetryReset: {
-            const plan = await repositories.deliveryPlans.getById(input.targetId);
-            if (!plan || plan.organizationId !== input.organizationId) {
-              return failAction(observabilityRepositories, requested, "Delivery plan not found.", timestamp);
-            }
-            if (plan.status === "completed" || plan.status === "cancelled" || plan.status === "suppressed") {
-              return completeAction(observabilityRepositories, requested, {
-                status: RUNTIME_REPAIR_ACTION_STATUSES.Noop,
-                summary: "Delivery plan is terminal and cannot be reset.",
-                result: {
-                  deliveryPlanId: plan.id,
-                  status: plan.status,
-                },
-                completedAt: timestamp,
-              });
-            }
-            const attempts = await transportAttempts.listByDeliveryPlanId({
-              organizationId: input.organizationId,
-              deliveryPlanId: plan.id,
-              limit: 100,
-            });
-            const maxAttemptNumber = attempts.reduce(
-              (max: number, item) => Math.max(max, item.retryCount),
-              plan.retryCount,
-            );
-            const nextAttemptNumber = maxAttemptNumber + 1;
-            const scheduled = await services.delivery.scheduler.scheduleExecution({
-              plan,
-              now: timestamp,
-            });
-            if (!scheduled.ok) {
-              return failAction(
-                observabilityRepositories,
-                requested,
-                scheduled.error.safeMessage,
-                timestamp,
-              );
-            }
-            const queued = await services.runtime.jobs.enqueue({
-              organizationId: input.organizationId,
-              actor: input.actor,
-              now: timestamp,
-              type: "transport.execute",
-              payloadVersion: "v1",
-              payload: {
-                payloadVersion: "v1",
-                deliveryPlanId: scheduled.value.id,
-                deliveryType: scheduled.value.deliveryType,
-                attemptNumber: nextAttemptNumber,
-                reason: "operator_delivery_retry_reset",
-                triggerEventType: "transport_attempt_retry_scheduled",
-              },
-              idempotencyKey: buildTransportAttemptJobIdempotencyKey(
-                scheduled.value.id,
-                nextAttemptNumber,
-              ),
-              correlationId: scheduled.value.correlationId,
-              causationId: requested.id,
-              sourceEventId: scheduled.value.sourceEventId,
-              runAfter: timestamp,
-              maxAttempts: 1,
-            });
-            if (!queued.ok) {
-              return failAction(
-                observabilityRepositories,
-                requested,
-                queued.error.safeMessage,
-                timestamp,
-              );
-            }
-            return completeAction(observabilityRepositories, requested, {
-              status: RUNTIME_REPAIR_ACTION_STATUSES.Completed,
-              summary: "Delivery retry reset queued a new transport execution attempt.",
-              result: {
-                deliveryPlanId: scheduled.value.id,
-                runtimeJobId: queued.value.id,
-                attemptNumber: nextAttemptNumber,
-              },
-              completedAt: timestamp,
-            });
-          }
-          default:
-            return serviceFail(validationError("Unsupported repair action."));
-        }
-      } catch (error) {
-        const safeMessage = error instanceof Error ? error.message : "Unexpected runtime repair failure.";
-        return failAction(observabilityRepositories, requested, safeMessage, timestamp);
+      if (input.dryRun) {
+        return completeAction(observabilityRepositories, requested, {
+          status: RUNTIME_REPAIR_ACTION_STATUSES.Noop,
+          summary: `Dry run completed for ${input.actionType}. No runtime mutation was executed.`,
+          result: {
+            dryRun: true,
+            targetId: input.targetId,
+          },
+          completedAt: timestamp,
+        });
       }
+
+      if (guardrail.value.confirmationRequired) {
+        const confirmation = await guardrails.ensureConfirmation({
+          action: requested,
+          actor: input.actor,
+          targetIds: [input.targetId],
+          reason: input.reason,
+          dryRun: false,
+          now: timestamp,
+        });
+        if (!confirmation.ok) {
+          return confirmation;
+        }
+        return saveAction(observabilityRepositories, {
+          ...requested,
+          status: RUNTIME_REPAIR_ACTION_STATUSES.PendingConfirmation,
+          summary: "Repair action is pending explicit operator confirmation.",
+          metadata: {
+            ...requested.metadata,
+            confirmationId: confirmation.value.id,
+            riskLevel: confirmation.value.riskLevel,
+          },
+          updatedAt: timestamp,
+        });
+      }
+
+      return performRepairAction({
+        requested,
+        force: input.force,
+        timestamp,
+      });
+    },
+    async confirm(input) {
+      const timestamp = input.now ?? nowIso();
+      const confirmation = await guardrails.approveConfirmation({
+        organizationId: input.organizationId,
+        confirmationId: input.confirmationId,
+        actor: input.actor,
+        reason: input.reason,
+        now: timestamp,
+      });
+      if (!confirmation.ok) {
+        return confirmation;
+      }
+      const action = await observabilityRepositories.repairActions.getById(
+        confirmation.value.repairActionId,
+      );
+      if (!action || action.organizationId !== input.organizationId) {
+        return serviceFail(notFoundError("Pending repair action not found for confirmation."));
+      }
+      if (
+        action.status !== RUNTIME_REPAIR_ACTION_STATUSES.PendingConfirmation &&
+        action.status !== RUNTIME_REPAIR_ACTION_STATUSES.Requested
+      ) {
+        return serviceOk(action);
+      }
+
+      const result = await performRepairAction({
+        requested: {
+          ...action,
+          status: RUNTIME_REPAIR_ACTION_STATUSES.Requested,
+          updatedAt: timestamp,
+          metadata: {
+            ...action.metadata,
+            confirmationId: confirmation.value.id,
+            approvalReason: input.reason?.trim() || confirmation.value.reason,
+            approvedByUserId: input.actor.userId,
+          },
+        },
+        force: Boolean(action.metadata.force),
+        timestamp,
+      });
+      if (!result.ok) {
+        return result;
+      }
+      await schedulerRepositories.confirmations.save({
+        ...confirmation.value,
+        status: REPAIR_CONFIRMATION_STATUSES.Executed,
+        executedAt: timestamp,
+        updatedAt: timestamp,
+      });
+      return result;
     },
   };
+
+  async function performRepairAction(input: {
+    requested: RuntimeRepairAction;
+    force?: boolean;
+    timestamp: string;
+  }): Promise<ServiceResult<RuntimeRepairAction>> {
+    try {
+      switch (input.requested.actionType) {
+        case RUNTIME_REPAIR_ACTION_TYPES.DeadLetterReplay: {
+          const replayed = await deadLetterReplay.replay({
+            organizationId: input.requested.organizationId,
+            deadLetterId: input.requested.targetId,
+            actor: { userId: input.requested.requestedByUserId, role: input.requested.requestedByRole },
+            force: input.force,
+            now: input.timestamp,
+          });
+          if (!replayed.ok) {
+            return failAction(
+              observabilityRepositories,
+              input.requested,
+              replayed.error.safeMessage,
+              input.timestamp,
+            );
+          }
+          return completeAction(observabilityRepositories, input.requested, {
+            status: RUNTIME_REPAIR_ACTION_STATUSES.Completed,
+            summary: "Dead-letter replay enqueued successfully.",
+            result: {
+              jobId: replayed.value.id,
+            },
+            completedAt: input.timestamp,
+          });
+        }
+        case RUNTIME_REPAIR_ACTION_TYPES.StuckRuntimeRequeue: {
+          const job = await repositories.runtimeJobs.getById(input.requested.targetId);
+          if (!job || job.organizationId !== input.requested.organizationId) {
+            return failAction(observabilityRepositories, input.requested, "Runtime job not found.", input.timestamp);
+          }
+          const isStuck =
+            (job.status === "leased" || job.status === "running") &&
+            job.leaseExpiresAt !== null &&
+            job.leaseExpiresAt <= input.timestamp;
+          if (!isStuck && !input.force) {
+            return completeAction(observabilityRepositories, input.requested, {
+              status: RUNTIME_REPAIR_ACTION_STATUSES.Noop,
+              summary: "Runtime job is not currently stuck.",
+              result: {
+                jobId: job.id,
+              },
+              completedAt: input.timestamp,
+            });
+          }
+          const requeued = await services.runtime.jobs.enqueue({
+            organizationId: input.requested.organizationId,
+            actor: { userId: input.requested.requestedByUserId, role: input.requested.requestedByRole },
+            now: input.timestamp,
+            type: job.type,
+            payloadVersion: job.payloadVersion,
+            payload: {
+              ...job.payload,
+              repairOf: {
+                runtimeJobId: job.id,
+                repairedAt: input.timestamp,
+              },
+            },
+            idempotencyKey: `${input.requested.idempotencyKey}:enqueue`,
+            correlationId: job.correlationId,
+            causationId: input.requested.id,
+            sourceEventId: job.sourceEventId,
+            maxAttempts: job.maxAttempts,
+            runAfter: input.timestamp,
+          });
+          if (!requeued.ok) {
+            return failAction(
+              observabilityRepositories,
+              input.requested,
+              requeued.error.safeMessage,
+              input.timestamp,
+            );
+          }
+          return completeAction(observabilityRepositories, input.requested, {
+            status: RUNTIME_REPAIR_ACTION_STATUSES.Completed,
+            summary: "Stuck runtime job was requeued safely.",
+            result: {
+              originalJobId: job.id,
+              replayedJobId: requeued.value.id,
+            },
+            completedAt: input.timestamp,
+          });
+        }
+        case RUNTIME_REPAIR_ACTION_TYPES.EventReplayRetry: {
+          const replayed = await eventReplay.replay({
+            organizationId: input.requested.organizationId,
+            eventId: input.requested.targetId,
+            force: input.force,
+            now: input.timestamp,
+          });
+          if (!replayed.ok) {
+            return failAction(
+              observabilityRepositories,
+              input.requested,
+              replayed.error.safeMessage,
+              input.timestamp,
+            );
+          }
+          return completeAction(observabilityRepositories, input.requested, {
+            status: RUNTIME_REPAIR_ACTION_STATUSES.Completed,
+            summary: "Durable event replay completed.",
+            result: {
+              processedCount: replayed.value.length,
+            },
+            completedAt: input.timestamp,
+          });
+        }
+        case RUNTIME_REPAIR_ACTION_TYPES.ProviderReconciliationRetry: {
+          const reconciled =
+            await services.providerRuntime.reconciliation.reconcileReceipt({
+              organizationId: input.requested.organizationId,
+              receiptId: input.requested.targetId,
+              now: input.timestamp,
+            });
+          if (!reconciled.ok) {
+            return failAction(
+              observabilityRepositories,
+              input.requested,
+              reconciled.error.safeMessage,
+              input.timestamp,
+            );
+          }
+          return completeAction(observabilityRepositories, input.requested, {
+            status: RUNTIME_REPAIR_ACTION_STATUSES.Completed,
+            summary: "Provider reconciliation retried successfully.",
+            result: {
+              receiptId: reconciled.value.receiptId,
+              status: reconciled.value.status,
+              reason: reconciled.value.reason,
+            },
+            completedAt: input.timestamp,
+          });
+        }
+        case RUNTIME_REPAIR_ACTION_TYPES.DeliveryRetryReset: {
+          const plan = await repositories.deliveryPlans.getById(input.requested.targetId);
+          if (!plan || plan.organizationId !== input.requested.organizationId) {
+            return failAction(observabilityRepositories, input.requested, "Delivery plan not found.", input.timestamp);
+          }
+          if (plan.status === "completed" || plan.status === "cancelled" || plan.status === "suppressed") {
+            return completeAction(observabilityRepositories, input.requested, {
+              status: RUNTIME_REPAIR_ACTION_STATUSES.Noop,
+              summary: "Delivery plan is terminal and cannot be reset.",
+              result: {
+                deliveryPlanId: plan.id,
+                status: plan.status,
+              },
+              completedAt: input.timestamp,
+            });
+          }
+          const attempts = await transportAttempts.listByDeliveryPlanId({
+            organizationId: input.requested.organizationId,
+            deliveryPlanId: plan.id,
+            limit: 100,
+          });
+          const maxAttemptNumber = attempts.reduce(
+            (max: number, item) => Math.max(max, item.retryCount),
+            plan.retryCount,
+          );
+          const nextAttemptNumber = maxAttemptNumber + 1;
+          const scheduled = await services.delivery.scheduler.scheduleExecution({
+            plan,
+            now: input.timestamp,
+          });
+          if (!scheduled.ok) {
+            return failAction(
+              observabilityRepositories,
+              input.requested,
+              scheduled.error.safeMessage,
+              input.timestamp,
+            );
+          }
+          const queued = await services.runtime.jobs.enqueue({
+            organizationId: input.requested.organizationId,
+            actor: { userId: input.requested.requestedByUserId, role: input.requested.requestedByRole },
+            now: input.timestamp,
+            type: "transport.execute",
+            payloadVersion: "v1",
+            payload: {
+              payloadVersion: "v1",
+              deliveryPlanId: scheduled.value.id,
+              deliveryType: scheduled.value.deliveryType,
+              attemptNumber: nextAttemptNumber,
+              reason: "operator_delivery_retry_reset",
+              triggerEventType: "transport_attempt_retry_scheduled",
+            },
+            idempotencyKey: buildTransportAttemptJobIdempotencyKey(
+              scheduled.value.id,
+              nextAttemptNumber,
+            ),
+            correlationId: scheduled.value.correlationId,
+            causationId: input.requested.id,
+            sourceEventId: scheduled.value.sourceEventId,
+            runAfter: input.timestamp,
+            maxAttempts: 1,
+          });
+          if (!queued.ok) {
+            return failAction(
+              observabilityRepositories,
+              input.requested,
+              queued.error.safeMessage,
+              input.timestamp,
+            );
+          }
+          return completeAction(observabilityRepositories, input.requested, {
+            status: RUNTIME_REPAIR_ACTION_STATUSES.Completed,
+            summary: "Delivery retry reset queued a new transport execution attempt.",
+            result: {
+              deliveryPlanId: scheduled.value.id,
+              runtimeJobId: queued.value.id,
+              attemptNumber: nextAttemptNumber,
+            },
+            completedAt: input.timestamp,
+          });
+        }
+        default:
+          return serviceFail(validationError("Unsupported repair action."));
+      }
+    } catch (error) {
+      const safeMessage = error instanceof Error ? error.message : "Unexpected runtime repair failure.";
+      return failAction(observabilityRepositories, input.requested, safeMessage, input.timestamp);
+    }
+  }
 }
 
 function targetTypeForAction(actionType: RuntimeRepairActionType): RuntimeRepairAction["targetType"] {
@@ -354,6 +489,13 @@ async function completeAction(
     updatedAt: patch.completedAt,
   });
   return serviceOk(saved);
+}
+
+async function saveAction(
+  repositories: RuntimeObservabilityRepositories,
+  action: RuntimeRepairAction,
+): Promise<ServiceResult<RuntimeRepairAction>> {
+  return serviceOk(await repositories.repairActions.save(action));
 }
 
 async function failAction(

@@ -53,8 +53,8 @@ describe("work order transition validator", () => {
 
   test("blocks quote-gated transitions without client approval", () => {
     const result = validateWorkOrderTransition(
-      WORK_ORDER_STATUS.Triage,
-      WORK_ORDER_STATUS.ApprovedToProceed,
+      WORK_ORDER_STATUS.Assigned,
+      WORK_ORDER_STATUS.Scheduled,
       {
         quoteRequired: true,
         quoteStatus: QUOTE_STATUS.SentToClient,
@@ -68,8 +68,8 @@ describe("work order transition validator", () => {
 
   test("allows quote-gated transitions with client approval", () => {
     const result = validateWorkOrderTransition(
-      WORK_ORDER_STATUS.Triage,
-      WORK_ORDER_STATUS.ApprovedToProceed,
+      WORK_ORDER_STATUS.Assigned,
+      WORK_ORDER_STATUS.Scheduled,
       {
         quoteRequired: true,
         quoteStatus: QUOTE_STATUS.ClientApproved,

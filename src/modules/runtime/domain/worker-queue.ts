@@ -3,6 +3,7 @@ import type { WorkerDeadLetterRecord, WorkerJob, WorkerJobErrorState, WorkerJobS
 
 export interface EnqueueWorkerJobInput<TPayload extends Record<string, unknown> = Record<string, unknown>> {
   organizationId: EntityId;
+  tenantId?: EntityId | null;
   type: string;
   payload: TPayload;
   payloadVersion: string;
@@ -22,10 +23,20 @@ export interface ClaimWorkerJobInput {
   jobTypes?: readonly string[];
 }
 
+export interface ClaimWorkerJobByIdInput {
+  organizationId: EntityId;
+  tenantId?: EntityId | null;
+  jobId: EntityId;
+  workerId: string;
+  leaseDurationMs: number;
+  now: IsoDateTimeString;
+}
+
 export interface MarkWorkerJobRunningInput {
   organizationId: EntityId;
   jobId: EntityId;
   workerId: string;
+  claimToken: string;
   now: IsoDateTimeString;
 }
 
@@ -33,6 +44,7 @@ export interface CompleteWorkerJobInput {
   organizationId: EntityId;
   jobId: EntityId;
   workerId: string;
+  claimToken: string;
   now: IsoDateTimeString;
 }
 
@@ -40,6 +52,7 @@ export interface FailWorkerJobInput {
   organizationId: EntityId;
   jobId: EntityId;
   workerId: string;
+  claimToken: string;
   now: IsoDateTimeString;
   error: WorkerJobErrorState;
 }
@@ -54,6 +67,7 @@ export interface ExtendWorkerLeaseInput {
   organizationId: EntityId;
   jobId: EntityId;
   workerId: string;
+  claimToken: string;
   now: IsoDateTimeString;
   leaseDurationMs: number;
 }

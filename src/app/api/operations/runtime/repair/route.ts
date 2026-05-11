@@ -34,6 +34,8 @@ export async function POST(request: NextRequest) {
       targetId: input.targetId,
       idempotencyKey: input.idempotencyKey ?? undefined,
       force: input.force,
+      reason: input.reason,
+      dryRun: input.dryRun,
       now: input.now ?? undefined,
     });
     if (!result.ok) {
@@ -48,6 +50,8 @@ function parseRepairInput(body: Record<string, unknown>): {
   targetId: string;
   idempotencyKey: string | null;
   force: boolean | undefined;
+  reason: string | null;
+  dryRun: boolean | undefined;
   now: string | null;
 } {
   const actionType = requireString(body.actionType, "actionType");
@@ -59,6 +63,8 @@ function parseRepairInput(body: Record<string, unknown>): {
     targetId: requireString(body.targetId, "targetId"),
     idempotencyKey: optionalString(body.idempotencyKey, "idempotencyKey"),
     force: optionalBoolean(body.force, "force"),
+    reason: optionalString(body.reason, "reason"),
+    dryRun: optionalBoolean(body.dryRun, "dryRun"),
     now: optionalString(body.now, "now"),
   };
 }

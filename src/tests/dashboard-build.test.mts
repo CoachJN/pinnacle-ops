@@ -41,7 +41,6 @@ function makeWorkOrder(
     title: "Leaking sink",
     description: "Repair the sink in suite 200.",
     lifecycleStatus: "triage",
-    status: "triage",
     priority: "medium",
     clientOrganizationId: "client-1",
     locationId: "loc-1",

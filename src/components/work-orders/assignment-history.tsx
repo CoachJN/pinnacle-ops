@@ -4,11 +4,14 @@ import { formatDate, formatDateTime } from "./formatting";
 
 export interface AssignmentHistoryItem {
   id: string;
+  assigneeType?: "internal" | "contractor";
   assigneeDisplayName: string;
   assignedByDisplayName: string;
   status: "assigned" | "accepted" | "declined" | "completed" | "cancelled";
   notes: string | null;
   scheduledDate: string | null;
+  timeWindowStart?: string | null;
+  timeWindowEnd?: string | null;
   assignedAt: string;
   acceptedAt: string | null;
   declinedAt: string | null;
@@ -17,14 +20,18 @@ export interface AssignmentHistoryItem {
 
 export function AssignmentHistory({
   assignments,
+  title = "Assignment history",
 }: {
   assignments: AssignmentHistoryItem[];
+  title?: string | null;
 }) {
   return (
-    <div className="mt-6">
-      <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-neutral-500">
-        Assignment history
-      </h3>
+    <div className={title ? "mt-6" : "mt-4"}>
+      {title ? (
+        <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-neutral-500">
+          {title}
+        </h3>
+      ) : null}
       {assignments.length === 0 ? (
         <p className="mt-3 text-sm text-neutral-600">
           No assignment history has been recorded for this work order.
@@ -48,12 +55,18 @@ export function AssignmentHistory({
                       {assignment.assigneeDisplayName}
                     </p>
                     <p className="text-sm text-neutral-600">
-                      {assignment.status.replaceAll("_", " ")} • assigned by{" "}
+                      {(assignment.assigneeType ?? "contractor").replaceAll("_", " ")}{" "}
+                      assignment • {assignment.status.replaceAll("_", " ")} • assigned by{" "}
                       {assignment.assignedByDisplayName}
                     </p>
                     <p className="text-sm text-neutral-600">
                       Scheduled: {formatDate(assignment.scheduledDate)}
                     </p>
+                    {assignment.timeWindowStart || assignment.timeWindowEnd ? (
+                      <p className="text-sm text-neutral-600">
+                        Window: {formatTimeWindow(assignment.timeWindowStart, assignment.timeWindowEnd)}
+                      </p>
+                    ) : null}
                     <p className="text-sm text-neutral-600">
                       Notes: {assignment.notes ?? "No notes provided."}
                     </p>
@@ -74,4 +87,12 @@ export function AssignmentHistory({
       )}
     </div>
   );
+}
+
+function formatTimeWindow(start: string | null | undefined, end: string | null | undefined) {
+  if (start && end) {
+    return `${start} to ${end}`;
+  }
+
+  return start ?? end ?? "Not set";
 }

@@ -5,9 +5,23 @@ import type {
   Location,
   WorkOrder,
 } from "@/server/repositories";
+import {
+  canAddWorkOrderNote,
+  canCreateWorkOrder,
+  canEditWorkOrder,
+  canUpdateWorkOrderStatus,
+  isWorkOrderInActorScope,
+  type WorkOrderPermissionTarget,
+} from "@/server/authorization/work-order.permissions";
 import type { EntityId, IsoDateTimeString } from "@/types/entity";
+import { USER_ROLES } from "@/types/permissions";
 import type { WorkOrderPriority, WorkOrderStatus } from "@/types/work-order";
-import { conflictError, invalidTransitionError, notFoundError, validationError } from "./errors.ts";
+import {
+  conflictError,
+  invalidTransitionError,
+  notFoundError,
+  validationError,
+} from "./errors.ts";
 import {
   canWorkOrderTransition,
   isTerminalWorkOrderStatus,
@@ -21,9 +35,16 @@ import {
   serviceFail,
   serviceOk,
   touchAuditFields,
-  type ServiceAuditContext,
   type ServiceResult,
 } from "./types.ts";
+import {
+  isSystemWorkOrderMutationActor,
+  type WorkOrderMutationActor,
+  type WorkOrderMutationContext,
+  type WorkOrderMutationSource,
+} from "./work-order-mutation-context.ts";
+import { isAlreadyExistsError } from "@/lib/idempotency/already-exists";
+import type { AtomicPersistenceService } from "./atomic-persistence-service";
 
 
 export interface WorkOrderService {
@@ -36,6 +57,21 @@ export interface WorkOrderService {
   ): Promise<ServiceResult<WorkOrder>>;
   assignContractor(
     input: AssignContractorToWorkOrderInput,
+  ): Promise<ServiceResult<WorkOrder>>;
+  applyContractorAssignment(
+    input: ApplyContractorAssignmentInput,
+  ): Promise<ServiceResult<WorkOrder>>;
+  applyQuoteWorkflowPointer(
+    input: ApplyQuoteWorkflowPointerInput,
+  ): Promise<ServiceResult<WorkOrder>>;
+  applyQuoteWorkflowTransition(
+    input: ApplyQuoteWorkflowTransitionInput,
+  ): Promise<ServiceResult<WorkOrder>>;
+  applyInvoiceWorkflowPointer(
+    input: ApplyInvoiceWorkflowPointerInput,
+  ): Promise<ServiceResult<WorkOrder>>;
+  applyInvoiceWorkflowTransition(
+    input: ApplyInvoiceWorkflowTransitionInput,
   ): Promise<ServiceResult<WorkOrder>>;
   addNote(input: AddWorkOrderNoteInput): Promise<ServiceResult<WorkOrder>>;
   transition(input: TransitionWorkOrderInput): Promise<ServiceResult<WorkOrder>>;
@@ -63,7 +99,8 @@ export type ListWorkOrdersServiceInput =
       limit?: number;
     };
 
-export interface CreateWorkOrderServiceInput extends ServiceAuditContext {
+export interface CreateWorkOrderServiceInput extends WorkOrderMutationContext {
+  requestedWorkOrderId?: EntityId;
   title: string;
   description: string;
   priority: WorkOrderPriority;
@@ -78,9 +115,12 @@ export interface CreateWorkOrderServiceInput extends ServiceAuditContext {
   managerUserId?: EntityId | null;
   category?: string | null;
   requestedServiceDate?: IsoDateTimeString | null;
+  dueDate?: IsoDateTimeString | null;
+  requiresQuote?: boolean;
+  quoteRequiredThresholdCents?: number | null;
 }
 
-export interface UpdateWorkOrderServiceInput extends ServiceAuditContext {
+export interface UpdateWorkOrderServiceInput extends WorkOrderMutationContext {
   workOrderId: EntityId;
   title?: string;
   description?: string;
@@ -93,24 +133,58 @@ export interface UpdateWorkOrderServiceInput extends ServiceAuditContext {
   requestedServiceDate?: IsoDateTimeString | null;
 }
 
-export interface AssignInternalStaffInput extends ServiceAuditContext {
+export interface AssignInternalStaffInput extends WorkOrderMutationContext {
   workOrderId: EntityId;
   coordinatorUserId?: EntityId | null;
   managerUserId?: EntityId | null;
 }
 
-export interface AssignContractorToWorkOrderInput extends ServiceAuditContext {
+export interface AssignContractorToWorkOrderInput extends WorkOrderMutationContext {
   workOrderId: EntityId;
   contractorOrganizationId: EntityId | null;
 }
 
-export interface AddWorkOrderNoteInput extends ServiceAuditContext {
+export interface ApplyContractorAssignmentInput extends WorkOrderMutationContext {
+  workOrderId: EntityId;
+  contractorOrganizationId: EntityId;
+  assignedAt?: IsoDateTimeString;
+}
+
+export interface ApplyQuoteWorkflowPointerInput extends WorkOrderMutationContext {
+  workOrderId: EntityId;
+  currentQuoteId: EntityId | null;
+}
+
+export interface ApplyQuoteWorkflowTransitionInput extends WorkOrderMutationContext {
+  workOrderId: EntityId;
+  toStatus: WorkOrderStatus;
+  activityMessage?: string;
+}
+
+export interface ApplyInvoiceWorkflowPointerInput extends WorkOrderMutationContext {
+  workOrderId: EntityId;
+  currentInvoiceId: EntityId | null;
+}
+
+export interface ApplyInvoiceWorkflowTransitionInput
+  extends WorkOrderMutationContext {
+  workOrderId: EntityId;
+  toStatus: WorkOrderStatus;
+  activityMessage?: string;
+  currentInvoiceId?: EntityId | null;
+  invoiceSentAt?: IsoDateTimeString | null;
+  paidAt?: IsoDateTimeString | null;
+  invoiceId?: EntityId;
+  invoiceNumber?: string;
+}
+
+export interface AddWorkOrderNoteInput extends WorkOrderMutationContext {
   workOrderId: EntityId;
   note: string;
   noteType: "internal" | "operational";
 }
 
-export interface TransitionWorkOrderInput extends ServiceAuditContext {
+export interface TransitionWorkOrderInput extends WorkOrderMutationContext {
   workOrderId: EntityId;
   toStatus: WorkOrderStatus;
   completionAccepted?: boolean;
@@ -127,6 +201,7 @@ export function createWorkOrderService(
     domainEvents: DomainEventService;
     clientLocations: ClientLocationService;
     notifications?: NotificationService;
+    atomicPersistence?: AtomicPersistenceService;
   },
 ): WorkOrderService {
   return new FirestoreWorkOrderService(repositories, dependencies);
@@ -143,6 +218,7 @@ class FirestoreWorkOrderService implements WorkOrderService {
     domainEvents: DomainEventService;
     clientLocations: ClientLocationService;
     notifications?: NotificationService;
+    atomicPersistence?: AtomicPersistenceService;
   };
 
   constructor(
@@ -155,6 +231,7 @@ class FirestoreWorkOrderService implements WorkOrderService {
       domainEvents: DomainEventService;
       clientLocations: ClientLocationService;
       notifications?: NotificationService;
+      atomicPersistence?: AtomicPersistenceService;
     },
   ) {
     this.repositories = repositories;
@@ -222,7 +299,20 @@ class FirestoreWorkOrderService implements WorkOrderService {
   async create(
     input: CreateWorkOrderServiceInput,
   ): Promise<ServiceResult<WorkOrder>> {
+    const actorContext = this.validateMutationContext(input, [
+      "work_order_api",
+      "intake_review",
+    ]);
+    if (!actorContext.ok) {
+      return actorContext;
+    }
     const logger = createServiceLogger("work_order.create", input);
+
+    const createAuthorization = this.authorizeCreate(input);
+    if (!createAuthorization.ok) {
+      return createAuthorization;
+    }
+
     const requiredFields = validateRequiredTextFields({
       title: input.title,
       description: input.description,
@@ -243,7 +333,8 @@ class FirestoreWorkOrderService implements WorkOrderService {
       return clientLocation;
     }
 
-    const id = this.repositories.workOrders.newId();
+    const id = input.requestedWorkOrderId?.trim() || this.repositories.workOrders.newId();
+    const requiresQuote = input.requiresQuote ?? false;
     const workOrder: WorkOrder = {
       id,
       ...createAuditFields(input),
@@ -255,14 +346,15 @@ class FirestoreWorkOrderService implements WorkOrderService {
       requestedByEmail: input.requestedByEmail?.trim() || null,
       requestedByPhone: input.requestedByPhone?.trim() || null,
       requestedServiceDate: input.requestedServiceDate ?? null,
-      dueDate: null,
+      dueDate: input.dueDate ?? null,
       category: input.category ?? null,
-      requiresQuote: false,
-      quoteRequiredThresholdCents: null,
+      requiresQuote,
+      quoteRequiredThresholdCents:
+        requiresQuote ? input.quoteRequiredThresholdCents ?? null : null,
       lifecycleStatus: input.requestedServiceDate ? "triage" : "new",
       status: input.requestedServiceDate ? "triage" : "new",
       assignmentStatus: null,
-      quoteSummaryStatus: "not_required",
+      quoteSummaryStatus: requiresQuote ? "required" : "not_required",
       invoiceSummaryStatus: "not_ready",
       approvalStatus: "not_required",
       priority: input.priority,
@@ -275,6 +367,7 @@ class FirestoreWorkOrderService implements WorkOrderService {
       assignedCoordinatorUserId: null,
       assignedManagerUserId: null,
       assignedContractorOrgId: null,
+      assignedContractorId: null,
       assignedContractorContactId: null,
       financeOwnerUserId: null,
       quoteReviewerUserId: null,
@@ -318,25 +411,55 @@ class FirestoreWorkOrderService implements WorkOrderService {
       escalatedAt: null,
     };
 
-    await this.repositories.workOrders.create(workOrder);
-    await this.dependencies.domainEvents.record({
-      ...input,
-      workOrderId: workOrder.id,
-      type: "work_order_created",
-      visibility: "internal",
-      lifecycleStatus: workOrder.lifecycleStatus,
-      entity: {
-        entityType: "work_order",
-        entityId: workOrder.id,
-        label: workOrder.workOrderNumber,
-      },
-      summary: `Created ${workOrder.workOrderNumber}.`,
-      payload: {
+    const recordCreatedEvent = async (atomic?: WorkOrderMutationContext["atomic"]) => {
+      await this.dependencies.domainEvents.record({
+        ...input,
+        atomic,
+        workOrderId: workOrder.id,
+        type: "work_order_created",
+        visibility: "internal",
         lifecycleStatus: workOrder.lifecycleStatus,
-        priority: workOrder.priority,
-        title: workOrder.title,
-      },
-    });
+        entity: {
+          entityType: "work_order",
+          entityId: workOrder.id,
+          label: workOrder.workOrderNumber,
+        },
+        summary: `Created ${workOrder.workOrderNumber}.`,
+        payload: {
+          lifecycleStatus: workOrder.lifecycleStatus,
+          priority: workOrder.priority,
+          title: workOrder.title,
+        },
+      });
+    };
+
+    try {
+      if (input.atomic) {
+        input.atomic.create("workOrders", workOrder);
+      } else if (this.dependencies.atomicPersistence) {
+        await this.dependencies.atomicPersistence.runInTransaction(async (atomic) => {
+          atomic.create("workOrders", workOrder);
+          await recordCreatedEvent(atomic);
+        });
+      } else {
+        await this.repositories.workOrders.create(workOrder);
+      }
+    } catch (error) {
+      if (!isAlreadyExistsError(error) || !input.requestedWorkOrderId) {
+        throw error;
+      }
+
+      const existing = await this.repositories.workOrders.getById(id);
+      if (!existing) {
+        throw error;
+      }
+      return serviceOk(existing);
+    }
+    if (input.atomic) {
+      await recordCreatedEvent(input.atomic);
+    } else if (!this.dependencies.atomicPersistence) {
+      await recordCreatedEvent();
+    }
     logger.info("use_case.completed", {
       action: "work_order.created",
       resource: {
@@ -353,10 +476,20 @@ class FirestoreWorkOrderService implements WorkOrderService {
   async update(
     input: UpdateWorkOrderServiceInput,
   ): Promise<ServiceResult<WorkOrder>> {
+    const actorContext = this.validateMutationContext(input, "work_order_api");
+    if (!actorContext.ok) {
+      return actorContext;
+    }
     const logger = createServiceLogger("work_order.update", input);
+
     const existing = await this.getById(input.workOrderId);
     if (!existing.ok) {
       return existing;
+    }
+
+    const authorization = this.authorizeEdit(existing.value, input);
+    if (!authorization.ok) {
+      return authorization;
     }
 
     if (isTerminalWorkOrderStatus(existing.value.lifecycleStatus)) {
@@ -410,7 +543,11 @@ class FirestoreWorkOrderService implements WorkOrderService {
       );
     }
 
-    await this.repositories.workOrders.save(updated);
+    if (input.atomic) {
+      input.atomic.save("workOrders", updated);
+    } else {
+      await this.repositories.workOrders.save(updated);
+    }
     logger.info("use_case.completed", {
       action: "work_order.updated",
       resource: {
@@ -426,10 +563,20 @@ class FirestoreWorkOrderService implements WorkOrderService {
   async assignInternalStaff(
     input: AssignInternalStaffInput,
   ): Promise<ServiceResult<WorkOrder>> {
+    const actorContext = this.validateMutationContext(input, "work_order_api");
+    if (!actorContext.ok) {
+      return actorContext;
+    }
     const logger = createServiceLogger("work_order.assign_internal_staff", input);
+
     const existing = await this.getById(input.workOrderId);
     if (!existing.ok) {
       return existing;
+    }
+
+    const authorization = this.authorizeInternalAssignment(existing.value, input);
+    if (!authorization.ok) {
+      return authorization;
     }
 
     if (isTerminalWorkOrderStatus(existing.value.lifecycleStatus)) {
@@ -453,7 +600,11 @@ class FirestoreWorkOrderService implements WorkOrderService {
       input,
     );
 
-    await this.repositories.workOrders.save(updated);
+    if (input.atomic) {
+      input.atomic.save("workOrders", updated);
+    } else {
+      await this.repositories.workOrders.save(updated);
+    }
     logger.info("use_case.completed", {
       action: "work_order.assigned",
       resource: {
@@ -469,10 +620,20 @@ class FirestoreWorkOrderService implements WorkOrderService {
   async assignContractor(
     input: AssignContractorToWorkOrderInput,
   ): Promise<ServiceResult<WorkOrder>> {
+    const actorContext = this.validateMutationContext(input, "work_order_api");
+    if (!actorContext.ok) {
+      return actorContext;
+    }
     const logger = createServiceLogger("work_order.assign_contractor", input);
+
     const existing = await this.getById(input.workOrderId);
     if (!existing.ok) {
       return existing;
+    }
+
+    const authorization = this.authorizeContractorAssignment(existing.value, input);
+    if (!authorization.ok) {
+      return authorization;
     }
 
     if (isTerminalWorkOrderStatus(existing.value.lifecycleStatus)) {
@@ -509,12 +670,18 @@ class FirestoreWorkOrderService implements WorkOrderService {
           contractor && existing.value.lifecycleStatus === "client_approved"
             ? "assigned"
             : existing.value.lifecycleStatus,
-        assignedAt: contractor ? (input.now ?? new Date().toISOString()) : existing.value.assignedAt,
+        assignedAt: contractor
+          ? (input.now ?? new Date().toISOString())
+          : existing.value.assignedAt,
       },
       input,
     );
 
-    await this.repositories.workOrders.save(updated);
+    if (input.atomic) {
+      input.atomic.save("workOrders", updated);
+    } else {
+      await this.repositories.workOrders.save(updated);
+    }
     logger.info("use_case.completed", {
       action: contractor ? "work_order.assigned" : "work_order.updated",
       resource: {
@@ -527,11 +694,296 @@ class FirestoreWorkOrderService implements WorkOrderService {
     return serviceOk(updated);
   }
 
-  async addNote(input: AddWorkOrderNoteInput): Promise<ServiceResult<WorkOrder>> {
-    const logger = createServiceLogger("work_order.add_note", input);
+  async applyContractorAssignment(
+    input: ApplyContractorAssignmentInput,
+  ): Promise<ServiceResult<WorkOrder>> {
+    const actorContext = this.validateMutationContext(input, "assignment_workflow");
+    if (!actorContext.ok) {
+      return actorContext;
+    }
+
     const existing = await this.getById(input.workOrderId);
     if (!existing.ok) {
       return existing;
+    }
+
+    const authorization = this.authorizeWorkflowMutation(
+      existing.value,
+      input,
+      "assignment_workflow",
+    );
+    if (!authorization.ok) {
+      return authorization;
+    }
+
+    if (isTerminalWorkOrderStatus(existing.value.lifecycleStatus)) {
+      return serviceFail(
+        conflictError("Terminal work orders cannot be assigned to contractors."),
+      );
+    }
+
+    const scopedWorkOrder = this.normalizeScopedWorkOrder(existing.value, input);
+    if (!scopedWorkOrder.ok) {
+      return scopedWorkOrder;
+    }
+
+    const contractor = await this.repositories.contractorOrganizations.getById(
+      input.contractorOrganizationId,
+    );
+    if (!contractor || contractor.isDeleted || contractor.status !== "active") {
+      return serviceFail(
+        notFoundError("Active contractor organization could not be found."),
+      );
+    }
+
+    const timestamp = input.assignedAt ?? input.now ?? new Date().toISOString();
+    const didAdvanceLifecycle =
+      scopedWorkOrder.value.lifecycleStatus === "client_approved";
+    const updated = touchAuditFields(
+      {
+        ...scopedWorkOrder.value,
+        assignedContractorOrgId: contractor.id,
+        contractorSnapshot: {
+          id: contractor.id,
+          name: contractor.displayName ?? contractor.name,
+        },
+        assignedAt: timestamp,
+        lifecycleStatus: didAdvanceLifecycle
+          ? "assigned"
+          : scopedWorkOrder.value.lifecycleStatus,
+        lastActivityAt: didAdvanceLifecycle
+          ? timestamp
+          : scopedWorkOrder.value.lastActivityAt,
+      },
+      { ...input, now: timestamp },
+    );
+
+    if (input.atomic) {
+      input.atomic.save("workOrders", updated);
+    } else {
+      await this.repositories.workOrders.save(updated);
+    }
+    return serviceOk(updated);
+  }
+
+  async applyQuoteWorkflowPointer(
+    input: ApplyQuoteWorkflowPointerInput,
+  ): Promise<ServiceResult<WorkOrder>> {
+    const actorContext = this.validateMutationContext(input, "quote_workflow");
+    if (!actorContext.ok) {
+      return actorContext;
+    }
+
+    const existing = await this.getById(input.workOrderId);
+    if (!existing.ok) {
+      return existing;
+    }
+
+    const authorization = this.authorizeWorkflowMutation(
+      existing.value,
+      input,
+      "quote_workflow",
+    );
+    if (!authorization.ok) {
+      return authorization;
+    }
+
+    const scopedWorkOrder = this.normalizeScopedWorkOrder(existing.value, input);
+    if (!scopedWorkOrder.ok) {
+      return scopedWorkOrder;
+    }
+
+    if (scopedWorkOrder.value.currentQuoteId === input.currentQuoteId) {
+      return serviceOk(scopedWorkOrder.value);
+    }
+
+    const updated = touchAuditFields(
+      {
+        ...scopedWorkOrder.value,
+        currentQuoteId: input.currentQuoteId,
+      },
+      input,
+    );
+
+    if (input.atomic) {
+      input.atomic.save("workOrders", updated);
+    } else {
+      await this.repositories.workOrders.save(updated);
+    }
+    return serviceOk(updated);
+  }
+
+  async applyQuoteWorkflowTransition(
+    input: ApplyQuoteWorkflowTransitionInput,
+  ): Promise<ServiceResult<WorkOrder>> {
+    const actorContext = this.validateMutationContext(input, "quote_workflow");
+    if (!actorContext.ok) {
+      return actorContext;
+    }
+
+    const existing = await this.getById(input.workOrderId);
+    if (!existing.ok) {
+      return existing;
+    }
+
+    const authorization = this.authorizeQuoteWorkflowTransition(
+      existing.value,
+      input,
+    );
+    if (!authorization.ok) {
+      return authorization;
+    }
+
+    if (existing.value.lifecycleStatus === input.toStatus) {
+      return existing;
+    }
+
+    return this.applyTransition(existing.value, input, {
+      emitCanonicalLifecycleEvent: false,
+      emitReadyForInvoicingNotification: false,
+      transitionMetadata: {
+        source: "quote_workflow",
+      },
+    });
+  }
+
+  async applyInvoiceWorkflowPointer(
+    input: ApplyInvoiceWorkflowPointerInput,
+  ): Promise<ServiceResult<WorkOrder>> {
+    const actorContext = this.validateMutationContext(input, "invoice_workflow");
+    if (!actorContext.ok) {
+      return actorContext;
+    }
+
+    const existing = await this.getById(input.workOrderId);
+    if (!existing.ok) {
+      return existing;
+    }
+
+    const authorization = this.authorizeWorkflowMutation(
+      existing.value,
+      input,
+      "invoice_workflow",
+    );
+    if (!authorization.ok) {
+      return authorization;
+    }
+
+    const scopedWorkOrder = this.normalizeScopedWorkOrder(existing.value, input);
+    if (!scopedWorkOrder.ok) {
+      return scopedWorkOrder;
+    }
+
+    if (scopedWorkOrder.value.currentInvoiceId === input.currentInvoiceId) {
+      return serviceOk(scopedWorkOrder.value);
+    }
+
+    const updated = touchAuditFields(
+      {
+        ...scopedWorkOrder.value,
+        currentInvoiceId: input.currentInvoiceId,
+      },
+      input,
+    );
+
+    if (input.atomic) {
+      input.atomic.save("workOrders", updated);
+    } else {
+      await this.repositories.workOrders.save(updated);
+    }
+    return serviceOk(updated);
+  }
+
+  async applyInvoiceWorkflowTransition(
+    input: ApplyInvoiceWorkflowTransitionInput,
+  ): Promise<ServiceResult<WorkOrder>> {
+    const actorContext = this.validateMutationContext(input, "invoice_workflow");
+    if (!actorContext.ok) {
+      return actorContext;
+    }
+
+    const existing = await this.getById(input.workOrderId);
+    if (!existing.ok) {
+      return existing;
+    }
+
+    const authorization = this.authorizeInvoiceWorkflowTransition(
+      existing.value,
+      input,
+    );
+    if (!authorization.ok) {
+      return authorization;
+    }
+
+    if (existing.value.lifecycleStatus === input.toStatus) {
+      const scopedWorkOrder = this.normalizeScopedWorkOrder(existing.value, input);
+      if (!scopedWorkOrder.ok) {
+        return scopedWorkOrder;
+      }
+
+      if (!("currentInvoiceId" in input)) {
+        return scopedWorkOrder;
+      }
+
+      const updated = touchAuditFields(
+        {
+          ...scopedWorkOrder.value,
+          currentInvoiceId: input.currentInvoiceId ?? null,
+        },
+        input,
+      );
+      if (input.atomic) {
+        input.atomic.save("workOrders", updated);
+      } else {
+        await this.repositories.workOrders.save(updated);
+      }
+      return serviceOk(updated);
+    }
+
+    return this.applyTransition(existing.value, input, {
+      allowInvoiceReopen:
+        existing.value.lifecycleStatus === "invoiced" &&
+        input.toStatus === "ready_for_invoicing",
+      emitCanonicalLifecycleEvent: false,
+      emitReadyForInvoicingNotification: false,
+      transitionMetadata: {
+        source: "invoice_workflow",
+        invoiceId: input.invoiceId,
+        invoiceNumber: input.invoiceNumber,
+      },
+      mutateBeforeSave: (workOrder, timestamp) => ({
+        ...workOrder,
+        currentInvoiceId:
+          "currentInvoiceId" in input
+            ? input.currentInvoiceId ?? null
+            : workOrder.currentInvoiceId,
+        invoiceSentAt:
+          input.toStatus === "invoiced"
+            ? input.invoiceSentAt ?? workOrder.invoiceSentAt ?? timestamp
+            : workOrder.invoiceSentAt,
+        paidAt:
+          input.toStatus === "paid"
+            ? input.paidAt ?? workOrder.paidAt ?? timestamp
+            : workOrder.paidAt,
+      }),
+    });
+  }
+
+  async addNote(input: AddWorkOrderNoteInput): Promise<ServiceResult<WorkOrder>> {
+    const actorContext = this.validateMutationContext(input, "work_order_api");
+    if (!actorContext.ok) {
+      return actorContext;
+    }
+    const logger = createServiceLogger("work_order.add_note", input);
+
+    const existing = await this.getById(input.workOrderId);
+    if (!existing.ok) {
+      return existing;
+    }
+
+    const authorization = this.authorizeNote(existing.value, input);
+    if (!authorization.ok) {
+      return authorization;
     }
 
     const note = input.note.trim();
@@ -540,7 +992,11 @@ class FirestoreWorkOrderService implements WorkOrderService {
     }
 
     const updated = touchAuditFields(existing.value, input);
-    await this.repositories.workOrders.save(updated);
+    if (input.atomic) {
+      input.atomic.save("workOrders", updated);
+    } else {
+      await this.repositories.workOrders.save(updated);
+    }
     logger.info("use_case.completed", {
       action: "work_order.updated",
       resource: {
@@ -557,162 +1013,46 @@ class FirestoreWorkOrderService implements WorkOrderService {
   async transition(
     input: TransitionWorkOrderInput,
   ): Promise<ServiceResult<WorkOrder>> {
+    const actorContext = this.validateMutationContext(input, "work_order_api");
+    if (!actorContext.ok) {
+      return actorContext;
+    }
     const logger = createServiceLogger("work_order.transition", input);
+
     const existing = await this.getById(input.workOrderId);
     if (!existing.ok) {
       return existing;
     }
 
-    const validation = await this.validateTransition(existing.value, input);
-    if (!validation.ok) {
-      return validation;
+    const authorization = this.authorizeDirectTransition(existing.value, input);
+    if (!authorization.ok) {
+      return authorization;
     }
 
-    const timestamp = input.now ?? new Date().toISOString();
-    const transitioned = touchAuditFields(
-      {
-        ...existing.value,
-        lifecycleStatus: input.toStatus,
-        previousLifecycleStatus:
-          input.toStatus === "on_hold" || input.toStatus === "escalated"
-            ? existing.value.lifecycleStatus
-            : existing.value.previousLifecycleStatus,
-        triagedAt:
-          input.toStatus === "triage"
-            ? existing.value.triagedAt ?? timestamp
-            : existing.value.triagedAt,
-        contractorScheduledAt:
-          input.toStatus === "contractor_scheduled"
-            ? existing.value.contractorScheduledAt ?? timestamp
-            : existing.value.contractorScheduledAt,
-        workStartedAt:
-          input.toStatus === "in_progress"
-            ? existing.value.workStartedAt ?? timestamp
-            : existing.value.workStartedAt,
-        clientApprovedAt:
-          input.toStatus === "client_approved"
-            ? existing.value.clientApprovedAt ?? timestamp
-            : existing.value.clientApprovedAt,
-        workCompletedAt:
-          input.toStatus === "work_completed"
-            ? existing.value.workCompletedAt ?? timestamp
-            : existing.value.workCompletedAt,
-        completionReviewStartedAt:
-          input.toStatus === "completion_review"
-            ? existing.value.completionReviewStartedAt ?? timestamp
-            : existing.value.completionReviewStartedAt,
-        readyForInvoicingAt:
-          input.toStatus === "ready_for_invoicing"
-            ? existing.value.readyForInvoicingAt ?? timestamp
-            : existing.value.readyForInvoicingAt,
-        paidAt:
-          input.toStatus === "paid"
-            ? existing.value.paidAt ?? timestamp
-            : existing.value.paidAt,
-        closedAt:
-          input.toStatus === "closed"
-            ? existing.value.closedAt ?? timestamp
-            : existing.value.closedAt,
-        cancelledAt:
-          input.toStatus === "cancelled"
-            ? existing.value.cancelledAt ?? timestamp
-            : existing.value.cancelledAt,
-        holdStartedAt:
-          input.toStatus === "on_hold"
-            ? existing.value.holdStartedAt ?? timestamp
-            : existing.value.holdStartedAt,
-        escalatedAt:
-          input.toStatus === "escalated"
-            ? existing.value.escalatedAt ?? timestamp
-            : existing.value.escalatedAt,
-        isEscalated:
-          input.toStatus === "escalated"
-            ? true
-            : input.toStatus === "on_hold" || input.toStatus === "closed" || input.toStatus === "cancelled"
-              ? existing.value.isEscalated
-              : false,
-        lastActivityAt: timestamp,
-      },
-      { ...input, now: timestamp },
-    );
-
-    await this.repositories.workOrders.save(transitioned);
-    await this.dependencies.domainEvents.recordTransition({
-      ...input,
-      now: timestamp,
-      workOrderId: transitioned.id,
-      fromLifecycleStatus: existing.value.lifecycleStatus,
-      toLifecycleStatus: input.toStatus,
-      visibility: "internal",
-      reason: input.activityMessage ?? null,
-      escalationContext:
-        input.toStatus === "escalated"
-          ? { previousLifecycleStatus: existing.value.lifecycleStatus }
-          : null,
-      holdContext:
-        input.toStatus === "on_hold"
-          ? { previousLifecycleStatus: existing.value.lifecycleStatus }
-          : null,
-      metadata: {
-        workOrderNumber: transitioned.workOrderNumber,
-      },
-    });
-    const canonicalEventType = mapLifecycleStatusToEventType(input.toStatus);
-    if (canonicalEventType) {
-      await this.dependencies.domainEvents.record({
-        ...input,
-        now: timestamp,
-        workOrderId: transitioned.id,
-        type: canonicalEventType,
-        visibility: "internal",
-        lifecycleStatus: transitioned.lifecycleStatus,
-        entity: {
-          entityType: "work_order",
-          entityId: transitioned.id,
-          label: transitioned.workOrderNumber,
-        },
-        summary:
-          input.activityMessage ??
-          `Changed work order lifecycle from ${existing.value.lifecycleStatus} to ${input.toStatus}.`,
-        reason: input.activityMessage ?? null,
-        payload: eventPayloadForLifecycleStatus(
-          canonicalEventType,
-          transitioned,
-          existing.value.lifecycleStatus,
-          input.activityMessage ?? null,
-        ),
-      });
+    const transitioned = await this.applyTransition(existing.value, input);
+    if (!transitioned.ok) {
+      return transitioned;
     }
     logger.info("use_case.completed", {
       action: "work_order.status_changed",
       resource: {
         type: "workOrder",
-        id: transitioned.id,
-        label: transitioned.workOrderNumber,
+        id: transitioned.value.id,
+        label: transitioned.value.workOrderNumber,
       },
       fromLifecycleStatus: existing.value.lifecycleStatus,
       toLifecycleStatus: input.toStatus,
     });
 
-    if (input.toStatus === "ready_for_invoicing") {
-      await this.dependencies.notifications?.captureOperationalEvent({
-        ...input,
-        now: timestamp,
-        eventType: "work_order_ready_for_invoicing",
-        entityType: "work-order",
-        entityId: transitioned.id,
-        workOrder: transitioned,
-        fromStatus: existing.value.lifecycleStatus,
-        toStatus: input.toStatus,
-      });
-    }
-
-    return serviceOk(transitioned);
+    return transitioned;
   }
 
   private async validateTransition(
     workOrder: WorkOrder,
     input: TransitionWorkOrderInput,
+    options: {
+      allowInvoiceReopen?: boolean;
+    } = {},
   ): Promise<ServiceResult<true>> {
     if (isTerminalWorkOrderStatus(workOrder.lifecycleStatus)) {
       return serviceFail(
@@ -726,6 +1066,7 @@ class FirestoreWorkOrderService implements WorkOrderService {
       previousLifecycleStatus: workOrder.previousLifecycleStatus,
       holdReason: workOrder.holdReason,
       escalationReason: workOrder.escalationReason,
+      allowInvoiceReopen: options.allowInvoiceReopen,
     })) {
       return serviceFail(
         invalidTransitionError(
@@ -827,6 +1168,490 @@ class FirestoreWorkOrderService implements WorkOrderService {
     }
 
     return serviceOk(true);
+  }
+
+  private validateMutationContext(
+    input: WorkOrderMutationContext,
+    expectedSource: WorkOrderMutationSource | readonly WorkOrderMutationSource[],
+  ): ServiceResult<true> {
+    if (!input.actor || !input.source) {
+      return serviceFail(validationError("Explicit work-order actor context is required."));
+    }
+
+    const allowedSources = Array.isArray(expectedSource)
+      ? expectedSource
+      : [expectedSource];
+    if (!allowedSources.includes(input.source)) {
+      return serviceFail(
+        validationError(
+          `Work-order mutation source must be one of: ${allowedSources.join(", ")}.`,
+        ),
+      );
+    }
+
+    if (input.actor.userId !== "system" && input.actor.userId.trim().length === 0) {
+      return serviceFail(validationError("Work-order actor id is required."));
+    }
+
+    const actorOrganizationId = input.actor.scope.organizationId;
+    if (!actorOrganizationId || actorOrganizationId !== input.organizationId) {
+      return serviceFail(notFoundError("Work order could not be found."));
+    }
+
+    if (isSystemWorkOrderMutationActor(input.actor)) {
+      if (input.actor.scope.kind !== "system" || input.actor.scope.trusted !== true) {
+        return serviceFail(validationError("System work-order mutations require a trusted system actor."));
+      }
+
+      return serviceOk(true);
+    }
+
+    if (input.actor.scope.organizationId !== input.organizationId) {
+      return serviceFail(notFoundError("Work order could not be found."));
+    }
+
+    return serviceOk(true);
+  }
+
+  private authorizeCreate(
+    input: CreateWorkOrderServiceInput,
+  ): ServiceResult<true> {
+    if (isSystemWorkOrderMutationActor(input.actor)) {
+      return serviceFail(validationError("System actors cannot create work orders directly."));
+    }
+
+    const allowed = canCreateWorkOrder(input.actor, {
+      organizationId: input.organizationId,
+      clientOrganizationId: input.clientOrganizationId,
+      locationId: input.locationId,
+    });
+    if (!allowed) {
+      return serviceFail(validationError("You do not have permission to create this work order."));
+    }
+
+    return serviceOk(true);
+  }
+
+  private authorizeEdit(
+    workOrder: WorkOrder,
+    input: UpdateWorkOrderServiceInput,
+  ): ServiceResult<true> {
+    if (isSystemWorkOrderMutationActor(input.actor)) {
+      return serviceFail(validationError("System actors cannot edit work orders directly."));
+    }
+
+    if (!canEditWorkOrder(input.actor, this.toPermissionTarget(workOrder))) {
+      return serviceFail(validationError("You do not have permission to edit this work order."));
+    }
+
+    return serviceOk(true);
+  }
+
+  private authorizeInternalAssignment(
+    workOrder: WorkOrder,
+    input: AssignInternalStaffInput,
+  ): ServiceResult<true> {
+    if (isSystemWorkOrderMutationActor(input.actor)) {
+      return serviceFail(validationError("System actors cannot assign internal staff directly."));
+    }
+
+    if (input.actor.actorType !== "internal") {
+      return serviceFail(validationError("Only internal users may assign internal staff."));
+    }
+
+    if (!canEditWorkOrder(input.actor, this.toPermissionTarget(workOrder))) {
+      return serviceFail(validationError("You do not have permission to assign internal staff."));
+    }
+
+    return serviceOk(true);
+  }
+
+  private authorizeContractorAssignment(
+    workOrder: WorkOrder,
+    input: AssignContractorToWorkOrderInput,
+  ): ServiceResult<true> {
+    if (isSystemWorkOrderMutationActor(input.actor)) {
+      return serviceFail(validationError("System actors cannot assign contractors directly."));
+    }
+
+    if (input.actor.actorType !== "internal") {
+      return serviceFail(validationError("Only internal users may assign contractors."));
+    }
+
+    if (!canUpdateWorkOrderStatus(input.actor, this.toPermissionTarget(workOrder), "assigned")) {
+      return serviceFail(validationError("You do not have permission to assign a contractor."));
+    }
+
+    return serviceOk(true);
+  }
+
+  private authorizeNote(
+    workOrder: WorkOrder,
+    input: AddWorkOrderNoteInput,
+  ): ServiceResult<true> {
+    if (isSystemWorkOrderMutationActor(input.actor)) {
+      return serviceFail(validationError("System actors cannot add work-order notes directly."));
+    }
+
+    if (!canAddWorkOrderNote(input.actor, this.toPermissionTarget(workOrder))) {
+      return serviceFail(validationError("You do not have permission to add a note to this work order."));
+    }
+
+    return serviceOk(true);
+  }
+
+  private authorizeDirectTransition(
+    workOrder: WorkOrder,
+    input: TransitionWorkOrderInput,
+  ): ServiceResult<true> {
+    if (isSystemWorkOrderMutationActor(input.actor)) {
+      return serviceFail(validationError("System actors cannot perform direct work-order transitions."));
+    }
+
+    if (!canUpdateWorkOrderStatus(input.actor, this.toPermissionTarget(workOrder), input.toStatus)) {
+      return serviceFail(
+        validationError(
+          `You do not have permission to transition this work order to ${input.toStatus}.`,
+        ),
+      );
+    }
+
+    return serviceOk(true);
+  }
+
+  private authorizeWorkflowMutation(
+    workOrder: WorkOrder,
+    input: WorkOrderMutationContext,
+    source: Extract<
+      WorkOrderMutationSource,
+      "assignment_workflow" | "quote_workflow" | "invoice_workflow"
+    >,
+  ): ServiceResult<true> {
+    if (input.source !== source) {
+      return serviceFail(validationError(`Work-order mutation source must be ${source}.`));
+    }
+
+    if (isSystemWorkOrderMutationActor(input.actor)) {
+      return serviceFail(validationError("Workflow mutations require an explicit human actor."));
+    }
+
+    if (!isWorkOrderInActorScope(input.actor, this.toPermissionTarget(workOrder))) {
+      return serviceFail(notFoundError("Work order could not be found."));
+    }
+
+    return serviceOk(true);
+  }
+
+  private authorizeQuoteWorkflowTransition(
+    workOrder: WorkOrder,
+    input: ApplyQuoteWorkflowTransitionInput,
+  ): ServiceResult<true> {
+    const workflowAuthorization = this.authorizeWorkflowMutation(
+      workOrder,
+      input,
+      "quote_workflow",
+    );
+    if (!workflowAuthorization.ok) {
+      return workflowAuthorization;
+    }
+
+    if (isSystemWorkOrderMutationActor(input.actor)) {
+      return serviceFail(validationError("Workflow mutations require an explicit human actor."));
+    }
+
+    const { role } = input.actor;
+    const allowed =
+      (role === USER_ROLES.ContractorUser &&
+        workOrder.lifecycleStatus === "quote_required" &&
+        input.toStatus === "contractor_quote_received") ||
+      ((role === USER_ROLES.Manager || role === USER_ROLES.Owner) &&
+        (
+          (workOrder.lifecycleStatus === "contractor_quote_received" &&
+            input.toStatus === "quote_under_review") ||
+          (workOrder.lifecycleStatus === "quote_under_review" &&
+            input.toStatus === "client_approval_requested")
+        )) ||
+      (
+        (role === USER_ROLES.ClientUser ||
+          role === USER_ROLES.Manager ||
+          role === USER_ROLES.Owner) &&
+        workOrder.lifecycleStatus === "client_approval_requested" &&
+        (input.toStatus === "client_approved" || input.toStatus === "quote_required")
+      );
+
+    if (!allowed) {
+      return serviceFail(
+        validationError(
+          `Actor role ${role} may not drive quote workflow transition ${workOrder.lifecycleStatus} -> ${input.toStatus}.`,
+        ),
+      );
+    }
+
+    return serviceOk(true);
+  }
+
+  private authorizeInvoiceWorkflowTransition(
+    workOrder: WorkOrder,
+    input: ApplyInvoiceWorkflowTransitionInput,
+  ): ServiceResult<true> {
+    const workflowAuthorization = this.authorizeWorkflowMutation(
+      workOrder,
+      input,
+      "invoice_workflow",
+    );
+    if (!workflowAuthorization.ok) {
+      return workflowAuthorization;
+    }
+
+    if (isSystemWorkOrderMutationActor(input.actor)) {
+      return serviceFail(validationError("Workflow mutations require an explicit human actor."));
+    }
+
+    const role = input.actor.role;
+    const isFinanceActor =
+      role === USER_ROLES.FinanceAdmin || role === USER_ROLES.Owner;
+
+    const allowed =
+      isFinanceActor &&
+      (
+        (
+          (workOrder.lifecycleStatus === "work_completed" ||
+            workOrder.lifecycleStatus === "completion_review" ||
+            workOrder.lifecycleStatus === "ready_for_invoicing") &&
+          input.toStatus === "invoiced"
+        ) ||
+        (workOrder.lifecycleStatus === "invoiced" &&
+          (input.toStatus === "paid" || input.toStatus === "ready_for_invoicing"))
+      );
+
+    if (!allowed) {
+      return serviceFail(
+        validationError(
+          `Actor role ${role} may not drive invoice workflow transition ${workOrder.lifecycleStatus} -> ${input.toStatus}.`,
+        ),
+      );
+    }
+
+    return serviceOk(true);
+  }
+
+  private toPermissionTarget(workOrder: WorkOrder): WorkOrderPermissionTarget & {
+    status: WorkOrderStatus;
+  } {
+    return {
+      id: workOrder.id,
+      organizationId: workOrder.organizationId,
+      clientOrganizationId: workOrder.clientOrganizationId,
+      locationId: workOrder.locationId,
+      status: workOrder.lifecycleStatus,
+      requestedByContactId: workOrder.requestedByContactId,
+      coordinatorUserId: workOrder.coordinatorUserId,
+      managerUserId: workOrder.managerUserId,
+      assignedContractorId: workOrder.assignedContractorOrgId,
+    };
+  }
+
+  private normalizeScopedWorkOrder(
+    workOrder: WorkOrder,
+    input: WorkOrderMutationContext,
+  ): ServiceResult<WorkOrder> {
+    if (
+      workOrder.organizationId &&
+      workOrder.organizationId !== input.organizationId
+    ) {
+      return serviceFail(notFoundError("Work order could not be found."));
+    }
+
+    return serviceOk({
+      ...workOrder,
+      organizationId: workOrder.organizationId ?? input.organizationId,
+    });
+  }
+
+  private async applyTransition(
+    workOrder: WorkOrder,
+    input: TransitionWorkOrderInput,
+    options: {
+      allowInvoiceReopen?: boolean;
+      emitCanonicalLifecycleEvent?: boolean;
+      emitReadyForInvoicingNotification?: boolean;
+      transitionMetadata?: Record<string, unknown>;
+      mutateBeforeSave?: (workOrder: WorkOrder, timestamp: string) => WorkOrder;
+    } = {},
+  ): Promise<ServiceResult<WorkOrder>> {
+    const scopedWorkOrder = this.normalizeScopedWorkOrder(workOrder, input);
+    if (!scopedWorkOrder.ok) {
+      return scopedWorkOrder;
+    }
+
+    const validation = await this.validateTransition(scopedWorkOrder.value, input, {
+      allowInvoiceReopen: options.allowInvoiceReopen,
+    });
+    if (!validation.ok) {
+      return validation;
+    }
+
+    const timestamp = input.now ?? new Date().toISOString();
+    const transitionDraft: WorkOrder = {
+      ...scopedWorkOrder.value,
+      lifecycleStatus: input.toStatus,
+      previousLifecycleStatus:
+        input.toStatus === "on_hold" || input.toStatus === "escalated"
+          ? scopedWorkOrder.value.lifecycleStatus
+          : scopedWorkOrder.value.previousLifecycleStatus,
+      triagedAt:
+        input.toStatus === "triage"
+          ? scopedWorkOrder.value.triagedAt ?? timestamp
+          : scopedWorkOrder.value.triagedAt,
+      contractorScheduledAt:
+        input.toStatus === "contractor_scheduled"
+          ? scopedWorkOrder.value.contractorScheduledAt ?? timestamp
+          : scopedWorkOrder.value.contractorScheduledAt,
+      workStartedAt:
+        input.toStatus === "in_progress"
+          ? scopedWorkOrder.value.workStartedAt ?? timestamp
+          : scopedWorkOrder.value.workStartedAt,
+      clientApprovedAt:
+        input.toStatus === "client_approved"
+          ? scopedWorkOrder.value.clientApprovedAt ?? timestamp
+          : scopedWorkOrder.value.clientApprovedAt,
+      workCompletedAt:
+        input.toStatus === "work_completed"
+          ? scopedWorkOrder.value.workCompletedAt ?? timestamp
+          : scopedWorkOrder.value.workCompletedAt,
+      completionReviewStartedAt:
+        input.toStatus === "completion_review"
+          ? scopedWorkOrder.value.completionReviewStartedAt ?? timestamp
+          : scopedWorkOrder.value.completionReviewStartedAt,
+      readyForInvoicingAt:
+        input.toStatus === "ready_for_invoicing"
+          ? scopedWorkOrder.value.readyForInvoicingAt ?? timestamp
+          : scopedWorkOrder.value.readyForInvoicingAt,
+      paidAt:
+        input.toStatus === "paid"
+          ? scopedWorkOrder.value.paidAt ?? timestamp
+          : scopedWorkOrder.value.paidAt,
+      closedAt:
+        input.toStatus === "closed"
+          ? scopedWorkOrder.value.closedAt ?? timestamp
+          : scopedWorkOrder.value.closedAt,
+      cancelledAt:
+        input.toStatus === "cancelled"
+          ? scopedWorkOrder.value.cancelledAt ?? timestamp
+          : scopedWorkOrder.value.cancelledAt,
+      holdStartedAt:
+        input.toStatus === "on_hold"
+          ? scopedWorkOrder.value.holdStartedAt ?? timestamp
+          : scopedWorkOrder.value.holdStartedAt,
+      escalatedAt:
+        input.toStatus === "escalated"
+          ? scopedWorkOrder.value.escalatedAt ?? timestamp
+          : scopedWorkOrder.value.escalatedAt,
+      isEscalated:
+        input.toStatus === "escalated"
+          ? true
+          : input.toStatus === "on_hold" ||
+              input.toStatus === "closed" ||
+              input.toStatus === "cancelled"
+            ? scopedWorkOrder.value.isEscalated
+            : false,
+      lastActivityAt: timestamp,
+    };
+
+    const transitioned = touchAuditFields(
+      options.mutateBeforeSave
+        ? options.mutateBeforeSave(transitionDraft, timestamp)
+        : transitionDraft,
+      { ...input, now: timestamp },
+    );
+
+    const persistTransition = async (atomic?: WorkOrderMutationContext["atomic"]) => {
+      if (atomic) {
+        atomic.save("workOrders", transitioned);
+      } else {
+        await this.repositories.workOrders.save(transitioned);
+      }
+      await this.dependencies.domainEvents.recordTransition({
+        ...input,
+        atomic,
+        now: timestamp,
+        workOrderId: transitioned.id,
+        fromLifecycleStatus: scopedWorkOrder.value.lifecycleStatus,
+        toLifecycleStatus: input.toStatus,
+        visibility: "internal",
+        reason: input.activityMessage ?? null,
+        escalationContext:
+          input.toStatus === "escalated"
+            ? { previousLifecycleStatus: scopedWorkOrder.value.lifecycleStatus }
+            : null,
+        holdContext:
+          input.toStatus === "on_hold"
+            ? { previousLifecycleStatus: scopedWorkOrder.value.lifecycleStatus }
+            : null,
+        metadata: {
+          workOrderNumber: transitioned.workOrderNumber,
+          ...(options.transitionMetadata ?? {}),
+        },
+      });
+
+      if (options.emitCanonicalLifecycleEvent !== false) {
+        const canonicalEventType = mapLifecycleStatusToEventType(input.toStatus);
+        if (canonicalEventType) {
+          await this.dependencies.domainEvents.record({
+            ...input,
+            atomic,
+            now: timestamp,
+            workOrderId: transitioned.id,
+            type: canonicalEventType,
+            visibility: "internal",
+            lifecycleStatus: transitioned.lifecycleStatus,
+            entity: {
+              entityType: "work_order",
+              entityId: transitioned.id,
+              label: transitioned.workOrderNumber,
+            },
+            summary:
+              input.activityMessage ??
+              `Changed work order lifecycle from ${scopedWorkOrder.value.lifecycleStatus} to ${input.toStatus}.`,
+            reason: input.activityMessage ?? null,
+            payload: eventPayloadForLifecycleStatus(
+              canonicalEventType,
+              transitioned,
+              scopedWorkOrder.value.lifecycleStatus,
+              input.activityMessage ?? null,
+            ),
+          });
+        }
+      }
+    };
+
+    if (input.atomic) {
+      await persistTransition(input.atomic);
+    } else if (this.dependencies.atomicPersistence) {
+      await this.dependencies.atomicPersistence.runInTransaction(async (atomic) => {
+        await persistTransition(atomic);
+      });
+    } else {
+      await persistTransition();
+    }
+
+    if (
+      input.toStatus === "ready_for_invoicing" &&
+      options.emitReadyForInvoicingNotification !== false
+    ) {
+      await this.dependencies.notifications?.captureOperationalEvent({
+        ...input,
+        now: timestamp,
+        eventType: "work_order_ready_for_invoicing",
+        entityType: "work-order",
+        entityId: transitioned.id,
+        workOrder: transitioned,
+        fromStatus: scopedWorkOrder.value.lifecycleStatus,
+        toStatus: input.toStatus,
+      });
+    }
+
+    return serviceOk(transitioned);
   }
 }
 

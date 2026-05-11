@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
 import {
+  authorizeWorkOrderEdit,
+  createNotFoundAppError,
   getWorkOrderApiContext,
   parseAssignInternalPayload,
   parseJsonObject,
@@ -19,8 +21,13 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     async (requestContext) => {
       const context = await getWorkOrderApiContext(requestContext);
       const { workOrderId } = await params;
+      const existing = await context.repositories.workOrders.getById(workOrderId);
+      if (!existing) {
+        throw createNotFoundAppError("Work order could not be found.");
+      }
+      authorizeWorkOrderEdit(context, existing);
       const payload = parseAssignInternalPayload(await parseJsonObject(request));
-      const result = await context.services.workOrders.update({
+      const result = await context.services.workOrders.assignInternalStaff({
         ...context.audit,
         workOrderId,
         ...payload,

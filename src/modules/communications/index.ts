@@ -13,6 +13,7 @@ export {
   type CommunicationMessage,
   type CommunicationParticipant,
   type CommunicationThread,
+  type CommunicationTimelineAttachment,
   type CommunicationTimelineEntry,
   type CommunicationVisibility,
 } from "./domain/types";

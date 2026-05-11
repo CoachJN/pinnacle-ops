@@ -73,6 +73,20 @@ test("communication query filters client and contractor visibility safely", asyn
       createdAt: "2026-05-06T12:00:00.000Z",
     }),
   );
+  harness.attachments.push(
+    makeAttachment({
+      id: "attachment-client",
+      messageId: "msg-client",
+      visibility: ["client"],
+      storagePath: "protected/client-visible.pdf",
+    }),
+    makeAttachment({
+      id: "attachment-internal",
+      messageId: "msg-client",
+      visibility: ["internal"],
+      storagePath: "protected/internal-only.pdf",
+    }),
+  );
 
   const services = createCommunicationServices(harness.repositories, {
     domainEvents: harness.domainEventsService,
@@ -102,6 +116,8 @@ test("communication query filters client and contractor visibility safely", asyn
 
   assert.equal(clientTimeline.ok, true);
   assert.deepEqual(clientTimeline.value.map((item) => item.id), ["msg-client"]);
+  assert.deepEqual(clientTimeline.value[0]?.attachments.map((item) => item.id), ["attachment-client"]);
+  assert.equal("storagePath" in (clientTimeline.value[0]?.attachments[0] ?? {}), false);
   assert.equal(contractorTimeline.ok, true);
   assert.deepEqual(contractorTimeline.value.map((item) => item.id), ["msg-contractor"]);
 });
@@ -479,6 +495,39 @@ function makeMessage(overrides: Partial<CommunicationMessage>): CommunicationMes
       actorRole: USER_ROLES.Manager,
       displayName: "Manager",
     },
+    ...overrides,
+  };
+}
+
+function makeAttachment(
+  overrides: Partial<CommunicationAttachment>,
+): CommunicationAttachment {
+  return {
+    id: "attachment-1",
+    organizationId: "org-1",
+    tenantId: "org-1",
+    threadId: "thread-1",
+    messageId: "message-1",
+    workOrderId: "wo-1",
+    fileName: "attachment.pdf",
+    contentType: "application/pdf",
+    sizeBytes: 512,
+    storagePath: "protected/attachment.pdf",
+    hydrationStatus: "hydrated",
+    hydratedAt: "2026-05-06T09:00:00.000Z",
+    hydrationError: null,
+    contentHash: null,
+    visibility: ["internal"],
+    uploadedByActor: {
+      actorId: "manager-1",
+      actorType: "user",
+      actorRole: USER_ROLES.Manager,
+      displayName: "Manager",
+    },
+    externalProvider: null,
+    externalAttachmentId: null,
+    metadata: {},
+    createdAt: "2026-05-06T09:00:00.000Z",
     ...overrides,
   };
 }

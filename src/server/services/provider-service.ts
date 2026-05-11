@@ -81,6 +81,8 @@ export interface StartProviderSyncRunInput extends ServiceAuditContext {
 
 export interface CompleteProviderSyncRunInput extends ServiceAuditContext {
   syncRunId: EntityId;
+  claimedBy: string;
+  claimToken: string;
   checkpointId?: EntityId | null;
   messagesSeen: number;
   messagesIngested: number;
@@ -91,6 +93,8 @@ export interface CompleteProviderSyncRunInput extends ServiceAuditContext {
 
 export interface FailProviderSyncRunInput extends ServiceAuditContext {
   syncRunId: EntityId;
+  claimedBy: string;
+  claimToken: string;
   checkpointId?: EntityId | null;
   reason: string;
   failures: number;
@@ -140,7 +144,11 @@ export interface ProviderSyncRunService {
   complete(input: CompleteProviderSyncRunInput): Promise<ServiceResult<ProviderSyncRun>>;
   fail(input: FailProviderSyncRunInput): Promise<ServiceResult<ProviderSyncRun>>;
   claim(input: { syncRunId: EntityId; claim: ProviderSyncRunClaim }): Promise<ServiceResult<ProviderSyncRun>>;
-  release(input: ServiceAuditContext & { syncRunId: EntityId }): Promise<ServiceResult<ProviderSyncRun>>;
+  release(input: ServiceAuditContext & {
+    syncRunId: EntityId;
+    claimedBy: string;
+    claimToken: string;
+  }): Promise<ServiceResult<ProviderSyncRun>>;
 }
 
 export interface ProviderReplayService {
@@ -593,8 +601,15 @@ class ProviderRuntimeService
       errorSummary: null,
       claim: {
         claimedBy: null,
+        claimToken: null,
+        claimVersion: 0,
         claimedAt: null,
+        leaseExpiresAt: null,
+        heartbeatAt: null,
         releasedAt: null,
+        reclaimedAt: null,
+        reclaimedBy: null,
+        reclaimCount: 0,
       },
       metadata: input.metadata ?? {},
       createdAt: timestamp,
@@ -624,18 +639,35 @@ class ProviderRuntimeService
       return existing;
     }
     const timestamp = input.now ?? nowIso();
-    const updated: ProviderSyncRun = {
-      ...existing.value,
-      completedAt: timestamp,
-      status: "completed",
-      messagesSeen: input.messagesSeen,
-      messagesIngested: input.messagesIngested,
-      duplicatesSkipped: input.duplicatesSkipped,
-      failures: input.failures,
-      checkpointAfter: input.checkpointAfter ?? existing.value.checkpointAfter,
-      updatedAt: timestamp,
-    };
-    await this.repositories.providerSyncRuns.save(updated);
+    const updated = await this.repositories.providerSyncRuns.mutateWithActiveClaim({
+      organizationId: input.organizationId,
+      syncRunId: input.syncRunId,
+      claimedBy: input.claimedBy,
+      claimToken: input.claimToken,
+      now: timestamp,
+      mutate: (run) => ({
+        ...run,
+        completedAt: timestamp,
+        status: "completed",
+        messagesSeen: input.messagesSeen,
+        messagesIngested: input.messagesIngested,
+        duplicatesSkipped: input.duplicatesSkipped,
+        failures: input.failures,
+        checkpointAfter: input.checkpointAfter ?? run.checkpointAfter,
+        updatedAt: timestamp,
+        claim: {
+          ...run.claim,
+          claimedBy: null,
+          claimToken: null,
+          leaseExpiresAt: null,
+          heartbeatAt: timestamp,
+          releasedAt: timestamp,
+        },
+      }),
+    });
+    if (!updated) {
+      return serviceFail(validationError("Provider sync run claim changed or expired before completion."));
+    }
     await this.recordEvent(input, timestamp, {
       type: "provider_sync_completed",
       entityType: "provider_sync_run",
@@ -661,16 +693,33 @@ class ProviderRuntimeService
       return existing;
     }
     const timestamp = input.now ?? nowIso();
-    const updated: ProviderSyncRun = {
-      ...existing.value,
-      completedAt: timestamp,
-      status: "failed",
-      failures: input.failures,
-      checkpointAfter: input.checkpointAfter ?? existing.value.checkpointAfter,
-      errorSummary: input.reason,
-      updatedAt: timestamp,
-    };
-    await this.repositories.providerSyncRuns.save(updated);
+    const updated = await this.repositories.providerSyncRuns.mutateWithActiveClaim({
+      organizationId: input.organizationId,
+      syncRunId: input.syncRunId,
+      claimedBy: input.claimedBy,
+      claimToken: input.claimToken,
+      now: timestamp,
+      mutate: (run) => ({
+        ...run,
+        completedAt: timestamp,
+        status: "failed",
+        failures: input.failures,
+        checkpointAfter: input.checkpointAfter ?? run.checkpointAfter,
+        errorSummary: input.reason,
+        updatedAt: timestamp,
+        claim: {
+          ...run.claim,
+          claimedBy: null,
+          claimToken: null,
+          leaseExpiresAt: null,
+          heartbeatAt: timestamp,
+          releasedAt: timestamp,
+        },
+      }),
+    });
+    if (!updated) {
+      return serviceFail(validationError("Provider sync run claim changed or expired before failure handling."));
+    }
     await this.recordEvent(input, timestamp, {
       type: "provider_sync_failed",
       entityType: "provider_sync_run",
@@ -693,35 +742,52 @@ class ProviderRuntimeService
     if (!existing) {
       return serviceFail(notFoundError("Provider sync run could not be found."));
     }
-    const updated: ProviderSyncRun = {
-      ...existing,
-      claim: {
-        claimedBy: input.claim.claimedBy,
-        claimedAt: input.claim.claimedAt,
-        releasedAt: null,
-      },
-      updatedAt: input.claim.claimedAt,
-    };
-    await this.repositories.providerSyncRuns.save(updated);
+    const updated = await this.repositories.providerSyncRuns.claimRun({
+      organizationId: existing.organizationId,
+      syncRunId: input.syncRunId,
+      claimedBy: input.claim.claimedBy,
+      claimedAt: input.claim.claimedAt,
+      leaseExpiresAt: input.claim.leaseExpiresAt,
+    });
+    if (!updated) {
+      return serviceFail(validationError("Provider sync run already has an active claim."));
+    }
     return serviceOk(updated);
   }
 
-  async release(input: ServiceAuditContext & { syncRunId: EntityId }): Promise<ServiceResult<ProviderSyncRun>> {
+  async release(input: ServiceAuditContext & {
+    syncRunId: EntityId;
+    claimedBy: string;
+    claimToken: string;
+  }): Promise<ServiceResult<ProviderSyncRun>> {
     const existing = await this.loadSyncRun(input.organizationId, input.syncRunId);
     if (!existing.ok) {
       return existing;
     }
     const timestamp = input.now ?? nowIso();
-    const updated: ProviderSyncRun = {
-      ...existing.value,
-      status: existing.value.status === "running" ? "released" : existing.value.status,
-      claim: {
-        ...existing.value.claim,
-        releasedAt: timestamp,
-      },
-      updatedAt: timestamp,
-    };
-    await this.repositories.providerSyncRuns.save(updated);
+    const updated = await this.repositories.providerSyncRuns.mutateWithActiveClaim({
+      organizationId: input.organizationId,
+      syncRunId: input.syncRunId,
+      claimedBy: input.claimedBy,
+      claimToken: input.claimToken,
+      now: timestamp,
+      mutate: (run) => ({
+        ...run,
+        status: run.status === "running" ? "released" : run.status,
+        claim: {
+          ...run.claim,
+          claimedBy: null,
+          claimToken: null,
+          leaseExpiresAt: null,
+          heartbeatAt: timestamp,
+          releasedAt: timestamp,
+        },
+        updatedAt: timestamp,
+      }),
+    });
+    if (!updated) {
+      return serviceFail(validationError("Provider sync run claim changed or expired before release."));
+    }
     return serviceOk(updated);
   }
 

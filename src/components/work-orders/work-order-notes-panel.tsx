@@ -3,6 +3,9 @@
 import type { FormEvent } from "react";
 import { useId, useState } from "react";
 import { formatDateTime } from "./formatting";
+import { WorkOrderEmptyState } from "./work-order-empty-state";
+import { WorkOrderSection } from "./work-order-section";
+import { WorkOrderSectionHeader } from "./work-order-section-header";
 
 interface WorkOrderNoteItem {
   id: string;
@@ -57,7 +60,9 @@ export function WorkOrderNotesPanel({
     const response = await fetch(`/api/work-orders/${workOrderId}/notes`, {
       cache: "no-store",
     });
-    const payload = (await response.json()) as WorkOrderNotesResponse | ApiErrorResponse;
+    const payload = (await response.json()) as
+      | WorkOrderNotesResponse
+      | ApiErrorResponse;
 
     if (!response.ok) {
       throw new Error(getApiErrorMessage(payload, "Unable to refresh notes."));
@@ -108,17 +113,23 @@ export function WorkOrderNotesPanel({
     }
   }
 
+  const recentNotes = [...notes].sort(
+    (left, right) =>
+      new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime(),
+  );
+
   return (
-    <section className="rounded-3xl border border-neutral-200 bg-white shadow-sm">
-      <div className="border-b border-neutral-200 px-6 py-5">
-        <h2 className="text-lg font-semibold text-neutral-950">Notes</h2>
-        <p className="mt-1 text-sm text-neutral-600">
-          Working notes captured against this work order.
-        </p>
-      </div>
+    <WorkOrderSection id="workflow-operational-notes">
+      <WorkOrderSectionHeader
+        description="Internal-only notes for dispatch context, handoff details, and operator follow-up. Communications is the canonical review workspace for the full note and message history."
+        title="Operational Notes"
+      />
 
       {canAddNote ? (
-        <form className="border-b border-neutral-200 px-6 py-5" onSubmit={handleSubmit}>
+        <form
+          className="mt-4 border-t border-neutral-200 pt-4"
+          onSubmit={handleSubmit}
+        >
           <label
             className="mb-2 block text-sm font-medium text-neutral-900"
             htmlFor={textareaId}
@@ -126,7 +137,7 @@ export function WorkOrderNotesPanel({
             Add internal note
           </label>
           <textarea
-            className="min-h-28 w-full rounded-2xl border border-neutral-300 px-4 py-3 text-sm text-neutral-900 shadow-sm outline-none transition focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200 disabled:cursor-not-allowed disabled:bg-neutral-50"
+            className="min-h-24 w-full rounded-xl border border-neutral-300 px-3 py-2.5 text-sm text-neutral-900 outline-none transition focus:border-neutral-500 focus:ring-2 focus:ring-neutral-200 disabled:cursor-not-allowed disabled:bg-neutral-50"
             disabled={isSubmitting}
             id={textareaId}
             name="body"
@@ -139,7 +150,7 @@ export function WorkOrderNotesPanel({
                 setSubmitError(null);
               }
             }}
-            placeholder="Add an internal note for this work order."
+            placeholder="Capture a blocker, scheduling update, or execution handoff note."
             value={draftBody}
           />
           {formError ? (
@@ -148,12 +159,13 @@ export function WorkOrderNotesPanel({
           {submitError ? (
             <p className="mt-2 text-sm text-rose-700">{submitError}</p>
           ) : null}
-          <div className="mt-4 flex items-center justify-between gap-3">
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs text-neutral-500">
-              Notes are internal-only for this phase.
+              Notes stay internal in this phase and do not appear in client or
+              contractor views.
             </p>
             <button
-              className="inline-flex items-center justify-center rounded-full bg-neutral-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-400"
+              className="inline-flex items-center justify-center rounded-lg bg-neutral-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-400"
               disabled={isSubmitting}
               type="submit"
             >
@@ -163,33 +175,41 @@ export function WorkOrderNotesPanel({
         </form>
       ) : null}
 
-      {notes.length === 0 ? (
-        <div className="p-6">
-          <p className="text-sm text-neutral-600">No notes have been added yet.</p>
+      {recentNotes.length === 0 ? (
+        <div className="mt-4 border-t border-neutral-200 pt-4">
+          <WorkOrderEmptyState
+            message="Capture blockers, scheduling updates, and internal handoff details here."
+            title="No operational notes have been added yet"
+          />
         </div>
       ) : (
-        <div className="divide-y divide-neutral-200">
-          {notes.map((note) => (
-            <article className="p-6" key={note.id}>
+        <div className="mt-4 divide-y divide-neutral-200 border-t border-neutral-200">
+          {recentNotes.map((note) => (
+            <article className="py-3" key={note.id}>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-sm font-medium text-neutral-900">
                   Added by {note.authorDisplayName}
                 </p>
-                <p className="text-xs text-neutral-500">{formatDateTime(note.createdAt)}</p>
+                <p className="text-xs text-neutral-500">
+                  {formatDateTime(note.updatedAt)}
+                </p>
               </div>
-              <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-neutral-700">
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-neutral-700">
                 {note.body}
               </p>
             </article>
           ))}
         </div>
       )}
-    </section>
+    </WorkOrderSection>
   );
 }
 
 function getApiErrorMessage(
-  payload: WorkOrderNotesResponse | WorkOrderNoteCreateResponse | ApiErrorResponse,
+  payload:
+    | WorkOrderNotesResponse
+    | WorkOrderNoteCreateResponse
+    | ApiErrorResponse,
   fallback: string,
 ): string {
   if ("error" in payload && payload.error?.message) {

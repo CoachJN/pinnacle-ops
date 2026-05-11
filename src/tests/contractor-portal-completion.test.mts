@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { createAssignmentService } from "../server/services/assignment-service.ts";
 import type { DomainEventService } from "../server/services/domain-event-service.ts";
+import type { WorkOrderService } from "../server/services/work-order-service.ts";
 import {
   getContractorPortalActionAvailability,
   toContractorPortalWorkOrderDetail,
@@ -20,6 +21,24 @@ import type {
 } from "../server/repositories/index.ts";
 import { USER_ROLES } from "../types/permissions.ts";
 import type { EntityId } from "../types/entity.ts";
+import type { WorkOrderMutationContext } from "../server/services/work-order-mutation-context.ts";
+
+function contractorMutationContext(): WorkOrderMutationContext {
+  return {
+    organizationId: "org-1",
+    actor: {
+      actorType: "contractor",
+      userId: "contractor-user-1",
+      role: USER_ROLES.ContractorUser,
+      scope: {
+        kind: "contractor",
+        organizationId: "org-1",
+        contractorOrganizationId: "contractor-1",
+      },
+    },
+    source: "work_order_api",
+  };
+}
 
 test("contractor portal projection stays contractor-safe", () => {
   const detail = toContractorPortalWorkOrderDetail({
@@ -76,11 +95,7 @@ test("assignment service blocks contractor completion outside their organization
   });
 
   const result = await harness.service.updateStatus({
-    organizationId: "org-1",
-    actor: {
-      userId: "contractor-user-1",
-      role: USER_ROLES.ContractorUser,
-    },
+    ...contractorMutationContext(),
     workOrderId: harness.workOrder.id,
     assignmentId: harness.assignment.id,
     status: "completed",
@@ -93,11 +108,7 @@ test("assignment service allows contractor completion for matching organization 
   const harness = createAssignmentHarness();
 
   const result = await harness.service.updateStatus({
-    organizationId: "org-1",
-    actor: {
-      userId: "contractor-user-1",
-      role: USER_ROLES.ContractorUser,
-    },
+    ...contractorMutationContext(),
     workOrderId: harness.workOrder.id,
     assignmentId: harness.assignment.id,
     status: "completed",
@@ -201,6 +212,12 @@ function createAssignmentHarness(input: {
     },
   };
 
+  const workOrderMutations: Pick<WorkOrderService, "applyContractorAssignment"> = {
+    async applyContractorAssignment() {
+      return { ok: true, value: workOrderStore.get(workOrder.id) ?? workOrder };
+    },
+  };
+
   return {
     workOrder,
     assignment,
@@ -213,7 +230,7 @@ function createAssignmentHarness(input: {
         contractorOrganizations: contractorOrganizations as ContractorOrganizationRepository,
         userProfiles: userProfiles as UserProfileRepository,
       },
-      { domainEvents },
+      { domainEvents, workOrders: workOrderMutations },
     ),
   };
 }

@@ -1107,7 +1107,13 @@ export interface ProviderSyncRunDocument extends FirestoreAuditFields {
   checkpointBefore: ProviderSyncRun["checkpointBefore"];
   checkpointAfter: ProviderSyncRun["checkpointAfter"];
   errorSummary: string | null;
-  claim: ProviderSyncRun["claim"];
+  claim: Omit<ProviderSyncRun["claim"], "claimedAt" | "leaseExpiresAt" | "heartbeatAt" | "releasedAt" | "reclaimedAt"> & {
+    claimedAt: Timestamp | null;
+    leaseExpiresAt: Timestamp | null;
+    heartbeatAt: Timestamp | null;
+    releasedAt: Timestamp | null;
+    reclaimedAt: Timestamp | null;
+  };
   metadata: Record<string, unknown>;
 }
 
@@ -1163,6 +1169,12 @@ export interface WorkerJobDocument extends FirestoreAuditFields {
   runAfter: Timestamp;
   leasedBy: string | null;
   leaseExpiresAt: Timestamp | null;
+  lease: Omit<WorkerJob["lease"], "claimedAt" | "leaseExpiresAt" | "heartbeatAt" | "reclaimedAt"> & {
+    claimedAt: Timestamp | null;
+    leaseExpiresAt: Timestamp | null;
+    heartbeatAt: Timestamp | null;
+    reclaimedAt: Timestamp | null;
+  };
   lastError: WorkerJob["lastError"];
   completedAt: Timestamp | null;
 }

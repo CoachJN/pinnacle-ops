@@ -63,21 +63,6 @@ export function toClientPortalWorkOrderDetail(
     locationCode: null,
     locationAddress: workOrder.locationSnapshot.addressText,
     category: workOrder.category,
-    coordinatorUserId:
-      "coordinatorUserId" in workOrder &&
-      typeof workOrder.coordinatorUserId === "string"
-        ? workOrder.coordinatorUserId
-        : null,
-    managerUserId:
-      "managerUserId" in workOrder &&
-      typeof workOrder.managerUserId === "string"
-        ? workOrder.managerUserId
-        : null,
-    assignedContractorId:
-      "assignedContractorId" in workOrder &&
-      typeof workOrder.assignedContractorId === "string"
-        ? workOrder.assignedContractorId
-        : null,
     requestedServiceDate: workOrder.requestedServiceDate,
     dueDate: detail.dueDate,
     createdAt: workOrder.createdAt,

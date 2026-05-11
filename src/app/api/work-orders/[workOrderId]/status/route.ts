@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
 import {
+  authorizeWorkOrderTransition,
+  createNotFoundAppError,
   getWorkOrderApiContext,
   parseJsonObject,
   revalidateWorkOrderPaths,
@@ -20,6 +22,11 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       const context = await getWorkOrderApiContext(requestContext);
       const { workOrderId } = await params;
       const payload = updateWorkOrderStatusSchema.parse(await parseJsonObject(request));
+      const existing = await context.repositories.workOrders.getById(workOrderId);
+      if (!existing) {
+        throw createNotFoundAppError("Work order could not be found.");
+      }
+      authorizeWorkOrderTransition(context, existing, payload.status);
       const result = await context.services.workOrders.transition({
         ...context.audit,
         workOrderId,

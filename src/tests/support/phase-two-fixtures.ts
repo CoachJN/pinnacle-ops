@@ -42,6 +42,10 @@ import type {
 } from "../../server/services/domain-event-service.ts";
 import type { ServiceAuditContext } from "../../server/services/types.ts";
 import { serviceOk } from "../../server/services/types.ts";
+import type {
+  WorkOrderMutationContext,
+  WorkOrderMutationSource,
+} from "../../server/services/work-order-mutation-context.ts";
 import type { EntityId } from "../../types/entity.ts";
 import type { ClientOrganization as DomainClientOrganization } from "../../types/client-organization.ts";
 import type { PreferredLanguage } from "../../types/contact.ts";
@@ -191,6 +195,19 @@ export function makeAuditContext(
       userId: actor.userId,
       role: actor.role,
     },
+    now: DEFAULT_NOW,
+    ...overrides,
+  };
+}
+
+export function makeWorkOrderMutationContext(
+  actor: AccessActor = makeOwnerActor(),
+  overrides: Partial<WorkOrderMutationContext> = {},
+): WorkOrderMutationContext {
+  return {
+    organizationId: actor.scope.organizationId,
+    actor,
+    source: "work_order_api" as WorkOrderMutationSource,
     now: DEFAULT_NOW,
     ...overrides,
   };

@@ -19,7 +19,7 @@ export function ContractorShell({
               Contractor Workspace
             </p>
             <Link href="/contractor/dashboard" className="mt-2 inline-block text-2xl font-semibold tracking-tight text-slate-950">
-              Pinnacle Ops
+              PinnOps
             </Link>
             <p className="mt-2 max-w-2xl text-sm text-slate-600">
               Assigned work, quote submission, and completion updates without the

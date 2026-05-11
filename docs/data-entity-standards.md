@@ -1,6 +1,6 @@
 # Data Entity Standards
 
-This document is the single source of truth for persistent entity structure across Pinnacle Ops.
+This document is the single source of truth for persistent entity structure across PinnOps.
 
 ## 1. Global Entity Standards
 

@@ -37,6 +37,66 @@ import type {
 import type { DomainEventService } from "../server/services/domain-event-service.ts";
 import type { ClientLocationService } from "../server/services/client-location-service.ts";
 import { USER_ROLES } from "../types/permissions.ts";
+import type {
+  WorkOrderMutationContext,
+  WorkOrderMutationSource,
+} from "../server/services/work-order-mutation-context.ts";
+
+function makeInternalContext(
+  role: typeof USER_ROLES.Manager | typeof USER_ROLES.Coordinator | typeof USER_ROLES.FinanceAdmin,
+  userId: string,
+  source: WorkOrderMutationSource = "work_order_api",
+): WorkOrderMutationContext {
+  return {
+    organizationId: "org-1",
+    actor: {
+      actorType: "internal",
+      userId,
+      role,
+      scope: { kind: "internal", organizationId: "org-1" },
+    },
+    source,
+  };
+}
+
+function makeClientContext(
+  source: WorkOrderMutationSource = "work_order_api",
+): WorkOrderMutationContext {
+  return {
+    organizationId: "org-1",
+    actor: {
+      actorType: "client",
+      userId: "client-1",
+      role: USER_ROLES.ClientUser,
+      scope: {
+        kind: "client",
+        organizationId: "org-1",
+        clientOrganizationId: "client-org-1",
+        locationAccess: { kind: "all_client_locations" },
+      },
+    },
+    source,
+  };
+}
+
+function makeContractorContext(
+  source: WorkOrderMutationSource = "work_order_api",
+): WorkOrderMutationContext {
+  return {
+    organizationId: "org-1",
+    actor: {
+      actorType: "contractor",
+      userId: "contractor-user-1",
+      role: USER_ROLES.ContractorUser,
+      scope: {
+        kind: "contractor",
+        organizationId: "org-1",
+        contractorOrganizationId: "contractor-1",
+      },
+    },
+    source,
+  };
+}
 
 test("work order lifecycle transition writes transition and specific lifecycle events", async () => {
   const harness = createWorkflowHarness();
@@ -56,8 +116,7 @@ test("work order lifecycle transition writes transition and specific lifecycle e
   });
 
   const result = await service.transition({
-    organizationId: "org-1",
-    actor: { userId: "user-1", role: USER_ROLES.Manager },
+    ...makeInternalContext(USER_ROLES.Manager, "user-1"),
     workOrderId: "wo-1",
     toStatus: "on_hold",
   });
@@ -70,27 +129,44 @@ test("work order lifecycle transition writes transition and specific lifecycle e
 
 test("assignment, quote, and invoice workflows emit canonical events", async () => {
   const harness = createWorkflowHarness();
+  const workOrderService = createWorkOrderService(harness.repositories, {
+    domainEvents: harness.domainEventsService,
+    clientLocations: {
+      async getClientLocationContext() {
+        return {
+          ok: true,
+          value: {
+            client: await harness.repositories.clientOrganizations.getById("client-org-1"),
+            location: await harness.repositories.locations.getById("loc-1"),
+          },
+        };
+      },
+    } as unknown as ClientLocationService,
+  });
   const assignmentService = createAssignmentService(harness.repositories, {
     domainEvents: harness.domainEventsService,
+    workOrders: workOrderService,
   });
   const quoteService = createQuoteWorkflowService(harness.repositories, {
     domainEvents: harness.domainEventsService,
+    workOrders: workOrderService,
   });
   const invoiceService = createInvoiceService(harness.repositories, {
     domainEvents: harness.domainEventsService,
+    workOrders: workOrderService,
   });
 
   const assignment = await assignmentService.assignContractor({
-    organizationId: "org-1",
-    actor: { userId: "user-1", role: USER_ROLES.Coordinator },
+    ...makeInternalContext(USER_ROLES.Coordinator, "user-1"),
     workOrderId: "wo-1",
     contractorOrganizationId: "contractor-1",
   });
   assert.equal(assignment.ok, true);
+  assert.equal(harness.workOrderStore.get("wo-1")?.assignedContractorOrgId, "contractor-1");
+  assert.equal(harness.workOrderStore.get("wo-1")?.contractorSnapshot?.name, "Vendor 1");
 
   const accepted = await assignmentService.updateStatus({
-    organizationId: "org-1",
-    actor: { userId: "contractor-user-1", role: USER_ROLES.ContractorUser },
+    ...makeContractorContext(),
     workOrderId: "wo-1",
     assignmentId: assignment.value.id,
     status: "accepted",
@@ -98,8 +174,7 @@ test("assignment, quote, and invoice workflows emit canonical events", async () 
   assert.equal(accepted.ok, true);
 
   const submitted = await quoteService.submitContractorQuote({
-    organizationId: "org-1",
-    actor: { userId: "contractor-user-1", role: USER_ROLES.ContractorUser },
+    ...makeContractorContext(),
     workOrderId: "wo-1",
     contractorOrganizationId: "contractor-1",
     contractorUserId: "contractor-user-1",
@@ -109,23 +184,40 @@ test("assignment, quote, and invoice workflows emit canonical events", async () 
     totalAmount: 113,
   });
   assert.equal(submitted.ok, true);
+  assert.equal(
+    harness.workOrderStore.get("wo-1")?.lifecycleStatus,
+    "contractor_quote_received",
+  );
+
+  const reviewed = await quoteService.reviewContractorQuote({
+    ...makeInternalContext(USER_ROLES.Manager, "manager-1"),
+    workOrderId: "wo-1",
+    contractorQuoteId: submitted.value.id,
+    action: "accept_contractor_quote",
+  });
+  assert.equal(reviewed.ok, true);
+  assert.equal(harness.workOrderStore.get("wo-1")?.lifecycleStatus, "quote_under_review");
 
   harness.clientQuoteStore.set("client-quote-1", makeClientQuote());
   const sent = await quoteService.sendClientQuote({
-    organizationId: "org-1",
-    actor: { userId: "manager-1", role: USER_ROLES.Manager },
+    ...makeInternalContext(USER_ROLES.Manager, "manager-1"),
     workOrderId: "wo-1",
     clientQuoteId: "client-quote-1",
   });
   assert.equal(sent.ok, true);
+  assert.equal(
+    harness.workOrderStore.get("wo-1")?.lifecycleStatus,
+    "client_approval_requested",
+  );
 
   const approved = await quoteService.approveClientQuote({
-    organizationId: "org-1",
-    actor: { userId: "client-1", role: USER_ROLES.ClientUser },
+    ...makeClientContext(),
     workOrderId: "wo-1",
     clientQuoteId: "client-quote-1",
   });
   assert.equal(approved.ok, true);
+  assert.equal(harness.workOrderStore.get("wo-1")?.currentQuoteId, "client-quote-1");
+  assert.equal(harness.workOrderStore.get("wo-1")?.lifecycleStatus, "client_approved");
 
   harness.invoiceStore.set("invoice-1", makeInvoice());
   harness.workOrderStore.set("wo-1", {
@@ -134,21 +226,23 @@ test("assignment, quote, and invoice workflows emit canonical events", async () 
     lifecycleStatus: "ready_for_invoicing",
   });
   const invoiceSent = await invoiceService.sendInvoice({
-    organizationId: "org-1",
-    actor: { userId: "finance-1", role: USER_ROLES.FinanceAdmin },
+    ...makeInternalContext(USER_ROLES.FinanceAdmin, "finance-1"),
     workOrderId: "wo-1",
     invoiceId: "invoice-1",
   });
   assert.equal(invoiceSent.ok, true, invoiceSent.ok ? "" : invoiceSent.error.message);
+  assert.equal(harness.workOrderStore.get("wo-1")?.lifecycleStatus, "invoiced");
+  assert.equal(harness.workOrderStore.get("wo-1")?.invoiceSentAt, invoiceSent.value.sentAt);
 
   const payment = await invoiceService.markInvoicePaid({
-    organizationId: "org-1",
-    actor: { userId: "finance-1", role: USER_ROLES.FinanceAdmin },
+    ...makeInternalContext(USER_ROLES.FinanceAdmin, "finance-1"),
     workOrderId: "wo-1",
     invoiceId: "invoice-1",
     paymentReference: "pm-123",
   });
   assert.equal(payment.ok, true);
+  assert.equal(harness.workOrderStore.get("wo-1")?.lifecycleStatus, "paid");
+  assert.equal(harness.workOrderStore.get("wo-1")?.paidAt, payment.value.paidAt);
 
   assert.deepEqual(
     harness.domainEvents.map((event) => event.type),
@@ -159,6 +253,7 @@ test("assignment, quote, and invoice workflows emit canonical events", async () 
       "lifecycle_transitioned",
       "contractor_quote_received",
       "lifecycle_transitioned",
+      "lifecycle_transitioned",
       "client_approval_requested",
       "lifecycle_transitioned",
       "client_approved",
@@ -168,6 +263,59 @@ test("assignment, quote, and invoice workflows emit canonical events", async () 
       "payment_recorded",
     ],
   );
+});
+
+test("quote pointer and invoice void behavior remain canonical through WorkOrderService", async () => {
+  const harness = createWorkflowHarness();
+  const workOrderService = createWorkOrderService(harness.repositories, {
+    domainEvents: harness.domainEventsService,
+    clientLocations: {
+      async getClientLocationContext() {
+        return {
+          ok: true,
+          value: {
+            client: await harness.repositories.clientOrganizations.getById("client-org-1"),
+            location: await harness.repositories.locations.getById("loc-1"),
+          },
+        };
+      },
+    } as unknown as ClientLocationService,
+  });
+  const quoteService = createQuoteWorkflowService(harness.repositories, {
+    domainEvents: harness.domainEventsService,
+    workOrders: workOrderService,
+  });
+  const invoiceService = createInvoiceService(harness.repositories, {
+    domainEvents: harness.domainEventsService,
+    workOrders: workOrderService,
+  });
+
+  const createdQuote = await quoteService.createManualClientQuote({
+    ...makeInternalContext(USER_ROLES.Manager, "manager-1"),
+    workOrderId: "wo-1",
+    lineItems: [{ description: "Repair", quantity: 1, unitPrice: 100, lineTotal: 100 }],
+    subtotal: 100,
+    taxAmount: 13,
+    totalAmount: 113,
+  });
+  assert.equal(createdQuote.ok, true);
+  assert.equal(harness.workOrderStore.get("wo-1")?.currentQuoteId, createdQuote.value.id);
+
+  harness.invoiceStore.set("invoice-1", makeInvoice({ status: "sent", sentAt: now() }));
+  harness.workOrderStore.set("wo-1", {
+    ...harness.workOrderStore.get("wo-1")!,
+    currentInvoiceId: "invoice-1",
+    lifecycleStatus: "invoiced",
+  });
+
+  const voided = await invoiceService.voidInvoice({
+    ...makeInternalContext(USER_ROLES.FinanceAdmin, "finance-1"),
+    workOrderId: "wo-1",
+    invoiceId: "invoice-1",
+  });
+  assert.equal(voided.ok, true);
+  assert.equal(harness.workOrderStore.get("wo-1")?.currentInvoiceId, null);
+  assert.equal(harness.workOrderStore.get("wo-1")?.lifecycleStatus, "ready_for_invoicing");
 });
 
 function createWorkflowHarness() {
@@ -566,7 +714,7 @@ function makeClientQuote(): ClientQuote {
   };
 }
 
-function makeInvoice(): ClientInvoice {
+function makeInvoice(overrides: Partial<ClientInvoice> = {}): ClientInvoice {
   return {
     id: "invoice-1",
     organizationId: "org-1",
@@ -601,6 +749,7 @@ function makeInvoice(): ClientInvoice {
     workOrderSnapshot: { id: "wo-1", name: "WO-1" },
     clientSnapshot: { id: "client-org-1", name: "Client" },
     locationSnapshot: { id: "loc-1", name: "Store 1" },
+    ...overrides,
   };
 }
 

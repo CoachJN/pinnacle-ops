@@ -92,10 +92,25 @@ test("provider runtime manages connection lifecycle, checkpoints, sync runs, and
   });
   assert.equal(run.ok, true);
 
+  const claimed = await harness.providers.syncRuns.claim({
+    syncRunId: run.value.id,
+    claim: {
+      runId: run.value.id,
+      claimedBy: "provider-worker-1",
+      claimToken: "ignored-by-repository",
+      claimedAt: "2026-05-06T12:00:01.000Z",
+      leaseExpiresAt: "2026-05-06T12:05:00.000Z",
+    },
+  });
+  assert.equal(claimed.ok, true);
+
   const completed = await harness.providers.syncRuns.complete({
     organizationId: "org-1",
     actor: { userId: "manager-1", role: "manager" },
     syncRunId: run.value.id,
+    claimedBy: "provider-worker-1",
+    claimToken: claimed.ok ? claimed.value.claim.claimToken ?? "" : "",
+    now: "2026-05-06T12:00:02.000Z",
     checkpointId: checkpoint.value.id,
     messagesSeen: 4,
     messagesIngested: 2,
@@ -194,6 +209,81 @@ test("provider runtime hydrates attachments, reconciles mappings, and serves dia
   });
   assert.equal(attachments.ok, true);
   assert.equal(attachments.value[0]?.hydrationStatus, "hydrated");
+});
+
+test("provider sync claims reject stale owners after reclaim", async () => {
+  const harness = createHarness();
+  const connection = seedConnection(harness.connections);
+  const run = await harness.providers.syncRuns.start({
+    organizationId: "org-1",
+    actor: { userId: "manager-1", role: "manager" },
+    connectionId: connection.id,
+    mailboxScope: mailboxScope(),
+    now: "2026-05-06T18:00:00.000Z",
+  });
+  assert.equal(run.ok, true);
+
+  const firstClaim = await harness.providers.syncRuns.claim({
+    syncRunId: run.value.id,
+    claim: {
+      runId: run.value.id,
+      claimedBy: "provider-worker-a",
+      claimToken: "ignored",
+      claimedAt: "2026-05-06T18:00:01.000Z",
+      leaseExpiresAt: "2026-05-06T18:00:30.000Z",
+    },
+  });
+  assert.equal(firstClaim.ok, true);
+
+  const overlappingClaim = await harness.providers.syncRuns.claim({
+    syncRunId: run.value.id,
+    claim: {
+      runId: run.value.id,
+      claimedBy: "provider-worker-b",
+      claimToken: "ignored",
+      claimedAt: "2026-05-06T18:00:10.000Z",
+      leaseExpiresAt: "2026-05-06T18:01:00.000Z",
+    },
+  });
+  assert.equal(overlappingClaim.ok, false);
+
+  const reclaimed = await harness.providers.syncRuns.claim({
+    syncRunId: run.value.id,
+    claim: {
+      runId: run.value.id,
+      claimedBy: "provider-worker-b",
+      claimToken: "ignored",
+      claimedAt: "2026-05-06T18:00:31.000Z",
+      leaseExpiresAt: "2026-05-06T18:01:30.000Z",
+    },
+  });
+  assert.equal(reclaimed.ok, true);
+  assert.equal(reclaimed.value.claim.reclaimCount, 1);
+
+  const staleRelease = await harness.providers.syncRuns.release({
+    organizationId: "org-1",
+    actor: { userId: "manager-1", role: "manager" },
+    syncRunId: run.value.id,
+    claimedBy: "provider-worker-a",
+    claimToken: firstClaim.ok ? firstClaim.value.claim.claimToken ?? "" : "",
+    now: "2026-05-06T18:00:32.000Z",
+  });
+  assert.equal(staleRelease.ok, false);
+
+  const completed = await harness.providers.syncRuns.complete({
+    organizationId: "org-1",
+    actor: { userId: "manager-1", role: "manager" },
+    syncRunId: run.value.id,
+    claimedBy: "provider-worker-b",
+    claimToken: reclaimed.ok ? reclaimed.value.claim.claimToken ?? "" : "",
+    checkpointId: null,
+    messagesSeen: 2,
+    messagesIngested: 1,
+    duplicatesSkipped: 0,
+    failures: 0,
+    now: "2026-05-06T18:00:40.000Z",
+  });
+  assert.equal(completed.ok, true);
 });
 
 function createHarness() {
@@ -326,6 +416,12 @@ function createProviderConnectionRepository(store: ProviderConnection[]): Provid
       const items = store.filter((item) => item.organizationId === organizationId);
       return { items, count: items.length };
     },
+    async findByWebhookSubscription(input) {
+      return store.find((item) =>
+        item.providerKey === input.providerKey &&
+        item.metadata.webhookSubscriptionId === input.subscriptionId
+      ) ?? null;
+    },
     async findByMailboxAddress(input) {
       return store.find((item) =>
         item.organizationId === input.organizationId &&
@@ -387,6 +483,84 @@ function createProviderSyncRunRepository(store: ProviderSyncRun[]): ProviderSync
     async listByOrganizationId(organizationId) {
       const items = store.filter((item) => item.organizationId === organizationId);
       return { items, count: items.length };
+    },
+    async claimRun(input) {
+      const current = store.find((item) => item.id === input.syncRunId && item.organizationId === input.organizationId) ?? null;
+      if (!current) {
+        return null;
+      }
+      const normalized = ensureProviderClaimState(current);
+      if (
+        normalized.claim.claimedBy &&
+        normalized.claim.leaseExpiresAt &&
+        normalized.claim.leaseExpiresAt > input.claimedAt &&
+        normalized.claim.releasedAt === null
+      ) {
+        return null;
+      }
+      const nextVersion = (normalized.claim.claimVersion ?? 0) + 1;
+      const updated: ProviderSyncRun = {
+        ...normalized,
+        claim: {
+          claimedBy: input.claimedBy,
+          claimToken: `${normalized.id}:claim:${nextVersion}`,
+          claimVersion: nextVersion,
+          claimedAt: input.claimedAt,
+          leaseExpiresAt: input.leaseExpiresAt,
+          heartbeatAt: input.claimedAt,
+          releasedAt: null,
+          reclaimedAt:
+            normalized.claim.claimedBy && normalized.claim.leaseExpiresAt && normalized.claim.leaseExpiresAt <= input.claimedAt
+              ? input.claimedAt
+              : normalized.claim.reclaimedAt,
+          reclaimedBy:
+            normalized.claim.claimedBy && normalized.claim.leaseExpiresAt && normalized.claim.leaseExpiresAt <= input.claimedAt
+              ? input.claimedBy
+              : normalized.claim.reclaimedBy,
+          reclaimCount:
+            (normalized.claim.reclaimCount ?? 0) +
+            (normalized.claim.claimedBy && normalized.claim.leaseExpiresAt && normalized.claim.leaseExpiresAt <= input.claimedAt ? 1 : 0),
+        },
+        updatedAt: input.claimedAt,
+      };
+      upsertById(store, updated);
+      return updated;
+    },
+    async mutateWithActiveClaim(input) {
+      const current = store.find((item) => item.id === input.syncRunId && item.organizationId === input.organizationId) ?? null;
+      if (!current) {
+        return null;
+      }
+      const normalized = ensureProviderClaimState(current);
+      if (
+        normalized.claim.claimedBy !== input.claimedBy ||
+        normalized.claim.claimToken !== input.claimToken ||
+        normalized.claim.leaseExpiresAt === null ||
+        normalized.claim.leaseExpiresAt <= input.now
+      ) {
+        return null;
+      }
+      const updated = ensureProviderClaimState(input.mutate(normalized));
+      upsertById(store, updated);
+      return updated;
+    },
+  };
+}
+
+function ensureProviderClaimState(run: ProviderSyncRun): ProviderSyncRun {
+  return {
+    ...run,
+    claim: run.claim ?? {
+      claimedBy: null,
+      claimToken: null,
+      claimVersion: 0,
+      claimedAt: null,
+      leaseExpiresAt: null,
+      heartbeatAt: null,
+      releasedAt: null,
+      reclaimedAt: null,
+      reclaimedBy: null,
+      reclaimCount: 0,
     },
   };
 }

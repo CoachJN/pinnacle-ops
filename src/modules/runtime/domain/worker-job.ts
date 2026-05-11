@@ -21,6 +21,18 @@ export interface WorkerJobErrorState {
   details: Record<string, unknown>;
 }
 
+export interface WorkerJobLeaseState {
+  workerId: string | null;
+  claimToken: string | null;
+  leaseVersion: number;
+  claimedAt: IsoDateTimeString | null;
+  leaseExpiresAt: IsoDateTimeString | null;
+  heartbeatAt: IsoDateTimeString | null;
+  reclaimedAt: IsoDateTimeString | null;
+  reclaimedBy: string | null;
+  reclaimCount: number;
+}
+
 export interface WorkerJob<TPayload extends Record<string, unknown> = Record<string, unknown>> {
   id: EntityId;
   organizationId: EntityId;
@@ -38,6 +50,7 @@ export interface WorkerJob<TPayload extends Record<string, unknown> = Record<str
   runAfter: IsoDateTimeString;
   leasedBy: string | null;
   leaseExpiresAt: IsoDateTimeString | null;
+  lease: WorkerJobLeaseState;
   createdAt: IsoDateTimeString;
   updatedAt: IsoDateTimeString;
   lastError: WorkerJobErrorState | null;

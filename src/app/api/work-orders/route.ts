@@ -27,7 +27,9 @@ export async function POST(request: NextRequest) {
     "/api/work-orders",
     async (requestContext) => {
       const context = await getWorkOrderApiContext(requestContext);
-      const payload = parseCreateWorkOrderPayload(await parseJsonObject(request));
+      const payload = parseCreateWorkOrderPayload(await parseJsonObject(request), {
+        createdByUserId: context.actor.userId,
+      });
       return createRuntimeWorkOrder(context, payload);
     },
   );

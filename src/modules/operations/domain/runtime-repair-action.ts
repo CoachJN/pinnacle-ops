@@ -14,6 +14,7 @@ export type RuntimeRepairActionType =
 
 export const RUNTIME_REPAIR_ACTION_STATUSES = {
   Requested: "requested",
+  PendingConfirmation: "pending_confirmation",
   Completed: "completed",
   Noop: "noop",
   Failed: "failed",

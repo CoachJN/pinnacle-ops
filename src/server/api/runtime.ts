@@ -5,8 +5,16 @@ import { createDeliveryPlanHandler } from "@/modules/delivery";
 import { createTransportExecuteHandler } from "@/modules/transport";
 import { createProviderReceiptHandler } from "@/modules/provider-runtime";
 import {
+  createProjectionRefreshHandler,
+  createProviderReconciliationSweepHandler,
+  createRuntimeHealthRefreshHandler,
+  createSlaScanHandler,
+} from "@/modules/scheduler";
+import {
   createRuntimeOperatorService,
 } from "@/modules/runtime/server/runtime-operator-service";
+import { createWorkerRunnerService } from "@/modules/runtime/server/worker-runner-service";
+import { createRuntimeCapacityServices } from "@/modules/runtime-capacity";
 import { createSlaTimerEvaluateHandler } from "@/modules/sla";
 import {
   createWorkerHandlerRegistry,
@@ -33,9 +41,18 @@ export async function getRuntimeApiContext(
 export function createRuntimeOperatorContext(
   context: WorkOrderApiContext,
   handlerRegistry: WorkerHandlerRegistry<DomainServices> = createProductionWorkerHandlerRegistry(
-    context.services,
+    context,
   ),
 ) {
+  const runtimeCapacity = createRuntimeCapacityServices({
+    repositories: {
+      runtimeJobs: context.repositories.runtimeJobs,
+      runtimeDeadLetters: context.repositories.runtimeDeadLetters,
+      deliveryAttempts: context.repositories.deliveryAttempts,
+      escalationOrchestrations: context.repositories.escalationOrchestrations,
+    },
+    providerRuntimeStorage: context.services.providerRuntime.storage,
+  });
   return {
     ...context,
     operator: createRuntimeOperatorService({
@@ -46,18 +63,70 @@ export function createRuntimeOperatorContext(
       },
       services: context.services,
       handlerRegistry,
+      runner: createWorkerRunnerService(
+        context.services.runtime,
+        handlerRegistry,
+        runtimeCapacity.guardrails,
+      ),
     }),
   };
 }
 
 export function createProductionWorkerHandlerRegistry(
-  services: DomainServices,
+  context: Pick<WorkOrderApiContext, "repositories" | "services">,
 ): WorkerHandlerRegistry<DomainServices> {
   return createWorkerHandlerRegistry<DomainServices>([
-    createSlaTimerEvaluateHandler(services.sla.evaluator),
+    createSlaTimerEvaluateHandler(context.services.sla.evaluator),
     createDeliveryPlanHandler(),
     createEscalationProgressHandler(),
     createTransportExecuteHandler(),
     createProviderReceiptHandler(),
+    createProjectionRefreshHandler(
+      {
+        domainEvents: context.repositories.domainEvents,
+        runtimeJobs: context.repositories.runtimeJobs,
+        runtimeDeadLetters: context.repositories.runtimeDeadLetters,
+        runtimeEventProcessings: context.repositories.runtimeEventProcessings,
+        deliveryPlans: context.repositories.deliveryPlans,
+        deliveryAttempts: context.repositories.deliveryAttempts,
+        escalationOrchestrations: context.repositories.escalationOrchestrations,
+        slaTimers: context.repositories.slaTimers,
+      },
+      {
+        runtime: context.services.runtime,
+        providerRuntime: context.services.providerRuntime,
+        delivery: context.services.delivery,
+      },
+    ),
+    createRuntimeHealthRefreshHandler(
+      {
+        domainEvents: context.repositories.domainEvents,
+        runtimeJobs: context.repositories.runtimeJobs,
+        runtimeDeadLetters: context.repositories.runtimeDeadLetters,
+        runtimeEventProcessings: context.repositories.runtimeEventProcessings,
+        deliveryPlans: context.repositories.deliveryPlans,
+        deliveryAttempts: context.repositories.deliveryAttempts,
+        escalationOrchestrations: context.repositories.escalationOrchestrations,
+        slaTimers: context.repositories.slaTimers,
+      },
+      {
+        runtime: context.services.runtime,
+        providerRuntime: context.services.providerRuntime,
+        delivery: context.services.delivery,
+      },
+    ),
+    createSlaScanHandler(
+      {
+        runtimeJobs: context.repositories.runtimeJobs,
+        runtimeDeadLetters: context.repositories.runtimeDeadLetters,
+        slaTimers: context.repositories.slaTimers,
+        slaScanCursors: context.repositories.slaScanCursors,
+      },
+      {
+        runtime: context.services.runtime,
+        sla: context.services.sla,
+      },
+    ),
+    createProviderReconciliationSweepHandler(),
   ]);
 }

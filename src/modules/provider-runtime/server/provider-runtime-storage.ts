@@ -36,7 +36,7 @@ function createFirestoreProviderReceiptRepository(
       return snapshot.exists ? ({ id: snapshot.id, ...(snapshot.data() as Omit<ProviderReceipt, "id">) }) : null;
     },
     async create(receipt) {
-      await collection.doc(receipt.id).set(receipt);
+      await collection.doc(receipt.id).create(receipt);
     },
     async save(receipt) {
       await collection.doc(receipt.id).set(receipt);
@@ -95,7 +95,7 @@ function createFirestoreProviderWebhookEventRepository(
       return snapshot.exists ? ({ id: snapshot.id, ...(snapshot.data() as Omit<ProviderWebhookEvent, "id">) }) : null;
     },
     async create(event) {
-      await collection.doc(event.id).set(event);
+      await collection.doc(event.id).create(event);
     },
     async save(event) {
       await collection.doc(event.id).set(event);

@@ -17,6 +17,7 @@ import {
 import { serviceFail, serviceOk, type ServiceResult } from "@/server/services";
 import { validationError } from "@/server/services/errors";
 import { nowIso } from "@/server/services/types";
+import type { RuntimeCapacityGuardrailService } from "@/modules/runtime-capacity";
 import type { WorkerHandlerRegistry } from "./worker-handler-registry";
 import type { RuntimeDomainServices } from "./worker-runtime-service";
 
@@ -41,6 +42,7 @@ export interface WorkerRunnerService<TServices = unknown> {
 export function createWorkerRunnerService<TServices = unknown>(
   runtime: Pick<RuntimeDomainServices, "jobs" | "lease">,
   registry: WorkerHandlerRegistry<TServices>,
+  capacityGuardrails?: RuntimeCapacityGuardrailService,
 ): WorkerRunnerService<TServices> {
   return {
     async getDiagnostics(input) {
@@ -58,15 +60,24 @@ export function createWorkerRunnerService<TServices = unknown>(
     },
 
     async processPending(input) {
-      const maxJobs = Math.max(1, input.maxJobs ?? 1);
+      const requestedMaxJobs = Math.max(1, input.maxJobs ?? 1);
       const timestamp = input.now ?? nowIso();
+      const claimBudget = capacityGuardrails
+        ? await capacityGuardrails.getClaimBudget({
+            organizationId: input.organizationId,
+            tenantId: input.organizationId,
+            now: timestamp,
+            requestedJobs: requestedMaxJobs,
+          })
+        : { allowedMaxJobs: requestedMaxJobs, reason: null };
+      const maxJobs = claimBudget.allowedMaxJobs;
 
       if (input.dryRun) {
         const eligibleJobs = await listEligibleJobs(
           runtime,
           registry,
           input.organizationId,
-          maxJobs,
+          requestedMaxJobs,
           timestamp,
         );
         return serviceOk({
@@ -77,6 +88,27 @@ export function createWorkerRunnerService<TServices = unknown>(
           deadLetteredCount: 0,
           duplicateCount: 0,
           dryRun: true,
+          eligibleJobs,
+          executions: [],
+        });
+      }
+
+      if (maxJobs <= 0) {
+        const eligibleJobs = await listEligibleJobs(
+          runtime,
+          registry,
+          input.organizationId,
+          requestedMaxJobs,
+          timestamp,
+        );
+        return serviceOk({
+          workerId: input.workerId,
+          processedCount: 0,
+          completedCount: 0,
+          retryScheduledCount: 0,
+          deadLetteredCount: 0,
+          duplicateCount: 0,
+          dryRun: false,
           eligibleJobs,
           executions: [],
         });
@@ -149,11 +181,13 @@ async function executeClaimedJob<TServices>(input: {
   leaseDurationMs: number;
   heartbeatIntervalMs: number | null;
 }): Promise<WorkerRunnerJobExecution> {
-  const markRunningAt = nowIso();
+  let executionTimestamp = input.job.lease.claimedAt ?? nowIso();
+  const markRunningAt = executionTimestamp;
   const running = await input.runtime.lease.markRunning({
     organizationId: input.job.organizationId,
     jobId: input.job.id,
     workerId: input.workerId,
+    claimToken: input.job.lease.claimToken ?? "",
     now: markRunningAt,
   });
   if (!running.ok) {
@@ -185,12 +219,14 @@ async function executeClaimedJob<TServices>(input: {
         organizationId: running.value.organizationId,
         jobId: running.value.id,
         workerId: input.workerId,
-        now: heartbeatInput?.now ?? nowIso(),
+        claimToken: running.value.lease.claimToken ?? "",
+        now: heartbeatInput?.now ?? executionTimestamp,
         leaseDurationMs: heartbeatInput?.leaseDurationMs ?? input.leaseDurationMs,
       });
       if (!extended.ok) {
         throw extended.error;
       }
+      executionTimestamp = extended.value.lease.heartbeatAt ?? extended.value.updatedAt;
       return extended.value;
     },
   };
@@ -208,12 +244,13 @@ async function executeClaimedJob<TServices>(input: {
         organizationId: running.value.organizationId,
         jobId: running.value.id,
         workerId: input.workerId,
-        now: nowIso(),
+        claimToken: running.value.lease.claimToken ?? "",
+        now: executionTimestamp,
         error: {
           code: "unknown_job_type",
           message: `No worker handler is registered for job type ${running.value.type}.`,
           retryable: true,
-          occurredAt: nowIso(),
+          occurredAt: executionTimestamp,
           details: {
             jobType: running.value.type,
           },
@@ -251,7 +288,8 @@ async function executeClaimedJob<TServices>(input: {
         organizationId: running.value.organizationId,
         jobId: running.value.id,
         workerId: input.workerId,
-        now: nowIso(),
+        claimToken: running.value.lease.claimToken ?? "",
+        now: executionTimestamp,
       });
       if (!completed.ok) {
         return toInternalFailureExecution(running.value, completed.error.safeMessage);
@@ -270,7 +308,8 @@ async function executeClaimedJob<TServices>(input: {
       organizationId: running.value.organizationId,
       jobId: running.value.id,
       workerId: input.workerId,
-      now: nowIso(),
+      claimToken: running.value.lease.claimToken ?? "",
+      now: executionTimestamp,
       error: toHandlerFailureState(result, running.value),
     });
     if (!failed.ok) {
@@ -290,6 +329,7 @@ async function executeClaimedJob<TServices>(input: {
       organizationId: running.value.organizationId,
       jobId: running.value.id,
       workerId: input.workerId,
+      claimToken: running.value.lease.claimToken ?? "",
       now: failureState.occurredAt,
       error: failureState,
     });

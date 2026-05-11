@@ -1,6 +1,5 @@
 import {
   assertNoEventRecorded,
-  assertReactionTriggered,
   assertTransitionFailed,
   assertTransitionSucceeded,
 } from "../assertions.ts";
@@ -32,19 +31,16 @@ export const workOrderNoQuoteScenario = makeScenario({
     }),
     workOrderTransitionStep({
       stepKey: "wo-direct-approved",
-      description: "Manager approves directly when quoteRequired=false.",
-      to: WORK_ORDER_STATUS.ApprovedToProceed,
-      role: PLATFORM_ROLES.Manager,
-      assertions: [
-        assertTransitionSucceeded(),
-        assertReactionTriggered("COORDINATOR_WORK_READY_ALERT"),
-      ],
+      description: "Coordinator assigns work directly when quoteRequired=false.",
+      to: WORK_ORDER_STATUS.Assigned,
+      role: PLATFORM_ROLES.Coordinator,
+      assertions: [assertTransitionSucceeded()],
     }),
     workOrderTransitionStep({
       stepKey: "wo-invalid-quote-dependency-check",
-      description: "Direct approval cannot be repeated from an already approved state.",
-      to: WORK_ORDER_STATUS.ApprovedToProceed,
-      role: PLATFORM_ROLES.Manager,
+      description: "Direct assignment cannot be repeated from an already assigned state.",
+      to: WORK_ORDER_STATUS.Assigned,
+      role: PLATFORM_ROLES.Coordinator,
       expectedOutcome: "failure",
       assertions: [assertTransitionFailed("AUTHORIZATION_FAILED"), assertNoEventRecorded()],
     }),

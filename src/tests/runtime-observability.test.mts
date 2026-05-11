@@ -78,6 +78,7 @@ test("runtime observability diagnostics expose replay visibility, alerts, and re
     actionType: RUNTIME_REPAIR_ACTION_TYPES.EventReplayRetry,
     targetId: "event-observability-2",
     idempotencyKey: "repair-observability-event-1",
+    reason: "Review replay backlog diagnostics before approval.",
     now: "2026-05-06T14:01:00.000Z",
   });
   assert.equal(repair.ok, true);

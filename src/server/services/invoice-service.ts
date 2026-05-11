@@ -41,10 +41,12 @@ import {
   serviceFail,
   serviceOk,
   touchAuditFields,
-  type ServiceAuditContext,
   type ServiceResult,
 } from "./types.ts";
 import type { NotificationService } from "./notification-service.ts";
+import type { WorkOrderService } from "./work-order-service.ts";
+import type { WorkOrderMutationContext } from "./work-order-mutation-context.ts";
+import type { AtomicPersistenceContext, AtomicPersistenceService } from "./atomic-persistence-service.ts";
 
 type Invoice = ClientInvoice;
 
@@ -91,7 +93,7 @@ export interface ListFinanceQueueInput {
   statuses?: InvoiceStatus[];
 }
 
-export interface CreateInvoiceServiceInput extends ServiceAuditContext {
+export interface CreateInvoiceServiceInput extends WorkOrderMutationContext {
   workOrderId: EntityId;
   dueDate: string;
   currency: InvoiceCurrency;
@@ -106,7 +108,7 @@ export interface UpdateInvoiceDraftInput extends CreateInvoiceServiceInput {
   invoiceId: EntityId;
 }
 
-export interface TransitionInvoiceInput extends ServiceAuditContext {
+export interface TransitionInvoiceInput extends WorkOrderMutationContext {
   workOrderId: EntityId;
   invoiceId: EntityId;
   toStatus: InvoiceStatus;
@@ -118,38 +120,38 @@ export interface TransitionInvoiceInput extends ServiceAuditContext {
   voidedAt?: string;
 }
 
-export interface SendInvoiceInput extends ServiceAuditContext {
+export interface SendInvoiceInput extends WorkOrderMutationContext {
   workOrderId: EntityId;
   invoiceId: EntityId;
   issuedDate?: string;
   sentAt?: string;
 }
 
-export interface MarkInvoiceViewedInput extends ServiceAuditContext {
+export interface MarkInvoiceViewedInput extends WorkOrderMutationContext {
   workOrderId: EntityId;
   invoiceId: EntityId;
   viewedAt?: string;
 }
 
-export interface MarkInvoiceOverdueInput extends ServiceAuditContext {
+export interface MarkInvoiceOverdueInput extends WorkOrderMutationContext {
   workOrderId: EntityId;
   invoiceId: EntityId;
 }
 
-export interface MarkInvoicePaidInput extends ServiceAuditContext {
+export interface MarkInvoicePaidInput extends WorkOrderMutationContext {
   workOrderId: EntityId;
   invoiceId: EntityId;
   paidAt?: string;
   paymentReference?: string | null;
 }
 
-export interface VoidInvoiceInput extends ServiceAuditContext {
+export interface VoidInvoiceInput extends WorkOrderMutationContext {
   workOrderId: EntityId;
   invoiceId: EntityId;
   voidedAt?: string;
 }
 
-export interface InvoiceSyncMutationInput extends ServiceAuditContext {
+export interface InvoiceSyncMutationInput extends WorkOrderMutationContext {
   invoiceId: EntityId;
 }
 
@@ -184,7 +186,12 @@ export function createInvoiceService(
   repositories: Pick<FirestoreRepositories, "workOrders" | "clientInvoices">,
   dependencies: {
     domainEvents: DomainEventService;
+    workOrders: Pick<
+      WorkOrderService,
+      "applyInvoiceWorkflowPointer" | "applyInvoiceWorkflowTransition"
+    >;
     notifications?: NotificationService;
+    atomicPersistence?: AtomicPersistenceService;
   },
 ): InvoiceService {
   return new FirestoreInvoiceService(repositories, dependencies);
@@ -198,14 +205,24 @@ class FirestoreInvoiceService implements InvoiceService {
 
   private readonly dependencies: {
     domainEvents: DomainEventService;
+    workOrders: Pick<
+      WorkOrderService,
+      "applyInvoiceWorkflowPointer" | "applyInvoiceWorkflowTransition"
+    >;
     notifications?: NotificationService;
+    atomicPersistence?: AtomicPersistenceService;
   };
 
   constructor(
     repositories: Pick<FirestoreRepositories, "workOrders" | "clientInvoices">,
     dependencies: {
       domainEvents: DomainEventService;
+      workOrders: Pick<
+        WorkOrderService,
+        "applyInvoiceWorkflowPointer" | "applyInvoiceWorkflowTransition"
+      >;
       notifications?: NotificationService;
+      atomicPersistence?: AtomicPersistenceService;
     },
   ) {
     this.repositories = repositories;
@@ -335,16 +352,29 @@ class FirestoreInvoiceService implements InvoiceService {
       },
     };
 
-    await this.repositories.clientInvoices.create(invoice);
-    await this.repositories.workOrders.save(
-      touchAuditFields(
-        {
-          ...workOrder,
-          currentInvoiceId: invoice.id,
-        },
-        input,
-      ),
-    );
+    const pointerUpdate = this.dependencies.atomicPersistence
+      ? await this.dependencies.atomicPersistence.runInTransaction(async (atomic) => {
+          atomic.create("clientInvoices", invoice);
+          return this.dependencies.workOrders.applyInvoiceWorkflowPointer({
+            ...input,
+            atomic,
+            source: "invoice_workflow",
+            workOrderId: workOrder.id,
+            currentInvoiceId: invoice.id,
+          });
+        })
+      : await (async () => {
+          await this.repositories.clientInvoices.create(invoice);
+          return this.dependencies.workOrders.applyInvoiceWorkflowPointer({
+            ...input,
+            source: "invoice_workflow",
+            workOrderId: workOrder.id,
+            currentInvoiceId: invoice.id,
+          });
+        })();
+    if (!pointerUpdate.ok) {
+      return pointerUpdate;
+    }
     logger.info("use_case.completed", {
       action: "invoice.created",
       resource: {
@@ -484,40 +514,60 @@ class FirestoreInvoiceService implements InvoiceService {
       { ...input, now: timestamp },
     );
 
-    await this.repositories.clientInvoices.save(transitioned);
-    await this.applyWorkOrderReaction(
-      workOrder.value,
-      invoice.value,
-      transitioned,
-      { ...input, now: timestamp },
-    );
-    if (input.toStatus === "sent" || input.toStatus === "paid") {
-      await this.dependencies.domainEvents.record({
-        ...input,
-        now: timestamp,
-        workOrderId: transitioned.workOrderId,
-        type: input.toStatus === "sent" ? "invoice_sent" : "payment_recorded",
-        visibility: input.toStatus === "sent" ? "client" : "finance",
-        lifecycleStatus: workOrder.value.lifecycleStatus,
-        entity: {
-          entityType: "invoice",
-          entityId: transitioned.id,
-          label: transitioned.invoiceNumber,
-        },
-        summary: buildInvoiceActivityMessage(invoice.value, input.toStatus),
-        payload:
-          input.toStatus === "sent"
-            ? {
-                invoiceId: transitioned.id,
-                invoiceStatus: transitioned.status,
-                totalAmount: transitioned.totalAmount,
-              }
-            : {
-                invoiceId: transitioned.id,
-                invoiceStatus: transitioned.status,
-                paymentReference: transitioned.paymentReference ?? null,
-              },
-      });
+    const persistTransition = async (atomic?: AtomicPersistenceContext) => {
+      if (atomic) {
+        atomic.save("clientInvoices", transitioned);
+      } else {
+        await this.repositories.clientInvoices.save(transitioned);
+      }
+      const workOrderReaction = await this.applyWorkOrderReaction(
+        workOrder.value,
+        invoice.value,
+        transitioned,
+        { ...input, atomic, now: timestamp },
+      );
+      if (!workOrderReaction.ok) {
+        return workOrderReaction;
+      }
+      if (input.toStatus === "sent" || input.toStatus === "paid") {
+        await this.dependencies.domainEvents.record({
+          ...input,
+          atomic,
+          now: timestamp,
+          workOrderId: transitioned.workOrderId,
+          type: input.toStatus === "sent" ? "invoice_sent" : "payment_recorded",
+          visibility: input.toStatus === "sent" ? "client" : "finance",
+          lifecycleStatus: workOrder.value.lifecycleStatus,
+          entity: {
+            entityType: "invoice",
+            entityId: transitioned.id,
+            label: transitioned.invoiceNumber,
+          },
+          summary: buildInvoiceActivityMessage(invoice.value, input.toStatus),
+          payload:
+            input.toStatus === "sent"
+              ? {
+                  invoiceId: transitioned.id,
+                  invoiceStatus: transitioned.status,
+                  totalAmount: transitioned.totalAmount,
+                }
+              : {
+                  invoiceId: transitioned.id,
+                  invoiceStatus: transitioned.status,
+                  paymentReference: transitioned.paymentReference ?? null,
+                },
+        });
+      }
+      return serviceOk(true);
+    };
+
+    const persisted = this.dependencies.atomicPersistence
+      ? await this.dependencies.atomicPersistence.runInTransaction((atomic) =>
+          persistTransition(atomic),
+        )
+      : await persistTransition();
+    if (!persisted.ok) {
+      return persisted;
     }
     logger.info("use_case.completed", {
       action: "invoice.status_changed",
@@ -745,7 +795,7 @@ class FirestoreInvoiceService implements InvoiceService {
     previousInvoice: Invoice,
     invoice: Invoice,
     input: TransitionInvoiceInput & { now: string },
-  ): Promise<void> {
+  ): Promise<ServiceResult<true>> {
     if (
       invoice.status === "sent" &&
       (
@@ -754,93 +804,63 @@ class FirestoreInvoiceService implements InvoiceService {
         workOrder.lifecycleStatus === "ready_for_invoicing"
       )
     ) {
-      const transitionedWorkOrder: WorkOrder = touchAuditFields(
-        {
-          ...workOrder,
-          lifecycleStatus: "invoiced",
-          invoiceSentAt: invoice.sentAt ?? input.now,
-        },
-        input,
-      );
-      await this.repositories.workOrders.save(transitionedWorkOrder);
-      await this.recordWorkOrderFinanceTransition(
-        transitionedWorkOrder,
-        workOrder.lifecycleStatus,
-        transitionedWorkOrder.lifecycleStatus,
-        previousInvoice.id,
-        previousInvoice.invoiceNumber,
-        input,
-      );
+      const transition = await this.dependencies.workOrders.applyInvoiceWorkflowTransition({
+        ...input,
+        source: "invoice_workflow",
+        workOrderId: workOrder.id,
+        toStatus: "invoiced",
+        invoiceSentAt: invoice.sentAt ?? input.now,
+        invoiceId: previousInvoice.id,
+        invoiceNumber: previousInvoice.invoiceNumber,
+      });
+      if (!transition.ok) {
+        return transition;
+      }
     }
 
     if (invoice.status === "paid" && workOrder.lifecycleStatus === "invoiced") {
-      const transitionedWorkOrder: WorkOrder = touchAuditFields(
-        {
-          ...workOrder,
-          lifecycleStatus: "paid",
-          paidAt: invoice.paidAt ?? input.now,
-        },
-        input,
-      );
-      await this.repositories.workOrders.save(transitionedWorkOrder);
-      await this.recordWorkOrderFinanceTransition(
-        transitionedWorkOrder,
-        workOrder.lifecycleStatus,
-        transitionedWorkOrder.lifecycleStatus,
-        previousInvoice.id,
-        previousInvoice.invoiceNumber,
-        input,
-      );
+      const transition = await this.dependencies.workOrders.applyInvoiceWorkflowTransition({
+        ...input,
+        source: "invoice_workflow",
+        workOrderId: workOrder.id,
+        toStatus: "paid",
+        paidAt: invoice.paidAt ?? input.now,
+        invoiceId: previousInvoice.id,
+        invoiceNumber: previousInvoice.invoiceNumber,
+      });
+      if (!transition.ok) {
+        return transition;
+      }
     }
 
     if (invoice.status === "void") {
-      const nextStatus: WorkOrderStatus =
-        workOrder.lifecycleStatus === "invoiced"
-          ? "ready_for_invoicing"
-          : workOrder.lifecycleStatus;
-      const transitionedWorkOrder: WorkOrder = touchAuditFields(
-        {
-          ...workOrder,
+      if (workOrder.lifecycleStatus === "invoiced") {
+        const transition = await this.dependencies.workOrders.applyInvoiceWorkflowTransition({
+          ...input,
+          source: "invoice_workflow",
+          workOrderId: workOrder.id,
+          toStatus: "ready_for_invoicing",
           currentInvoiceId: null,
-          lifecycleStatus: nextStatus,
-        },
-        input,
-      );
-      await this.repositories.workOrders.save(transitionedWorkOrder);
-
-      if (nextStatus !== workOrder.lifecycleStatus) {
-        await this.recordWorkOrderFinanceTransition(
-          transitionedWorkOrder,
-          workOrder.lifecycleStatus,
-          nextStatus,
-          previousInvoice.id,
-          previousInvoice.invoiceNumber,
-          input,
-        );
+          invoiceId: previousInvoice.id,
+          invoiceNumber: previousInvoice.invoiceNumber,
+        });
+        if (!transition.ok) {
+          return transition;
+        }
+      } else {
+        const pointerUpdate = await this.dependencies.workOrders.applyInvoiceWorkflowPointer({
+          ...input,
+          source: "invoice_workflow",
+          workOrderId: workOrder.id,
+          currentInvoiceId: null,
+        });
+        if (!pointerUpdate.ok) {
+          return pointerUpdate;
+        }
       }
     }
-  }
 
-  private async recordWorkOrderFinanceTransition(
-    workOrder: WorkOrder,
-    fromStatus: string,
-    toStatus: string,
-    invoiceId: string,
-    invoiceNumber: string,
-    input: TransitionInvoiceInput & { now: string },
-  ): Promise<void> {
-    await this.dependencies.domainEvents.recordTransition({
-      ...input,
-      workOrderId: workOrder.id,
-      fromLifecycleStatus: fromStatus,
-      toLifecycleStatus: toStatus,
-      visibility: "internal",
-      metadata: {
-        source: "invoice_workflow",
-        invoiceId,
-        invoiceNumber,
-      },
-    });
+    return serviceOk(true);
   }
 }
 

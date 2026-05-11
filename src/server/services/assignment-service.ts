@@ -17,6 +17,8 @@ import type { EntityId, IsoDateTimeString } from "@/types/entity";
 import type { AssignmentStatus } from "@/types/work-order";
 import type { DomainEventService } from "./domain-event-service";
 import type { NotificationService } from "./notification-service";
+import type { WorkOrderService } from "./work-order-service";
+import type { AtomicPersistenceService, AtomicPersistenceContext } from "./atomic-persistence-service";
 import { createServiceLogger } from "./observability";
 import { conflictError, notFoundError, validationError } from "./errors";
 import {
@@ -24,9 +26,9 @@ import {
   serviceFail,
   serviceOk,
   touchAuditFields,
-  type ServiceAuditContext,
   type ServiceResult,
 } from "./types";
+import type { WorkOrderMutationContext } from "./work-order-mutation-context";
 
 export interface AssignmentService {
   assignContractor(
@@ -46,7 +48,7 @@ export interface AssignmentService {
   assign(input: AssignContractorInput): Promise<ServiceResult<Assignment>>;
 }
 
-export interface AssignContractorInput extends ServiceAuditContext {
+export interface AssignContractorInput extends WorkOrderMutationContext {
   workOrderId: EntityId;
   contractorOrganizationId: EntityId;
   scheduledDate?: IsoDateTimeString | null;
@@ -59,7 +61,7 @@ export interface ReassignContractorInput extends AssignContractorInput {
   currentAssignmentId: EntityId;
 }
 
-export interface UpdateAssignmentStatusInput extends ServiceAuditContext {
+export interface UpdateAssignmentStatusInput extends WorkOrderMutationContext {
   assignmentId: EntityId;
   workOrderId: EntityId;
   status: AssignmentStatus;
@@ -88,7 +90,9 @@ export function createAssignmentService(
   >,
   dependencies: {
     domainEvents: DomainEventService;
+    workOrders: Pick<WorkOrderService, "applyContractorAssignment">;
     notifications?: NotificationService;
+    atomicPersistence?: AtomicPersistenceService;
   },
 ): AssignmentService {
   return new FirestoreAssignmentService(repositories, dependencies);
@@ -102,7 +106,9 @@ class FirestoreAssignmentService implements AssignmentService {
 
   private readonly dependencies: {
     domainEvents: DomainEventService;
+    workOrders: Pick<WorkOrderService, "applyContractorAssignment">;
     notifications?: NotificationService;
+    atomicPersistence?: AtomicPersistenceService;
   };
 
   constructor(
@@ -112,7 +118,9 @@ class FirestoreAssignmentService implements AssignmentService {
     >,
     dependencies: {
       domainEvents: DomainEventService;
+      workOrders: Pick<WorkOrderService, "applyContractorAssignment">;
       notifications?: NotificationService;
+      atomicPersistence?: AtomicPersistenceService;
     },
   ) {
     this.repositories = repositories;
@@ -167,45 +175,73 @@ class FirestoreAssignmentService implements AssignmentService {
       contractor: contractor.value,
     });
 
-    await this.repositories.assignments.create(assignment);
-    await this.saveWorkOrderAssignmentSnapshot(workOrder.value, contractor.value, input);
-    await this.dependencies.domainEvents.record({
-      ...input,
-      now: assignment.assignedAt,
-      workOrderId: workOrder.value.id,
-      type: "assignment_created",
-      visibility: "internal",
-      lifecycleStatus: workOrder.value.lifecycleStatus,
-      entity: {
-        entityType: "assignment",
-        entityId: assignment.id,
-        label: assignment.contractorSnapshot?.name ?? contractor.value.id,
-      },
-      summary: `Assigned ${assignment.contractorSnapshot?.name ?? contractor.value.id}.`,
-      payload: {
-        assignmentId: assignment.id,
-        contractorOrganizationId: assignment.contractorOrganizationId,
-        status: assignment.status,
-      },
-    });
-    await this.dependencies.domainEvents.record({
-      ...input,
-      now: assignment.assignedAt,
-      workOrderId: workOrder.value.id,
-      type: "contractor_contacted",
-      visibility: "contractor",
-      lifecycleStatus: workOrder.value.lifecycleStatus,
-      entity: {
-        entityType: "assignment",
-        entityId: assignment.id,
-        label: assignment.contractorSnapshot?.name ?? contractor.value.id,
-      },
-      summary: `Contacted ${assignment.contractorSnapshot?.name ?? contractor.value.id} for assignment.`,
-      payload: {
-        assignmentId: assignment.id,
-        contractorOrganizationId: assignment.contractorOrganizationId,
-      },
-    });
+    const persistAssignment = async (atomic?: AtomicPersistenceContext) => {
+      if (atomic) {
+        atomic.create("assignments", assignment);
+      } else {
+        await this.repositories.assignments.create(assignment);
+      }
+      const workOrderUpdate = await this.dependencies.workOrders.applyContractorAssignment({
+        ...input,
+        atomic,
+        source: "assignment_workflow",
+        workOrderId: workOrder.value.id,
+        contractorOrganizationId: contractor.value.id,
+        assignedAt: assignment.assignedAt,
+      });
+      if (!workOrderUpdate.ok) {
+        return workOrderUpdate;
+      }
+      await this.dependencies.domainEvents.record({
+        ...input,
+        atomic,
+        now: assignment.assignedAt,
+        workOrderId: workOrder.value.id,
+        type: "assignment_created",
+        visibility: "internal",
+        lifecycleStatus: workOrderUpdate.value.lifecycleStatus,
+        entity: {
+          entityType: "assignment",
+          entityId: assignment.id,
+          label: assignment.contractorSnapshot?.name ?? contractor.value.id,
+        },
+        summary: `Assigned ${assignment.contractorSnapshot?.name ?? contractor.value.id}.`,
+        payload: {
+          assignmentId: assignment.id,
+          contractorOrganizationId: assignment.contractorOrganizationId,
+          status: assignment.status,
+        },
+      });
+      await this.dependencies.domainEvents.record({
+        ...input,
+        atomic,
+        now: assignment.assignedAt,
+        workOrderId: workOrder.value.id,
+        type: "contractor_contacted",
+        visibility: "contractor",
+        lifecycleStatus: workOrderUpdate.value.lifecycleStatus,
+        entity: {
+          entityType: "assignment",
+          entityId: assignment.id,
+          label: assignment.contractorSnapshot?.name ?? contractor.value.id,
+        },
+        summary: `Contacted ${assignment.contractorSnapshot?.name ?? contractor.value.id} for assignment.`,
+        payload: {
+          assignmentId: assignment.id,
+          contractorOrganizationId: assignment.contractorOrganizationId,
+        },
+      });
+      return serviceOk(workOrderUpdate.value);
+    };
+
+    const workOrderUpdate = this.dependencies.atomicPersistence
+      ? await this.dependencies.atomicPersistence.runInTransaction((atomic) =>
+          persistAssignment(atomic),
+        )
+      : await persistAssignment();
+    if (!workOrderUpdate.ok) {
+      return workOrderUpdate;
+    }
     logger.info("use_case.completed", {
       action: "assignment.created",
       resource: {
@@ -406,33 +442,50 @@ class FirestoreAssignmentService implements AssignmentService {
       { ...input, now: timestamp },
     );
 
-    await this.repositories.assignments.save(updated);
-    if (input.status === "accepted" || input.status === "declined") {
-      await this.dependencies.domainEvents.record({
-        ...input,
-        now: timestamp,
-        workOrderId: assignment.workOrderId,
-        type: input.status === "accepted" ? "assignment_accepted" : "assignment_declined",
-        visibility: input.actor.role === "contractor_user" ? "contractor" : "internal",
-        lifecycleStatus: null,
-        entity: {
-          entityType: "assignment",
-          entityId: assignment.id,
-          label: assignment.contractorSnapshot?.name ?? assignment.assigneeUserId,
-        },
-        summary: `Changed assignment status from ${assignment.status} to ${input.status}.`,
-        payload:
-          input.status === "accepted"
-            ? {
-                assignmentId: assignment.id,
-                status: input.status,
-              }
-            : {
-                assignmentId: assignment.id,
-                status: input.status,
-                notes: input.notes ?? null,
-              },
-      });
+    const persistStatus = async (atomic?: AtomicPersistenceContext) => {
+      if (atomic) {
+        atomic.save("assignments", updated);
+      } else {
+        await this.repositories.assignments.save(updated);
+      }
+      if (input.status === "accepted" || input.status === "declined") {
+        await this.dependencies.domainEvents.record({
+          ...input,
+          atomic,
+          now: timestamp,
+          workOrderId: assignment.workOrderId,
+          type: input.status === "accepted" ? "assignment_accepted" : "assignment_declined",
+          visibility: input.actor.role === "contractor_user" ? "contractor" : "internal",
+          lifecycleStatus: null,
+          entity: {
+            entityType: "assignment",
+            entityId: assignment.id,
+            label: assignment.contractorSnapshot?.name ?? assignment.assigneeUserId,
+          },
+          summary: `Changed assignment status from ${assignment.status} to ${input.status}.`,
+          payload:
+            input.status === "accepted"
+              ? {
+                  assignmentId: assignment.id,
+                  status: input.status,
+                }
+              : {
+                  assignmentId: assignment.id,
+                  status: input.status,
+                  notes: input.notes ?? null,
+                },
+        });
+      }
+      return serviceOk(true);
+    };
+
+    const persisted = this.dependencies.atomicPersistence
+      ? await this.dependencies.atomicPersistence.runInTransaction((atomic) =>
+          persistStatus(atomic),
+        )
+      : await persistStatus();
+    if (!persisted.ok) {
+      return persisted;
     }
     logger.info("use_case.completed", {
       action: "assignment.status_changed",
@@ -516,7 +569,7 @@ class FirestoreAssignmentService implements AssignmentService {
   }
 
   private assertCanManageAssignments(
-    input: ServiceAuditContext,
+    input: WorkOrderMutationContext,
   ): ServiceResult<true> {
     if (!canManageAssignments(input.actor.role)) {
       return serviceFail(validationError("You are not allowed to manage assignments."));
@@ -601,37 +654,6 @@ class FirestoreAssignmentService implements AssignmentService {
     };
   }
 
-  private async saveWorkOrderAssignmentSnapshot(
-    workOrder: NonNullable<Awaited<ReturnType<typeof this.repositories.workOrders.getById>>>,
-    contractor: ContractorOrganization,
-    input: ServiceAuditContext,
-  ) {
-    const normalizedWorkOrder = {
-      ...workOrder,
-      // Some existing work orders were created through a path that did not
-      // persist organizationId onto the legacy record shape.
-      organizationId: workOrder.organizationId ?? input.organizationId,
-    };
-
-    await this.repositories.workOrders.save(
-      touchAuditFields(
-        {
-          ...normalizedWorkOrder,
-          assignedContractorOrgId: contractor.id,
-          contractorSnapshot: {
-            id: contractor.id,
-            name: contractor.displayName ?? contractor.name,
-          },
-          lifecycleStatus:
-            normalizedWorkOrder.lifecycleStatus === "client_approved"
-              ? "assigned"
-              : normalizedWorkOrder.lifecycleStatus,
-          assignedAt: input.now ?? new Date().toISOString(),
-        },
-        input,
-      ),
-    );
-  }
 }
 
 function buildContractorOptionLabel(

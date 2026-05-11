@@ -8,14 +8,15 @@ import { ERROR_CODES } from "@/lib/errors/codes";
 import { toAppError, toSafeErrorResponse } from "@/lib/errors/safe-error";
 import { createAppLogger, type AppLogger } from "@/lib/logging/logger";
 import { APP_PATHS } from "@/lib/utils/constants";
+import { serverEnv } from "@/lib/env/server";
 import {
   assertCanCreateWorkOrderForLocationSelection,
   assertCanUpdateWorkOrderLocationSelection,
 } from "@/lib/permissions/work-orders";
+import { updateWorkOrderSchema } from "@/lib/validation/work-orders";
 import {
-  createWorkOrderSchema,
-  updateWorkOrderSchema,
-} from "@/lib/validation/work-orders";
+  createWorkOrderSchema as canonicalCreateWorkOrderSchema,
+} from "@/modules/work-orders/domain/schemas";
 import {
   canActorReadQuote,
   isAllowedQuoteTransitionForActor,
@@ -45,8 +46,11 @@ import {
 import {
   createDomainServices,
   type DomainServices,
-  type ServiceAuditContext,
 } from "@/server/services";
+import {
+  createWorkOrderMutationContext,
+  type WorkOrderMutationContext,
+} from "@/server/services/work-order-mutation-context";
 import type {
   AccessActor,
   ClientAccessActor,
@@ -127,7 +131,7 @@ const INVOICE_STATUSES = [
 
 export interface WorkOrderApiContext {
   actor: AccessActor;
-  audit: ServiceAuditContext;
+  audit: WorkOrderMutationContext;
   repositories: FirestoreRepositories;
   services: DomainServices;
   request: ApiRequestContext | null;
@@ -170,14 +174,11 @@ export async function getWorkOrderApiContext(
 
   return {
     actor,
-    audit: {
-      organizationId: actor.scope.organizationId,
-      actor: {
-        userId: actor.userId,
-        role: actor.role,
-      },
+    audit: createWorkOrderMutationContext({
+      actor,
+      source: "work_order_api",
       requestId: requestContext?.requestId,
-    },
+    }),
     repositories,
     services,
     request: requestContext,
@@ -218,8 +219,17 @@ export function jsonError(
   const safeError = toSafeErrorResponse(appError, {
     requestId: requestContext?.requestId,
   });
+  const responseMessage =
+    !serverEnv.isProduction && appError.code === ERROR_CODES.Unknown
+      ? appError.message
+      : safeError.message;
   return NextResponse.json(
-    { error: safeError },
+    {
+      error: {
+        ...safeError,
+        message: responseMessage,
+      },
+    },
     { status: safeError.statusCode },
   );
 }
@@ -289,8 +299,16 @@ export async function parseJsonObject(
   return body;
 }
 
-export function parseCreateWorkOrderPayload(input: Record<string, unknown>) {
-  return createWorkOrderSchema.parse(input);
+export function parseCreateWorkOrderPayload(
+  input: Record<string, unknown>,
+  options: {
+    createdByUserId: string;
+  },
+) {
+  return canonicalCreateWorkOrderSchema.parse({
+    ...input,
+    createdByUserId: options.createdByUserId,
+  });
 }
 
 export function parseUpdateWorkOrderPayload(input: Record<string, unknown>) {

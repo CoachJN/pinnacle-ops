@@ -99,6 +99,7 @@ export interface RuntimeAlertRepository {
 
 export interface RuntimeRepairActionRepository {
   newId(): EntityId;
+  getById(id: EntityId): Promise<RuntimeRepairAction | null>;
   create(action: RuntimeRepairAction): Promise<RuntimeRepairAction>;
   save(action: RuntimeRepairAction): Promise<RuntimeRepairAction>;
   findByIdempotencyKey(input: {
@@ -176,6 +177,9 @@ export function createInMemoryRuntimeObservabilityRepositories(seed?: {
     repairActions: {
       newId() {
         return `ops-repair-${repairActions.length + 1}`;
+      },
+      async getById(id) {
+        return repairActions.find((item) => item.id === id) ?? null;
       },
       async create(action) {
         repairActions.push(action);
@@ -286,6 +290,13 @@ class FirestoreRuntimeRepairActionRepository implements RuntimeRepairActionRepos
 
   newId(): EntityId {
     return this.collection.doc().id;
+  }
+
+  async getById(id: EntityId): Promise<RuntimeRepairAction | null> {
+    const snapshot = await this.collection.doc(id).get();
+    return snapshot.exists
+      ? runtimeRepairActionFromDocument(snapshot.id, snapshot.data() as RuntimeRepairActionDocument)
+      : null;
   }
 
   async create(action: RuntimeRepairAction): Promise<RuntimeRepairAction> {

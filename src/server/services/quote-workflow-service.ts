@@ -25,14 +25,16 @@ import { USER_ROLES, type UserRole } from "@/types/permissions";
 import { invalidTransitionError, notFoundError, validationError } from "./errors";
 import type { DomainEventService } from "./domain-event-service";
 import type { NotificationService } from "./notification-service";
+import type { WorkOrderService } from "./work-order-service";
+import type { AtomicPersistenceContext, AtomicPersistenceService } from "./atomic-persistence-service";
 import {
   createAuditFields,
   serviceFail,
   serviceOk,
   touchAuditFields,
-  type ServiceAuditContext,
   type ServiceResult,
 } from "./types";
+import type { WorkOrderMutationContext } from "./work-order-mutation-context";
 
 export interface QuoteWorkflowAggregate {
   contractorQuotes: ContractorQuote[];
@@ -40,7 +42,7 @@ export interface QuoteWorkflowAggregate {
   activeClientQuote: ClientQuote | null;
 }
 
-export interface SaveContractorQuoteDraftInput extends ServiceAuditContext {
+export interface SaveContractorQuoteDraftInput extends WorkOrderMutationContext {
   contractorQuoteId?: string;
   workOrderId: string;
   contractorUserId?: string | null;
@@ -54,20 +56,20 @@ export interface SaveContractorQuoteDraftInput extends ServiceAuditContext {
 
 export type SubmitContractorQuoteInput = SaveContractorQuoteDraftInput;
 
-export interface ReviewContractorQuoteInput extends ServiceAuditContext {
+export interface ReviewContractorQuoteInput extends WorkOrderMutationContext {
   workOrderId: string;
   contractorQuoteId: string;
   action: "accept_contractor_quote" | "reject_contractor_quote";
   rejectionReason?: string | null;
 }
 
-export interface CreateClientQuoteFromContractorQuoteInput extends ServiceAuditContext {
+export interface CreateClientQuoteFromContractorQuoteInput extends WorkOrderMutationContext {
   workOrderId: string;
   contractorQuoteId: string;
   notes?: string | null;
 }
 
-export interface CreateManualClientQuoteInput extends ServiceAuditContext {
+export interface CreateManualClientQuoteInput extends WorkOrderMutationContext {
   workOrderId: string;
   sourceContractorQuoteId?: string | null;
   lineItems: QuoteLineItem[];
@@ -77,7 +79,7 @@ export interface CreateManualClientQuoteInput extends ServiceAuditContext {
   notes?: string | null;
 }
 
-export interface ClientQuoteActionInput extends ServiceAuditContext {
+export interface ClientQuoteActionInput extends WorkOrderMutationContext {
   workOrderId: string;
   clientQuoteId: string;
 }
@@ -120,7 +122,12 @@ export function createQuoteWorkflowService(
   >,
   dependencies: {
     domainEvents: DomainEventService;
+    workOrders: Pick<
+      WorkOrderService,
+      "applyQuoteWorkflowPointer" | "applyQuoteWorkflowTransition"
+    >;
     notifications?: NotificationService;
+    atomicPersistence?: AtomicPersistenceService;
   },
 ): QuoteWorkflowService {
   return new DefaultQuoteWorkflowService(repositories, dependencies);
@@ -134,7 +141,12 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
 
   private readonly dependencies: {
     domainEvents: DomainEventService;
+    workOrders: Pick<
+      WorkOrderService,
+      "applyQuoteWorkflowPointer" | "applyQuoteWorkflowTransition"
+    >;
     notifications?: NotificationService;
+    atomicPersistence?: AtomicPersistenceService;
   };
 
   constructor(
@@ -144,7 +156,12 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
     >,
     dependencies: {
       domainEvents: DomainEventService;
+      workOrders: Pick<
+        WorkOrderService,
+        "applyQuoteWorkflowPointer" | "applyQuoteWorkflowTransition"
+      >;
       notifications?: NotificationService;
+      atomicPersistence?: AtomicPersistenceService;
     },
   ) {
     this.repositories = repositories;
@@ -267,30 +284,50 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
       input,
     );
 
-    await this.repositories.contractorQuotes.save(submitted);
-    await this.updateWorkOrderStatusIfNeeded(
-      submitted.workOrderId,
-      "contractor_quote_received",
-      input,
-    );
-    await this.dependencies.domainEvents.record({
-      ...input,
-      workOrderId: submitted.workOrderId,
-      type: "contractor_quote_received",
-      visibility: "internal",
-      lifecycleStatus: "contractor_quote_received",
-      entity: {
-        entityType: "quote",
-        entityId: submitted.id,
-        label: "Contractor quote",
-      },
-      summary: "Submitted contractor quote for manager review.",
-      payload: {
-        quoteId: submitted.id,
-        totalAmount: submitted.totalAmount,
-        status: submitted.status,
-      },
-    });
+    const persistSubmission = async (atomic?: AtomicPersistenceContext) => {
+      if (atomic) {
+        atomic.save("contractorQuotes", submitted);
+      } else {
+        await this.repositories.contractorQuotes.save(submitted);
+      }
+      const transition = await this.updateWorkOrderStatusIfNeeded(
+        submitted.workOrderId,
+        "contractor_quote_received",
+        { ...input, atomic },
+      );
+      if (!transition.ok) {
+        return transition;
+      }
+      await this.dependencies.domainEvents.record({
+        ...input,
+        atomic,
+        workOrderId: submitted.workOrderId,
+        type: "contractor_quote_received",
+        visibility: "internal",
+        lifecycleStatus: "contractor_quote_received",
+        entity: {
+          entityType: "quote",
+          entityId: submitted.id,
+          label: "Contractor quote",
+        },
+        summary: "Submitted contractor quote for manager review.",
+        payload: {
+          quoteId: submitted.id,
+          totalAmount: submitted.totalAmount,
+          status: submitted.status,
+        },
+      });
+      return serviceOk(transition.value);
+    };
+
+    const transition = this.dependencies.atomicPersistence
+      ? await this.dependencies.atomicPersistence.runInTransaction((atomic) =>
+          persistSubmission(atomic),
+        )
+      : await persistSubmission();
+    if (!transition.ok) {
+      return transition;
+    }
 
     const workOrder = await this.repositories.workOrders.getById(submitted.workOrderId);
     const quoteReference = {
@@ -376,12 +413,26 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
       input,
     );
 
-    await this.repositories.contractorQuotes.save(reviewed);
-    await this.updateWorkOrderStatusIfNeeded(
-      reviewed.workOrderId,
-      reviewed.status === "accepted" ? "quote_under_review" : "quote_required",
-      input,
-    );
+    const transition = this.dependencies.atomicPersistence
+      ? await this.dependencies.atomicPersistence.runInTransaction(async (atomic) => {
+          atomic.save("contractorQuotes", reviewed);
+          return this.updateWorkOrderStatusIfNeeded(
+            reviewed.workOrderId,
+            reviewed.status === "accepted" ? "quote_under_review" : "quote_required",
+            { ...input, atomic },
+          );
+        })
+      : await (async () => {
+          await this.repositories.contractorQuotes.save(reviewed);
+          return this.updateWorkOrderStatusIfNeeded(
+            reviewed.workOrderId,
+            reviewed.status === "accepted" ? "quote_under_review" : "quote_required",
+            input,
+          );
+        })();
+    if (!transition.ok) {
+      return transition;
+    }
     return serviceOk(reviewed);
   }
 
@@ -455,30 +506,71 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
       input,
     );
 
-    await this.repositories.clientQuotes.save(sent);
-    await this.updateWorkOrderStatusIfNeeded(
-      sent.workOrderId,
-      "client_approval_requested",
-      input,
-    );
-    await this.dependencies.domainEvents.record({
-      ...input,
-      workOrderId: sent.workOrderId,
-      type: "client_approval_requested",
-      visibility: "client",
-      lifecycleStatus: "client_approval_requested",
-      entity: {
-        entityType: "quote",
-        entityId: sent.id,
-        label: "Client quote",
-      },
-      summary: "Sent client quote for approval.",
-      payload: {
-        quoteId: sent.id,
-        totalAmount: sent.totalAmount,
-        status: sent.status,
-      },
-    });
+    const transition = this.dependencies.atomicPersistence
+      ? await this.dependencies.atomicPersistence.runInTransaction(async (atomic) => {
+          atomic.save("clientQuotes", sent);
+          const updated = await this.updateWorkOrderStatusIfNeeded(
+            sent.workOrderId,
+            "client_approval_requested",
+            { ...input, atomic },
+          );
+          if (!updated.ok) {
+            return updated;
+          }
+          await this.dependencies.domainEvents.record({
+            ...input,
+            atomic,
+            workOrderId: sent.workOrderId,
+            type: "client_approval_requested",
+            visibility: "client",
+            lifecycleStatus: "client_approval_requested",
+            entity: {
+              entityType: "quote",
+              entityId: sent.id,
+              label: "Client quote",
+            },
+            summary: "Sent client quote for approval.",
+            payload: {
+              quoteId: sent.id,
+              totalAmount: sent.totalAmount,
+              status: sent.status,
+            },
+          });
+          return updated;
+        })
+      : await (async () => {
+          await this.repositories.clientQuotes.save(sent);
+          const updated = await this.updateWorkOrderStatusIfNeeded(
+            sent.workOrderId,
+            "client_approval_requested",
+            input,
+          );
+          if (!updated.ok) {
+            return updated;
+          }
+          await this.dependencies.domainEvents.record({
+            ...input,
+            workOrderId: sent.workOrderId,
+            type: "client_approval_requested",
+            visibility: "client",
+            lifecycleStatus: "client_approval_requested",
+            entity: {
+              entityType: "quote",
+              entityId: sent.id,
+              label: "Client quote",
+            },
+            summary: "Sent client quote for approval.",
+            payload: {
+              quoteId: sent.id,
+              totalAmount: sent.totalAmount,
+              status: sent.status,
+            },
+          });
+          return updated;
+        })();
+    if (!transition.ok) {
+      return transition;
+    }
 
     const workOrder = await this.repositories.workOrders.getById(sent.workOrderId);
     await this.dependencies.notifications?.captureOperationalEvent({
@@ -532,30 +624,95 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
       input,
     );
 
-    await this.repositories.clientQuotes.save(approved);
-    await this.updateWorkOrderClientQuotePointer(approved.workOrderId, approved.id, input);
-    await this.updateWorkOrderStatusIfNeeded(
-      approved.workOrderId,
-      "client_approved",
-      input,
-    );
-    await this.dependencies.domainEvents.record({
-      ...input,
-      workOrderId: approved.workOrderId,
-      type: "client_approved",
-      visibility: "client",
-      lifecycleStatus: "client_approved",
-      entity: {
-        entityType: "quote",
-        entityId: approved.id,
-        label: "Client quote",
-      },
-      summary: "Approved client quote.",
-      payload: {
-        quoteId: approved.id,
-        status: approved.status,
-      },
-    });
+    const transition = this.dependencies.atomicPersistence
+      ? await this.dependencies.atomicPersistence.runInTransaction(async (atomic) => {
+          atomic.save("clientQuotes", approved);
+          const pointerUpdate = await this.dependencies.workOrders.applyQuoteWorkflowPointer({
+            ...input,
+            atomic,
+            source: "quote_workflow",
+            workOrderId: approved.workOrderId,
+            currentQuoteId: approved.id,
+          });
+          if (!pointerUpdate.ok) {
+            return pointerUpdate;
+          }
+          const transitioned = await this.dependencies.workOrders.applyQuoteWorkflowTransition(
+            {
+              ...input,
+              atomic,
+              source: "quote_workflow",
+              workOrderId: approved.workOrderId,
+              toStatus: "client_approved",
+            },
+          );
+          if (!transitioned.ok) {
+            return transitioned;
+          }
+          await this.dependencies.domainEvents.record({
+            ...input,
+            atomic,
+            workOrderId: approved.workOrderId,
+            type: "client_approved",
+            visibility: "client",
+            lifecycleStatus: "client_approved",
+            entity: {
+              entityType: "quote",
+              entityId: approved.id,
+              label: "Client quote",
+            },
+            summary: "Approved client quote.",
+            payload: {
+              quoteId: approved.id,
+              status: approved.status,
+            },
+          });
+          return transitioned;
+        })
+      : await (async () => {
+          await this.repositories.clientQuotes.save(approved);
+          const pointerUpdate = await this.dependencies.workOrders.applyQuoteWorkflowPointer({
+            ...input,
+            source: "quote_workflow",
+            workOrderId: approved.workOrderId,
+            currentQuoteId: approved.id,
+          });
+          if (!pointerUpdate.ok) {
+            return pointerUpdate;
+          }
+          const transitioned = await this.dependencies.workOrders.applyQuoteWorkflowTransition(
+            {
+              ...input,
+              source: "quote_workflow",
+              workOrderId: approved.workOrderId,
+              toStatus: "client_approved",
+            },
+          );
+          if (!transitioned.ok) {
+            return transitioned;
+          }
+          await this.dependencies.domainEvents.record({
+            ...input,
+            workOrderId: approved.workOrderId,
+            type: "client_approved",
+            visibility: "client",
+            lifecycleStatus: "client_approved",
+            entity: {
+              entityType: "quote",
+              entityId: approved.id,
+              label: "Client quote",
+            },
+            summary: "Approved client quote.",
+            payload: {
+              quoteId: approved.id,
+              status: approved.status,
+            },
+          });
+          return transitioned;
+        })();
+    if (!transition.ok) {
+      return transition;
+    }
     return serviceOk(approved);
   }
 
@@ -595,13 +752,52 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
       input,
     );
 
-    await this.repositories.clientQuotes.save(rejected);
-    await this.updateWorkOrderClientQuotePointer(rejected.workOrderId, rejected.id, input);
-    await this.updateWorkOrderStatusIfNeeded(
-      rejected.workOrderId,
-      "quote_required",
-      input,
-    );
+    const transition = this.dependencies.atomicPersistence
+      ? await this.dependencies.atomicPersistence.runInTransaction(async (atomic) => {
+          atomic.save("clientQuotes", rejected);
+          const pointerUpdate = await this.dependencies.workOrders.applyQuoteWorkflowPointer({
+            ...input,
+            atomic,
+            source: "quote_workflow",
+            workOrderId: rejected.workOrderId,
+            currentQuoteId: rejected.id,
+          });
+          if (!pointerUpdate.ok) {
+            return pointerUpdate;
+          }
+          return this.dependencies.workOrders.applyQuoteWorkflowTransition(
+            {
+              ...input,
+              atomic,
+              source: "quote_workflow",
+              workOrderId: rejected.workOrderId,
+              toStatus: "quote_required",
+            },
+          );
+        })
+      : await (async () => {
+          await this.repositories.clientQuotes.save(rejected);
+          const pointerUpdate = await this.dependencies.workOrders.applyQuoteWorkflowPointer({
+            ...input,
+            source: "quote_workflow",
+            workOrderId: rejected.workOrderId,
+            currentQuoteId: rejected.id,
+          });
+          if (!pointerUpdate.ok) {
+            return pointerUpdate;
+          }
+          return this.dependencies.workOrders.applyQuoteWorkflowTransition(
+            {
+              ...input,
+              source: "quote_workflow",
+              workOrderId: rejected.workOrderId,
+              toStatus: "quote_required",
+            },
+          );
+        })();
+    if (!transition.ok) {
+      return transition;
+    }
     return serviceOk(rejected);
   }
 
@@ -612,7 +808,7 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
   }
 
   private async createClientQuoteInternal(
-    input: ServiceAuditContext & { workOrderId: string },
+    input: WorkOrderMutationContext & { workOrderId: string },
     payload: {
       workOrderId: string;
       sourceContractorQuoteId?: string | null;
@@ -664,8 +860,29 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
       },
     };
 
-    await this.repositories.clientQuotes.create(quote);
-    await this.updateWorkOrderClientQuotePointer(workOrder.value.id, quote.id, input);
+    const pointerUpdate = this.dependencies.atomicPersistence
+      ? await this.dependencies.atomicPersistence.runInTransaction(async (atomic) => {
+          atomic.create("clientQuotes", quote);
+          return this.dependencies.workOrders.applyQuoteWorkflowPointer({
+            ...input,
+            atomic,
+            source: "quote_workflow",
+            workOrderId: workOrder.value.id,
+            currentQuoteId: quote.id,
+          });
+        })
+      : await (async () => {
+          await this.repositories.clientQuotes.create(quote);
+          return this.dependencies.workOrders.applyQuoteWorkflowPointer({
+            ...input,
+            source: "quote_workflow",
+            workOrderId: workOrder.value.id,
+            currentQuoteId: quote.id,
+          });
+        })();
+    if (!pointerUpdate.ok) {
+      return pointerUpdate;
+    }
     return serviceOk(quote);
   }
 
@@ -690,56 +907,16 @@ class DefaultQuoteWorkflowService implements QuoteWorkflowService {
     return serviceOk(workOrder);
   }
 
-  private async updateWorkOrderClientQuotePointer(
-    workOrderId: string,
-    clientQuoteId: string,
-    input: ServiceAuditContext,
-  ): Promise<void> {
-    const workOrder = await this.repositories.workOrders.getById(workOrderId);
-    if (!workOrder || workOrder.isDeleted) {
-      return;
-    }
-
-    await this.repositories.workOrders.save(
-      touchAuditFields(
-        {
-          ...workOrder,
-          currentQuoteId: clientQuoteId,
-        },
-        input,
-      ),
-    );
-  }
-
   private async updateWorkOrderStatusIfNeeded(
     workOrderId: string,
     nextStatus: WorkOrder["lifecycleStatus"],
-    input: ServiceAuditContext,
-  ): Promise<void> {
-    const workOrder = await this.repositories.workOrders.getById(workOrderId);
-    if (!workOrder || workOrder.isDeleted || workOrder.lifecycleStatus === nextStatus) {
-      return;
-    }
-
-    await this.repositories.workOrders.save(
-      touchAuditFields(
-        {
-          ...workOrder,
-          lifecycleStatus: nextStatus,
-          lastActivityAt: input.now ?? new Date().toISOString(),
-        },
-        input,
-      ),
-    );
-    await this.dependencies.domainEvents.recordTransition({
+    input: WorkOrderMutationContext,
+  ): Promise<ServiceResult<WorkOrder>> {
+    return this.dependencies.workOrders.applyQuoteWorkflowTransition({
       ...input,
+      source: "quote_workflow",
       workOrderId,
-      fromLifecycleStatus: workOrder.lifecycleStatus,
-      toLifecycleStatus: nextStatus,
-      visibility: "internal",
-      metadata: {
-        source: "quote_workflow",
-      },
+      toStatus: nextStatus,
     });
   }
 }

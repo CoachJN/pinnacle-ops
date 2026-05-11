@@ -33,6 +33,7 @@ test("dead-letter replay preserves canonical identifiers and requires force for 
     organizationId: "org-1",
     jobId: claimed.value?.id ?? "",
     workerId: "worker-a",
+    claimToken: claimed.value?.lease.claimToken ?? "",
     now: "2026-05-06T21:00:10.000Z",
     error: {
       code: "not_retryable",

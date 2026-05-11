@@ -36,6 +36,6 @@ export const SESSION_COOKIE_NAME = "__session";
 export const SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 5;
 
 export const APP_SHELL_BRAND = {
-  companyName: "Pinnacle Ops",
+  companyName: "PinnOps",
   productName: "Work Order Platform",
 } as const;

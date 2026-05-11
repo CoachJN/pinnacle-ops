@@ -2,7 +2,6 @@ import "server-only";
 
 import { cookies } from "next/headers";
 import type { DecodedIdToken } from "firebase-admin/auth";
-import type { DocumentData } from "firebase-admin/firestore";
 import { getFirebaseAdminAuth } from "@/lib/firebase/admin";
 import type {
   AppRole,
@@ -19,7 +18,10 @@ import {
 import { AuthenticationError } from "@/lib/utils/errors";
 import { logger } from "@/lib/utils/logger";
 import { serverEnv } from "@/lib/env/server";
-import { getFirebaseAdminFirestore } from "@/server/firebase";
+import {
+  getCanonicalUserProfile,
+  toCanonicalSessionProfile,
+} from "@/server/auth/user-profile";
 
 const authLogger = logger.child({ area: "auth-session" });
 
@@ -202,25 +204,8 @@ async function resolveSessionProfileSafely(
 }
 
 async function resolveSessionProfile(uid: string): Promise<SessionProfile | null> {
-  const snapshot = await getFirebaseAdminFirestore()
-    .collection("users")
-    .doc(uid)
-    .get();
-
-  if (!snapshot.exists) {
-    return null;
-  }
-
-  return normalizeSessionProfile(snapshot.data());
-}
-
-function normalizeSessionProfile(
-  data: DocumentData | undefined,
-): SessionProfile {
-  return {
-    role: readRoleClaim(data?.roleCode ?? data?.role),
-    organizationId: readOptionalString(data?.organizationId),
-  };
+  const profile = await getCanonicalUserProfile(uid);
+  return toCanonicalSessionProfile(profile);
 }
 
 function readRoleClaim(value: unknown): AppRole | null {

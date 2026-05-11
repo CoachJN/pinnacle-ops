@@ -267,11 +267,6 @@ export interface ClientPortalWorkOrderDetail
   description: string;
   locationCode?: string | null;
   locationAddress?: string | null;
-  requestedByContactId?: EntityId | null;
-  siteContactId?: EntityId | null;
-  coordinatorUserId?: EntityId | null;
-  managerUserId?: EntityId | null;
-  assignedContractorId?: EntityId | null;
   dueDate?: IsoDateTimeString | null;
   closedAt?: IsoDateTimeString | null;
   activeQuote?: {

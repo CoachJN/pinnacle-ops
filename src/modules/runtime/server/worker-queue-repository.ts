@@ -25,6 +25,22 @@ export interface WorkerQueueRepository {
   saveJob(job: WorkerJob): Promise<WorkerJob>;
   findJobByIdempotencyKey(input: FindWorkerJobByIdempotencyKeyInput): Promise<WorkerJob | null>;
   claimNextJob(input: ClaimNextWorkerJobInput): Promise<WorkerJob | null>;
+  claimJobById(input: {
+    organizationId: EntityId;
+    tenantId?: EntityId | null;
+    jobId: EntityId;
+    workerId: string;
+    leaseDurationMs: number;
+    now: string;
+  }): Promise<WorkerJob | null>;
+  mutateWithActiveLease(input: {
+    organizationId: EntityId;
+    jobId: EntityId;
+    workerId: string;
+    claimToken: string;
+    now: string;
+    mutate: (job: WorkerJob) => WorkerJob;
+  }): Promise<WorkerJob | null>;
   listJobsByOrganizationId(
     organizationId: EntityId,
     limit?: number,
@@ -68,6 +84,12 @@ export function createWorkerQueueRepository(
     },
     claimNextJob(input) {
       return repositories.runtimeJobs.claimNext(input);
+    },
+    claimJobById(input) {
+      return repositories.runtimeJobs.claimById(input);
+    },
+    mutateWithActiveLease(input) {
+      return repositories.runtimeJobs.mutateWithActiveLease(input);
     },
     listJobsByOrganizationId(organizationId, limit) {
       return repositories.runtimeJobs.listByOrganizationId(organizationId, limit ? { limit } : undefined);

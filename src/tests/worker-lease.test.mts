@@ -42,6 +42,7 @@ test("worker lease claims are single-owner and expired leases are safely reclaim
     organizationId: "org-1",
     jobId: firstClaim.value?.id ?? "",
     workerId: "worker-a",
+    claimToken: firstClaim.value?.lease.claimToken ?? "",
     now: "2026-05-06T13:00:15.000Z",
   });
   assert.equal(running.ok, true);
@@ -60,9 +61,63 @@ test("worker lease claims are single-owner and expired leases are safely reclaim
     organizationId: "org-1",
     jobId: reclaimed.value?.id ?? "",
     workerId: "worker-b",
+    claimToken: reclaimed.value?.lease.claimToken ?? "",
     now: "2026-05-06T13:01:10.000Z",
     leaseDurationMs: 60_000,
   });
   assert.equal(extended.ok, true);
   assert.equal(extended.ok && extended.value.leaseExpiresAt, "2026-05-06T13:02:10.000Z");
+});
+
+test("stale workers cannot extend or complete reclaimed jobs", async () => {
+  const harness = createRuntimeHarness();
+
+  const queued = await harness.runtime.jobs.enqueue({
+    organizationId: "org-1",
+    actor: { userId: "manager-1", role: "manager" },
+    now: "2026-05-06T14:00:00.000Z",
+    type: "sla.timer",
+    payload: { timerId: "timer-stale-1" },
+    payloadVersion: "v1",
+    idempotencyKey: "sla.timer:timer-stale-1",
+    correlationId: "corr-stale-1",
+    causationId: "cause-stale-1",
+  });
+  assert.equal(queued.ok, true);
+
+  const firstClaim = await harness.runtime.lease.claimNext({
+    organizationId: "org-1",
+    workerId: "worker-a",
+    leaseDurationMs: 20_000,
+    now: "2026-05-06T14:00:01.000Z",
+  });
+  assert.equal(firstClaim.ok, true);
+
+  const reclaimed = await harness.runtime.lease.claimNext({
+    organizationId: "org-1",
+    workerId: "worker-b",
+    leaseDurationMs: 45_000,
+    now: "2026-05-06T14:00:30.000Z",
+  });
+  assert.equal(reclaimed.ok, true);
+  assert.equal(reclaimed.value?.lease.reclaimCount, 1);
+
+  const staleExtend = await harness.runtime.lease.extendLease({
+    organizationId: "org-1",
+    jobId: firstClaim.value?.id ?? "",
+    workerId: "worker-a",
+    claimToken: firstClaim.value?.lease.claimToken ?? "",
+    now: "2026-05-06T14:00:31.000Z",
+    leaseDurationMs: 60_000,
+  });
+  assert.equal(staleExtend.ok, false);
+
+  const staleComplete = await harness.runtime.jobs.complete({
+    organizationId: "org-1",
+    jobId: firstClaim.value?.id ?? "",
+    workerId: "worker-a",
+    claimToken: firstClaim.value?.lease.claimToken ?? "",
+    now: "2026-05-06T14:00:32.000Z",
+  });
+  assert.equal(staleComplete.ok, false);
 });

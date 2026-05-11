@@ -49,10 +49,10 @@ describe("work order transition authorization", () => {
     assert.equal(result.ok, true);
   });
 
-  test("allows finance READY_FOR_INVOICING -> COMPLETED", () => {
+  test("allows finance PAID -> COMPLETED", () => {
     const result = authorizeLifecycleTransition({
       lifecycle: "work-order",
-      from: WORK_ORDER_STATUS.ReadyForInvoicing,
+      from: WORK_ORDER_STATUS.Paid,
       to: WORK_ORDER_STATUS.Completed,
       actorType: "USER",
       role: PLATFORM_ROLES.FinanceAdmin,
@@ -267,8 +267,8 @@ describe("transition authorization composition", () => {
   test("fails with lifecycle dependency details before role authorization", () => {
     const result = authorizeLifecycleTransition({
       lifecycle: "work-order",
-      from: WORK_ORDER_STATUS.Triage,
-      to: WORK_ORDER_STATUS.ApprovedToProceed,
+      from: WORK_ORDER_STATUS.Assigned,
+      to: WORK_ORDER_STATUS.Scheduled,
       actorType: "USER",
       role: PLATFORM_ROLES.Coordinator,
       context: {
@@ -279,11 +279,7 @@ describe("transition authorization composition", () => {
 
     assert.equal(result.ok, false);
     assert.equal(result.failureCode, "LIFECYCLE_VALIDATION_FAILED");
-    assert.equal(
-      (result.details?.lifecycleDetails as { dependency?: string } | undefined)
-        ?.dependency,
-      "quote",
-    );
+    assert.equal(result.details?.dependency, "quote");
   });
 
   test("fails safely for unknown roles", () => {

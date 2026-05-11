@@ -101,8 +101,8 @@ export function authorizeLifecycleTransition(
       failureCode: "LIFECYCLE_VALIDATION_FAILED",
       message: lifecycleValidation.message,
       details: {
+        ...(lifecycleValidation.details ?? {}),
         lifecycleFailureCode: lifecycleValidation.failureCode,
-        lifecycleDetails: lifecycleValidation.details,
       },
     };
   }

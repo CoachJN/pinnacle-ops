@@ -82,6 +82,81 @@ test("duplicate provider webhooks noop safely and do not duplicate canonical rec
   assert.equal(second.value.duplicates >= 1, true);
 });
 
+test("concurrent duplicate provider webhooks resolve to one canonical webhook event and receipt", async () => {
+  const harness = createRuntimeHarness();
+  harness.deliveryPlans.push(makeEmailDeliveryPlan("delivery-plan-provider-3", "wo-provider-3"));
+
+  const queued = await harness.runtime.jobs.enqueue({
+    organizationId: "org-1",
+    actor: { userId: "system", role: "system" },
+    now: "2026-05-06T18:00:00.000Z",
+    type: "transport.execute",
+    payloadVersion: "v1",
+    payload: {
+      payloadVersion: "v1",
+      deliveryPlanId: "delivery-plan-provider-3",
+      deliveryType: "escalation.first_response_breach_notification",
+      attemptNumber: 0,
+      reason: "delivery_scheduled",
+      triggerEventType: "delivery_scheduled",
+    },
+    idempotencyKey: "transport.execute:delivery-plan-provider-3:attempt:0",
+    correlationId: "corr-provider-runtime-3",
+    causationId: "delivery-plan-provider-3",
+    sourceEventId: "event-provider-runtime-3",
+    maxAttempts: 1,
+  });
+  assert.equal(queued.ok, true);
+
+  const runner = createWorkerRunnerService(
+    harness.runtime,
+    createWorkerHandlerRegistry<DomainServices>([createTransportExecuteHandler()]),
+  );
+  await runner.processPending({
+    organizationId: "org-1",
+    services: harness as unknown as DomainServices,
+    workerId: "worker-provider-runtime-3",
+    now: "2026-05-06T18:01:00.000Z",
+    jobTypes: ["transport.execute"],
+  });
+
+  const providerMessageId = harness.deliveryAttempts[0]?.providerMessageId;
+  assert.ok(providerMessageId);
+
+  const payload = {
+    value: [
+      {
+        subscriptionId: "sub-1",
+        changeType: "delivered",
+        resourceData: {
+          id: providerMessageId,
+          providerReceiptId: `receipt:${providerMessageId}`,
+          deliveryAttemptId: harness.deliveryAttempts[0]?.id,
+          deliveryPlanId: harness.deliveryAttempts[0]?.deliveryPlanId,
+        },
+      },
+    ],
+  };
+
+  const [first, second] = await Promise.all([
+    harness.providerRuntime.webhooks.handleMicrosoftGraphWebhook({
+      organizationId: "org-1",
+      payload,
+      now: "2026-05-06T18:05:00.000Z",
+    }),
+    harness.providerRuntime.webhooks.handleMicrosoftGraphWebhook({
+      organizationId: "org-1",
+      payload,
+      now: "2026-05-06T18:05:00.000Z",
+    }),
+  ]);
+
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.equal(harness.providerWebhookEvents.length, 1);
+  assert.equal(harness.providerReceipts.filter((item) => item.normalizedStatus === "delivered").length, 1);
+});
+
 function makeEmailDeliveryPlan(id: string, workOrderId: string): DeliveryPlan {
   return {
     id,

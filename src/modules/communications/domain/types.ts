@@ -171,6 +171,17 @@ export interface CommunicationAttachment {
   createdAt: IsoDateTimeString;
 }
 
+export interface CommunicationTimelineAttachment {
+  id: EntityId;
+  fileName: string;
+  contentType: string | null;
+  sizeBytes: number;
+  visibility: CommunicationVisibility[];
+  hydrationStatus: ProviderAttachmentHydrationStatus;
+  hydratedAt: IsoDateTimeString | null;
+  createdAt: IsoDateTimeString;
+}
+
 export interface CommunicationMatchSuggestion {
   id: EntityId;
   organizationId: EntityId;
@@ -203,7 +214,7 @@ export interface CommunicationTimelineEntry {
   createdAt: IsoDateTimeString;
   sentAt: IsoDateTimeString | null;
   actor: CommunicationActorReference;
-  attachments: CommunicationAttachment[];
+  attachments: CommunicationTimelineAttachment[];
   relatedEventIds: EntityId[];
   linkedEntityIds: EntityId[];
 }

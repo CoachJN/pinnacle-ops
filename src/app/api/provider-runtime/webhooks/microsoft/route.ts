@@ -18,14 +18,23 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const services = createDomainServices();
   const payload = await request.json().catch(() => ({}));
-  const organizationId =
-    readHeader(request, "x-organization-id") ??
-    readString((payload as Record<string, unknown>).organizationId) ??
-    "org-1";
   const now = new Date().toISOString();
+  const verified = await services.providerRuntime.webhookSecurity.verifyMicrosoftGraphRequest({
+    payload: payload as Record<string, unknown>,
+    headers: request.headers,
+    now,
+  });
+  if (!verified.ok) {
+    return NextResponse.json(
+      {
+        error: verified.error.safeMessage,
+      },
+      { status: 400 },
+    );
+  }
 
   const handled = await services.providerRuntime.webhooks.handleMicrosoftGraphWebhook({
-    organizationId,
+    organizationId: verified.value.organizationId,
     payload: payload as Record<string, unknown>,
     now,
   });
@@ -40,7 +49,7 @@ export async function POST(request: NextRequest) {
 
   for (const receipt of handled.value.receipts) {
     await services.runtime.jobs.enqueue({
-      organizationId,
+      organizationId: receipt.organizationId,
       actor: { userId: "system", role: "system" },
       now,
       type: "provider.receipt.process",
@@ -60,22 +69,11 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json({
     data: {
+      organizationId: verified.value.organizationId,
+      connectionId: verified.value.connectionId,
       receiptCount: handled.value.receipts.length,
       webhookEventCount: handled.value.events.length,
       duplicates: handled.value.duplicates,
     },
   });
-}
-
-function readHeader(request: NextRequest, key: string): string | null {
-  const value = request.headers.get(key)?.trim();
-  return value ? value : null;
-}
-
-function readString(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
 }

@@ -15,6 +15,7 @@ import {
   type CommunicationParticipant,
   type CommunicationThread,
   type CommunicationTimelineEntry,
+  type CommunicationTimelineAttachment,
   type CommunicationVisibility,
 } from "@/modules/communications";
 import type { AccessActor } from "@/types/auth";
@@ -604,7 +605,11 @@ class DefaultCommunicationQueryService implements CommunicationQueryService {
         createdAt: message.createdAt,
         sentAt: message.sentAt,
         actor: message.createdByActor,
-        attachments: attachmentsByMessageId.get(message.id) ?? [],
+        attachments: toVisibleTimelineAttachments(
+          actor,
+          attachmentsByMessageId.get(message.id) ?? [],
+          this.visibility,
+        ),
         relatedEventIds: message.relatedEventIds,
         linkedEntityIds: message.linkedEntityIds,
       }));
@@ -637,6 +642,25 @@ class DefaultCommunicationQueryService implements CommunicationQueryService {
     );
     return serviceOk(result.items);
   }
+}
+
+function toVisibleTimelineAttachments(
+  actor: AccessActor,
+  attachments: readonly CommunicationAttachment[],
+  visibility: CommunicationVisibilityService,
+): CommunicationTimelineAttachment[] {
+  return attachments
+    .filter((attachment) => visibility.canActorRead(actor, attachment.visibility))
+    .map((attachment) => ({
+      id: attachment.id,
+      fileName: attachment.fileName,
+      contentType: attachment.contentType,
+      sizeBytes: attachment.sizeBytes,
+      visibility: attachment.visibility,
+      hydrationStatus: attachment.hydrationStatus,
+      hydratedAt: attachment.hydratedAt,
+      createdAt: attachment.createdAt,
+    }));
 }
 
 function toCommunicationActor(context: ServiceAuditContext): CommunicationActorReference {

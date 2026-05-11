@@ -32,9 +32,11 @@ import {
   createWorkOrderAttachmentMetadataSchema,
   createWorkOrderNoteSchema,
   getAllowedNextWorkOrderLifecycleStatuses,
+  type CreateWorkOrderDto,
   type WorkOrderAttachment,
   type WorkOrderNote,
 } from "@/modules/work-orders";
+import { validationError } from "@/server/services/errors";
 
 const noteRepository = createWorkOrderNoteRepository();
 const attachmentRepository = createWorkOrderAttachmentRepository();
@@ -52,6 +54,7 @@ export async function listRuntimeWorkOrders(
   context: WorkOrderApiContext,
   request: Request & { nextUrl: URL },
 ) {
+  authorizeInternalRuntimeWorkOrderAccess(context);
   const filters = readListFilters(request);
   const items = await listScopedWorkOrders(context, filters);
   return jsonOk({
@@ -67,6 +70,7 @@ export async function getRuntimeWorkOrderDetail(
   context: WorkOrderApiContext,
   workOrderId: string,
 ) {
+  authorizeInternalRuntimeWorkOrderAccess(context);
   const detail = await getRuntimeWorkOrderDetailData(context, workOrderId);
   return jsonOk({
     data: {
@@ -91,19 +95,10 @@ export async function getRuntimeWorkOrderDetailData(
 
 export async function createRuntimeWorkOrder(
   context: WorkOrderApiContext,
-  payload: {
-    title: string;
-    description: string;
-    priority: "low" | "medium" | "high" | "urgent";
-    clientOrganizationId: EntityId;
-    locationId: EntityId;
-    requestedByContactId?: EntityId | null;
-    coordinatorUserId?: EntityId | null;
-    managerUserId?: EntityId | null;
-    category?: string | null;
-    requestedServiceDate?: string | null;
-  },
+  payload: CreateWorkOrderDto,
 ) {
+  authorizeInternalRuntimeWorkOrderAccess(context);
+  const { source: _source, ...servicePayload } = payload;
   await authorizeWorkOrderCreate(context, {
     clientOrganizationId: payload.clientOrganizationId,
     locationId: payload.locationId,
@@ -111,20 +106,45 @@ export async function createRuntimeWorkOrder(
 
   const result = await context.services.workOrders.create({
     ...context.audit,
-    ...payload,
+    ...servicePayload,
+    priority: toLegacyWorkOrderPriority(payload.priority),
   });
   if (!result.ok) {
     throw result.error;
   }
 
   revalidateWorkOrderPaths(result.value.id);
-  return getRuntimeWorkOrderDetail(context, result.value.id);
+  return jsonOk({
+    data: {
+      workOrder: {
+        id: result.value.id,
+        workOrderNumber: result.value.workOrderNumber,
+        title: result.value.title,
+      },
+    },
+  }, 201);
+}
+
+function toLegacyWorkOrderPriority(
+  priority: CreateWorkOrderDto["priority"],
+): WorkOrderPriority {
+  switch (priority) {
+    case "LOW":
+      return "low";
+    case "MEDIUM":
+      return "medium";
+    case "HIGH":
+      return "high";
+    case "URGENT":
+      return "urgent";
+  }
 }
 
 export async function listRuntimeWorkOrderNotes(
   context: WorkOrderApiContext,
   workOrderId: string,
 ) {
+  authorizeInternalRuntimeWorkOrderAccess(context);
   await requireReadableWorkOrder(context, workOrderId);
   const notes = await listCanonicalAndLegacyNotes(context, workOrderId);
   return jsonOk({
@@ -139,6 +159,7 @@ export async function addRuntimeWorkOrderNote(
   workOrderId: string,
   payload: Record<string, unknown>,
 ) {
+  authorizeInternalRuntimeWorkOrderAccess(context);
   const workOrder = await requireReadableWorkOrder(context, workOrderId);
   if (!canModifyWorkOrderArtifacts(context.actor, workOrder.lifecycleStatus)) {
     throw createAccessDeniedError();
@@ -167,10 +188,73 @@ export async function addRuntimeWorkOrderNote(
   );
 }
 
+export async function listRuntimeWorkOrderCommunications(
+  context: WorkOrderApiContext,
+  workOrderId: string,
+) {
+  authorizeInternalRuntimeWorkOrderAccess(context);
+  const workOrder = await requireReadableWorkOrder(context, workOrderId);
+  const communications = await context.services.communications.query.listTimelineForWorkOrder(
+    workOrder.id,
+    context.actor,
+  );
+  if (!communications.ok) {
+    throw communications.error;
+  }
+  return jsonOk({
+    data: {
+      communications: communications.value,
+    },
+  });
+}
+
+export async function addRuntimeWorkOrderCommunication(
+  context: WorkOrderApiContext,
+  workOrderId: string,
+  payload: Record<string, unknown>,
+) {
+  authorizeInternalRuntimeWorkOrderAccess(context);
+  const workOrder = await requireReadableWorkOrder(context, workOrderId);
+  if (!canModifyWorkOrderArtifacts(context.actor, workOrder.lifecycleStatus)) {
+    throw createAccessDeniedError();
+  }
+
+  const audience = readCommunicationAudience(payload.audience);
+  if (audience === "contractor" && !workOrder.assignedContractorOrgId) {
+    throw validationError("A contractor-visible message requires an assigned contractor.");
+  }
+
+  const communication = await context.services.communications.messages.create({
+    ...context.audit,
+    workOrderId: workOrder.id,
+    channel: "portal_message",
+    direction: "outbound",
+    visibility: [audience],
+    subject: readOptionalBodyText(payload.subject),
+    body: readRequiredBodyText(payload.body, "body"),
+    contractorOrganizationId:
+      audience === "contractor" ? workOrder.assignedContractorOrgId : null,
+  });
+  if (!communication.ok) {
+    throw communication.error;
+  }
+
+  revalidateWorkOrderPaths(workOrder.id);
+  return jsonOk(
+    {
+      data: {
+        communication: communication.value,
+      },
+    },
+    201,
+  );
+}
+
 export async function listRuntimeWorkOrderAttachments(
   context: WorkOrderApiContext,
   workOrderId: string,
 ) {
+  authorizeInternalRuntimeWorkOrderAccess(context);
   const workOrder = await requireReadableWorkOrder(context, workOrderId);
   const attachments = await attachmentRepository.listAttachmentsByWorkOrderId(workOrder.id);
   return jsonOk({
@@ -185,6 +269,7 @@ export async function addRuntimeWorkOrderAttachment(
   workOrderId: string,
   payload: Record<string, unknown>,
 ) {
+  authorizeInternalRuntimeWorkOrderAccess(context);
   const workOrder = await requireReadableWorkOrder(context, workOrderId);
   if (!canModifyWorkOrderArtifacts(context.actor, workOrder.lifecycleStatus)) {
     throw createAccessDeniedError();
@@ -251,6 +336,7 @@ export async function accessRuntimeWorkOrderAttachmentContent(
   workOrderId: string,
   attachmentId: string,
 ) {
+  authorizeInternalRuntimeWorkOrderAccess(context);
   const workOrder = await requireReadableWorkOrder(context, workOrderId);
   const attachments = await attachmentRepository.listAttachmentsByWorkOrderId(workOrder.id);
   const attachment = attachments.find((item) => item.id === attachmentId);
@@ -366,6 +452,14 @@ async function requireReadableWorkOrder(
   return workOrder;
 }
 
+function authorizeInternalRuntimeWorkOrderAccess(
+  context: WorkOrderApiContext,
+): void {
+  if (context.actor.actorType !== "internal") {
+    throw createAccessDeniedError("Operational work-order runtime endpoints are restricted to internal users.");
+  }
+}
+
 async function authorizeRuntimeWorkOrderRead(
   context: WorkOrderApiContext,
   workOrder: WorkOrder,
@@ -373,7 +467,7 @@ async function authorizeRuntimeWorkOrderRead(
   const assignments = await context.repositories.assignments.listByWorkOrderId(workOrder.id);
   const target = {
     id: workOrder.id,
-    organizationId: context.actor.scope.organizationId,
+    organizationId: workOrder.organizationId,
     clientOrganizationId: workOrder.clientOrganizationId,
     locationId: workOrder.locationId,
     status: workOrder.lifecycleStatus,
@@ -423,7 +517,7 @@ function getAllowedTransitions(
       action: "transition",
       target: {
         id: workOrder.id,
-        organizationId: context.actor.scope.organizationId,
+        organizationId: workOrder.organizationId,
         clientOrganizationId: workOrder.clientOrganizationId,
         locationId: workOrder.locationId,
         status: workOrder.lifecycleStatus,
@@ -474,6 +568,28 @@ function canModifyWorkOrderArtifacts(
   status: WorkOrderStatus,
 ) {
   return actor.actorType === "internal" && !isTerminalStatus(status);
+}
+
+function readCommunicationAudience(value: unknown): "client" | "contractor" {
+  if (value === "client" || value === "contractor") {
+    return value;
+  }
+  throw validationError("audience must be either client or contractor.");
+}
+
+function readRequiredBodyText(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw validationError(`${field} is required.`);
+  }
+  return value.trim();
+}
+
+function readOptionalBodyText(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
 }
 
 function isTerminalStatus(status: WorkOrderStatus) {
@@ -557,11 +673,11 @@ async function serializeAttachments(
     fileName: attachment.fileName,
     contentType: attachment.contentType,
     sizeBytes: attachment.sizeBytes,
-    storagePath: attachment.storagePath,
     uploadedBy: attachment.uploadedBy,
     uploadedByDisplayName:
       displayNames.get(attachment.uploadedBy) ?? attachment.uploadedBy,
     createdAt: attachment.createdAt,
+    visibility: ["internal"] as const,
     accessPath: `/api/work-orders/${attachment.workOrderId}/attachments/${attachment.id}/content`,
   }));
 }

@@ -7,6 +7,9 @@ import type { ProviderReceiptNormalizer } from "@/modules/provider-runtime/serve
 import type { DomainEventService } from "@/server/services";
 import { serviceOk, type ServiceResult } from "@/server/services";
 import type { EntityId, IsoDateTimeString } from "@/types/entity";
+import { isAlreadyExistsError } from "@/lib/idempotency/already-exists";
+import { buildStableEntityId } from "@/lib/idempotency/stable-entity-id";
+import type { AtomicPersistenceService } from "@/server/services/atomic-persistence-service";
 
 export interface ProviderWebhookRuntime {
   handleMicrosoftGraphWebhook(input: {
@@ -26,6 +29,7 @@ export function createProviderWebhookRuntime(
     webhookEvents: ProviderWebhookEventRepository;
     normalizer: ProviderReceiptNormalizer;
     domainEvents: DomainEventService;
+    atomicPersistence?: AtomicPersistenceService;
   },
 ): ProviderWebhookRuntime {
   return {
@@ -45,18 +49,11 @@ export function createProviderWebhookRuntime(
           normalizedStatus: candidate.normalizedStatus,
         });
 
-        const existingWebhook = await dependencies.webhookEvents.findByIdempotencyKey({
-          organizationId: input.organizationId,
-          idempotencyKey: webhookIdempotencyKey,
-        });
-        if (existingWebhook) {
-          duplicates += 1;
-          webhookEvents.push(existingWebhook);
-          continue;
-        }
-
         const webhookEvent: ProviderWebhookEvent = {
-          id: dependencies.webhookEvents.newId(),
+          id: buildStableEntityId("provider-webhook", [
+            input.organizationId,
+            webhookIdempotencyKey,
+          ]),
           organizationId: input.organizationId,
           tenantId: input.organizationId,
           providerType: candidate.providerType,
@@ -76,8 +73,22 @@ export function createProviderWebhookRuntime(
           updatedAt: input.now,
           payloadSummary: candidate.payloadSummary,
         };
-        await dependencies.webhookEvents.create(webhookEvent);
-        webhookEvents.push(webhookEvent);
+        try {
+          await dependencies.webhookEvents.create(webhookEvent);
+          webhookEvents.push(webhookEvent);
+        } catch (error) {
+          if (!isAlreadyExistsError(error)) {
+            throw error;
+          }
+
+          const existingWebhook = await dependencies.webhookEvents.getById(webhookEvent.id);
+          if (!existingWebhook) {
+            throw error;
+          }
+          duplicates += 1;
+          webhookEvents.push(existingWebhook);
+          continue;
+        }
 
         await dependencies.domainEvents.record({
           organizationId: input.organizationId,
@@ -113,18 +124,11 @@ export function createProviderWebhookRuntime(
           candidate.providerReceiptId ?? candidate.providerMessageId ?? webhookEvent.id,
           candidate.normalizedStatus,
         ].join(":");
-        const existingReceipt = await dependencies.receipts.findByIdempotencyKey({
-          organizationId: input.organizationId,
-          idempotencyKey: receiptIdempotencyKey,
-        });
-        if (existingReceipt) {
-          duplicates += 1;
-          receipts.push(existingReceipt);
-          continue;
-        }
-
         const receipt: ProviderReceipt = {
-          id: dependencies.receipts.newId(),
+          id: buildStableEntityId("provider-receipt", [
+            input.organizationId,
+            receiptIdempotencyKey,
+          ]),
           organizationId: input.organizationId,
           tenantId: input.organizationId,
           providerType: candidate.providerType,
@@ -148,8 +152,22 @@ export function createProviderWebhookRuntime(
           updatedAt: input.now,
           metadata: candidate.payloadSummary,
         };
-        await dependencies.receipts.create(receipt);
-        receipts.push(receipt);
+        try {
+          await dependencies.receipts.create(receipt);
+          receipts.push(receipt);
+        } catch (error) {
+          if (!isAlreadyExistsError(error)) {
+            throw error;
+          }
+
+          const existingReceipt = await dependencies.receipts.getById(receipt.id);
+          if (!existingReceipt) {
+            throw error;
+          }
+          duplicates += 1;
+          receipts.push(existingReceipt);
+          continue;
+        }
 
         await dependencies.domainEvents.record({
           organizationId: input.organizationId,

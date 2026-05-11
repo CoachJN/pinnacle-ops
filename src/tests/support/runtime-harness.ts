@@ -25,9 +25,12 @@ import type {
 import type { SlaScanCursor, SlaTimer } from "@/modules/sla/index.ts";
 import { createSlaServices } from "@/modules/sla/index.ts";
 import { createRuntimeServices } from "@/modules/runtime/server/worker-runtime-service.ts";
+import { createRuntimeCapacityServices } from "@/modules/runtime-capacity/index.ts";
+import { createInMemoryRuntimeObservabilityRepositories } from "@/modules/operations/server/runtime-observability-repository.ts";
 import type { DomainEvent, DomainEventType } from "@/server/events/types.ts";
 import type {
   FirestoreRepositories,
+  ProviderConnection,
   RepositoryListResult,
   WorkOrder,
 } from "@/server/repositories/index.ts";
@@ -40,6 +43,7 @@ export function createRuntimeHarness() {
   const eventProcessings: EventProcessingRecord[] = [];
   const events: DomainEvent[] = [];
   const workOrders: WorkOrder[] = [];
+  const providerConnections: ProviderConnection[] = [];
   const escalationOrchestrations: EscalationOrchestration[] = [];
   const deliveryPlans: DeliveryPlan[] = [];
   const deliveryAttempts: DeliveryAttempt[] = [];
@@ -61,6 +65,7 @@ export function createRuntimeHarness() {
     slaScanCursors: createSlaScanCursorRepository(slaScanCursors),
     workOrders: createWorkOrderRepository(workOrders),
     userProfiles: createUserProfileRepository(),
+    providerConnections: createProviderConnectionRepository(providerConnections),
   } as Pick<
     FirestoreRepositories,
     | "domainEvents"
@@ -74,6 +79,7 @@ export function createRuntimeHarness() {
     | "slaScanCursors"
     | "workOrders"
     | "userProfiles"
+    | "providerConnections"
   >;
   const sla = createSlaServices(
     repositories,
@@ -94,6 +100,7 @@ export function createRuntimeHarness() {
   const providerRuntime = createProviderRuntimeServices({
     domainEvents: domainEventService,
     attempts: transportRepository,
+    providerConnections: repositories.providerConnections,
     getDeliveryPlanById: repositories.deliveryPlans.getById,
     saveDeliveryPlan: async (plan) => {
       await repositories.deliveryPlans.save(plan);
@@ -109,12 +116,18 @@ export function createRuntimeHarness() {
     providerRuntime: providerRuntime.capture,
     adapters: [createInternalTransportAdapter(), createMicrosoftGraphEmailAdapter()],
   });
+  const runtimeCapacity = createRuntimeCapacityServices({
+    repositories,
+    providerRuntimeStorage: providerRuntime.storage,
+    observability: createInMemoryRuntimeObservabilityRepositories(),
+  });
 
   const runtime = createRuntimeServices(
     repositories,
     {
       domainEvents: domainEventService,
       slaScheduler: sla.scheduler,
+      capacityGuardrails: runtimeCapacity.guardrails,
     },
   );
 
@@ -155,6 +168,16 @@ export function createRuntimeHarnessWithSubscribers(
     {
       domainEvents: createDomainEventService(harness.events),
       slaScheduler: harness.sla.scheduler,
+      capacityGuardrails: createRuntimeCapacityServices({
+        repositories: {
+          runtimeJobs: createWorkerJobRepository(harness.jobs),
+          runtimeDeadLetters: createWorkerDeadLetterRepository(harness.deadLetters),
+          deliveryAttempts: createDeliveryAttemptRepository(harness.deliveryAttempts),
+          escalationOrchestrations: createEscalationOrchestrationRepository(harness.escalationOrchestrations),
+        },
+        providerRuntimeStorage: harness.providerRuntime.storage,
+        observability: createInMemoryRuntimeObservabilityRepositories(),
+      }).guardrails,
       subscriberRegistry: {
         list: () =>
           subscribers.map((subscriber) => ({
@@ -185,7 +208,7 @@ function createDeliveryPlanRepository(store: DeliveryPlan[]): FirestoreRepositor
       return store.find((item) => item.id === id) ?? null;
     },
     async create(entity) {
-      store.push(entity);
+      insertUniqueById(store, entity);
       return { id: entity.id, item: entity };
     },
     async save(entity) {
@@ -247,7 +270,7 @@ function createDeliveryAttemptRepository(store: DeliveryAttempt[]): FirestoreRep
       return store.find((item) => item.id === id) ?? null;
     },
     async create(entity) {
-      store.push(entity);
+      insertUniqueById(store, entity);
       return { id: entity.id, item: entity };
     },
     async save(entity) {
@@ -296,7 +319,7 @@ function createProviderReceiptRepository(store: ProviderReceipt[]) {
       return store.find((item) => item.id === id) ?? null;
     },
     async create(entity: ProviderReceipt) {
-      store.push(entity);
+      insertUniqueById(store, entity);
     },
     async save(entity: ProviderReceipt) {
       upsertById(store, entity);
@@ -360,7 +383,7 @@ function createProviderWebhookEventRepository(store: ProviderWebhookEvent[]) {
       return store.find((item) => item.id === id) ?? null;
     },
     async create(entity: ProviderWebhookEvent) {
-      store.push(entity);
+      insertUniqueById(store, entity);
     },
     async save(entity: ProviderWebhookEvent) {
       upsertById(store, entity);
@@ -484,7 +507,7 @@ function createWorkOrderRepository(store: WorkOrder[]): FirestoreRepositories["w
       return store.find((item) => item.id === id) ?? null;
     },
     async create(entity: WorkOrder) {
-      store.push(entity);
+      insertUniqueById(store, entity);
       return { id: entity.id, item: entity };
     },
     async save(entity: WorkOrder) {
@@ -518,6 +541,43 @@ function createWorkOrderRepository(store: WorkOrder[]): FirestoreRepositories["w
   } as unknown as FirestoreRepositories["workOrders"];
 }
 
+function createProviderConnectionRepository(
+  store: ProviderConnection[],
+): FirestoreRepositories["providerConnections"] {
+  return {
+    newId() {
+      return `provider-connection-${store.length + 1}`;
+    },
+    async getById(id) {
+      return store.find((item) => item.id === id) ?? null;
+    },
+    async create(entity) {
+      insertUniqueById(store, entity);
+      return { id: entity.id, item: entity };
+    },
+    async save(entity) {
+      upsertById(store, entity);
+      return { id: entity.id, item: entity };
+    },
+    async listByOrganizationId(organizationId) {
+      return asList(store.filter((item) => item.organizationId === organizationId));
+    },
+    async findByWebhookSubscription(input) {
+      return store.find((item) =>
+        item.providerKey === input.providerKey &&
+        item.metadata.webhookSubscriptionId === input.subscriptionId
+      ) ?? null;
+    },
+    async findByMailboxAddress(input) {
+      return store.find((item) =>
+        item.organizationId === input.organizationId &&
+        item.providerKey === input.providerKey &&
+        item.mailboxAddress === input.mailboxAddress
+      ) ?? null;
+    },
+  };
+}
+
 function createSlaTimerRepository(store: SlaTimer[]): FirestoreRepositories["slaTimers"] {
   return {
     newId() {
@@ -527,7 +587,7 @@ function createSlaTimerRepository(store: SlaTimer[]): FirestoreRepositories["sla
       return store.find((item) => item.id === id) ?? null;
     },
     async create(entity) {
-      store.push(entity);
+      insertUniqueById(store, entity);
       return { id: entity.id, item: entity };
     },
     async save(entity) {
@@ -582,7 +642,7 @@ function createSlaScanCursorRepository(
       return store.find((item) => item.id === id) ?? null;
     },
     async create(entity) {
-      store.push(entity);
+      insertUniqueById(store, entity);
       return { id: entity.id, item: entity };
     },
     async save(entity) {
@@ -615,7 +675,7 @@ function createWorkerJobRepository(store: WorkerJob[]): FirestoreRepositories["r
       return store.find((item) => item.id === id) ?? null;
     },
     async create(entity) {
-      store.push(entity);
+      insertUniqueById(store, entity);
       return { id: entity.id, item: entity };
     },
     async save(entity) {
@@ -655,13 +715,26 @@ function createWorkerJobRepository(store: WorkerJob[]): FirestoreRepositories["r
         )
         .sort((left, right) => left.runAfter.localeCompare(right.runAfter))[0] ?? null;
       if (queued) {
+        const normalizedQueued = ensureWorkerJobLeaseState(queued);
+        const nextVersion = (normalizedQueued.lease.leaseVersion ?? 0) + 1;
         const claimed = {
-          ...queued,
+          ...normalizedQueued,
           status: "leased" as const,
           leasedBy: input.workerId,
           leaseExpiresAt: new Date(Date.parse(input.now) + input.leaseDurationMs).toISOString(),
+          lease: {
+            workerId: input.workerId,
+            claimToken: `${normalizedQueued.id}:lease:${nextVersion}`,
+            leaseVersion: nextVersion,
+            claimedAt: input.now,
+            leaseExpiresAt: new Date(Date.parse(input.now) + input.leaseDurationMs).toISOString(),
+            heartbeatAt: input.now,
+            reclaimedAt: normalizedQueued.lease.reclaimedAt,
+            reclaimedBy: normalizedQueued.lease.reclaimedBy,
+            reclaimCount: normalizedQueued.lease.reclaimCount,
+          },
           updatedAt: input.now,
-          attemptCount: queued.attemptCount + 1,
+          attemptCount: normalizedQueued.attemptCount + 1,
         };
         upsertById(store, claimed);
         return claimed;
@@ -680,16 +753,118 @@ function createWorkerJobRepository(store: WorkerJob[]): FirestoreRepositories["r
         return null;
       }
 
+      const normalizedExpired = ensureWorkerJobLeaseState(expired);
       const reclaimed = {
-        ...expired,
+        ...normalizedExpired,
         status: "leased" as const,
         leasedBy: input.workerId,
         leaseExpiresAt: new Date(Date.parse(input.now) + input.leaseDurationMs).toISOString(),
+        lease: {
+          workerId: input.workerId,
+          claimToken: `${normalizedExpired.id}:lease:${(normalizedExpired.lease.leaseVersion ?? 0) + 1}`,
+          leaseVersion: (normalizedExpired.lease.leaseVersion ?? 0) + 1,
+          claimedAt: input.now,
+          leaseExpiresAt: new Date(Date.parse(input.now) + input.leaseDurationMs).toISOString(),
+          heartbeatAt: input.now,
+          reclaimedAt: input.now,
+          reclaimedBy: input.workerId,
+          reclaimCount: (normalizedExpired.lease.reclaimCount ?? 0) + 1,
+        },
         updatedAt: input.now,
-        attemptCount: expired.attemptCount + 1,
+        attemptCount: normalizedExpired.attemptCount + 1,
       };
       upsertById(store, reclaimed);
       return reclaimed;
+    },
+    async claimById(input) {
+      const candidate = store.find((item) => item.id === input.jobId && item.organizationId === input.organizationId) ?? null;
+      if (!candidate) {
+        return null;
+      }
+      if (input.tenantId && candidate.tenantId !== input.tenantId) {
+        return null;
+      }
+
+      const normalizedCandidate = ensureWorkerJobLeaseState(candidate);
+      const canClaim =
+        (normalizedCandidate.status === "queued" && normalizedCandidate.runAfter <= input.now) ||
+        ((normalizedCandidate.status === "leased" || normalizedCandidate.status === "running") &&
+          normalizedCandidate.leaseExpiresAt !== null &&
+          normalizedCandidate.leaseExpiresAt <= input.now);
+      if (!canClaim) {
+        return null;
+      }
+
+      const claimed = {
+        ...normalizedCandidate,
+        status: "leased" as const,
+        leasedBy: input.workerId,
+        leaseExpiresAt: new Date(Date.parse(input.now) + input.leaseDurationMs).toISOString(),
+        lease: {
+          workerId: input.workerId,
+          claimToken: `${normalizedCandidate.id}:lease:${(normalizedCandidate.lease.leaseVersion ?? 0) + 1}`,
+          leaseVersion: (normalizedCandidate.lease.leaseVersion ?? 0) + 1,
+          claimedAt: input.now,
+          leaseExpiresAt: new Date(Date.parse(input.now) + input.leaseDurationMs).toISOString(),
+          heartbeatAt: input.now,
+          reclaimedAt:
+            normalizedCandidate.lease.workerId !== null &&
+            normalizedCandidate.leaseExpiresAt !== null &&
+            normalizedCandidate.leaseExpiresAt <= input.now
+              ? input.now
+              : normalizedCandidate.lease.reclaimedAt,
+          reclaimedBy:
+            normalizedCandidate.lease.workerId !== null &&
+            normalizedCandidate.leaseExpiresAt !== null &&
+            normalizedCandidate.leaseExpiresAt <= input.now
+              ? input.workerId
+              : normalizedCandidate.lease.reclaimedBy,
+          reclaimCount:
+            (normalizedCandidate.lease.reclaimCount ?? 0) +
+            (normalizedCandidate.lease.workerId !== null &&
+            normalizedCandidate.leaseExpiresAt !== null &&
+            normalizedCandidate.leaseExpiresAt <= input.now ? 1 : 0),
+        },
+        updatedAt: input.now,
+        attemptCount: normalizedCandidate.attemptCount + 1,
+      };
+      upsertById(store, claimed);
+      return claimed;
+    },
+    async mutateWithActiveLease(input) {
+      const current = store.find((item) => item.id === input.jobId && item.organizationId === input.organizationId) ?? null;
+      const normalizedCurrent = current ? ensureWorkerJobLeaseState(current) : null;
+      if (
+        !normalizedCurrent ||
+        normalizedCurrent.leasedBy !== input.workerId ||
+        normalizedCurrent.lease.workerId !== input.workerId ||
+        normalizedCurrent.lease.claimToken !== input.claimToken ||
+        normalizedCurrent.leaseExpiresAt === null ||
+        normalizedCurrent.leaseExpiresAt <= input.now ||
+        (normalizedCurrent.status !== "leased" && normalizedCurrent.status !== "running")
+      ) {
+        return null;
+      }
+      const updated = ensureWorkerJobLeaseState(input.mutate(normalizedCurrent));
+      upsertById(store, updated);
+      return updated;
+    },
+  };
+}
+
+function ensureWorkerJobLeaseState(job: WorkerJob): WorkerJob {
+  return {
+    ...job,
+    lease: job.lease ?? {
+      workerId: job.leasedBy ?? null,
+      claimToken: null,
+      leaseVersion: 0,
+      claimedAt: null,
+      leaseExpiresAt: job.leaseExpiresAt ?? null,
+      heartbeatAt: null,
+      reclaimedAt: null,
+      reclaimedBy: null,
+      reclaimCount: 0,
     },
   };
 }
@@ -705,7 +880,7 @@ function createWorkerDeadLetterRepository(
       return store.find((item) => item.id === id) ?? null;
     },
     async create(entity) {
-      store.push(entity);
+      insertUniqueById(store, entity);
       return { id: entity.id, item: entity };
     },
     async save(entity) {
@@ -735,7 +910,7 @@ function createEventProcessingRepository(
       return store.find((item) => item.id === id) ?? null;
     },
     async create(entity) {
-      store.push(entity);
+      insertUniqueById(store, entity);
       return { id: entity.id, item: entity };
     },
     async save(entity) {
@@ -772,7 +947,7 @@ function createEscalationOrchestrationRepository(
       return store.find((item) => item.id === id) ?? null;
     },
     async create(entity) {
-      store.push(entity);
+      insertUniqueById(store, entity);
       return { id: entity.id, item: entity };
     },
     async save(entity) {
@@ -840,7 +1015,7 @@ function createDomainEventService(events: DomainEvent[]): DomainEventService {
         },
         payload: input.payload,
       } as DomainEvent<TType>;
-      events.push(event as DomainEvent);
+      insertUniqueById(events, event as DomainEvent);
       return serviceOk(event);
     },
     async recordTransition() {
@@ -864,7 +1039,7 @@ function createDomainEventRepository(events: DomainEvent[]): FirestoreRepositori
       return events.find((item) => item.id === id) ?? null;
     },
     async create(entity) {
-      events.push(entity);
+      insertUniqueById(events, entity);
       return { id: entity.id, item: entity };
     },
     async save(entity) {
@@ -898,6 +1073,15 @@ function upsertById<T extends { id: string }>(store: T[], entity: T): void {
   if (index >= 0) {
     store.splice(index, 1, entity);
     return;
+  }
+  store.push(entity);
+}
+
+function insertUniqueById<T extends { id: string }>(store: T[], entity: T): void {
+  if (store.some((item) => item.id === entity.id)) {
+    const error = new Error(`Entity ${entity.id} already exists.`);
+    (error as Error & { code?: string }).code = "already-exists";
+    throw error;
   }
   store.push(entity);
 }

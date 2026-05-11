@@ -38,11 +38,14 @@ import type {
 } from "@/modules/providers";
 import type { EventActor, TimelineEntry } from "@/server/events/types";
 import type { FirestoreRepositories, WorkOrder } from "@/server/repositories";
-import { notFoundError, validationError } from "./errors";
+import { buildStableEntityId } from "@/lib/idempotency/stable-entity-id";
+import { isAlreadyExistsError } from "@/lib/idempotency/already-exists";
+import { conflictError, notFoundError, validationError } from "./errors";
 import type { DomainEventService } from "./domain-event-service";
 import type { CommunicationDomainServices } from "./communication-service";
 import type { TimelineService } from "./timeline-service";
 import type { WorkOrderService } from "./work-order-service";
+import type { AtomicPersistenceContext, AtomicPersistenceService } from "./atomic-persistence-service";
 import {
   createAuditFields,
   nowIso,
@@ -52,6 +55,7 @@ import {
   type ServiceAuditContext,
   type ServiceResult,
 } from "./types";
+import type { WorkOrderMutationContext } from "./work-order-mutation-context";
 
 export interface CreateIntakeEventInput extends ServiceAuditContext {
   source: IntakeSourceReference;
@@ -106,7 +110,7 @@ export interface ScreenIntakeDuplicatesInput extends ServiceAuditContext {
   workOrderMatchSuggestions?: AiIntakeDraft["workOrderMatchSuggestions"];
 }
 
-export interface ReviewAiIntakeDraftInput extends ServiceAuditContext {
+export interface ReviewAiIntakeDraftInput extends WorkOrderMutationContext {
   aiIntakeDraftId: EntityId;
   decision: IntakeReviewDecision;
   reviewerNotes?: string | null;
@@ -126,13 +130,13 @@ export interface AssignIntakeReviewInput extends ServiceAuditContext {
   assignedReviewerUserId: EntityId | null;
 }
 
-export interface EscalateIntakeReviewInput extends ServiceAuditContext {
+export interface EscalateIntakeReviewInput extends WorkOrderMutationContext {
   aiIntakeDraftId: EntityId;
   reviewerNotes?: string | null;
   escalatedToUserId?: EntityId | null;
 }
 
-export interface ResolveIntakeDuplicateInput extends ServiceAuditContext {
+export interface ResolveIntakeDuplicateInput extends WorkOrderMutationContext {
   aiIntakeDraftId: EntityId;
   action: IntakeDuplicateWorkflowDecision;
   candidateIds: EntityId[];
@@ -295,6 +299,7 @@ export function createIntakeServices(
     domainEvents: DomainEventService;
     timeline: TimelineService;
     workOrders: WorkOrderService;
+    atomicPersistence?: AtomicPersistenceService;
   },
 ): IntakeDomainServices {
   const services = new DefaultIntakeDomainServices(repositories, dependencies);
@@ -355,6 +360,7 @@ class DefaultIntakeDomainServices {
       domainEvents: DomainEventService;
       timeline: TimelineService;
       workOrders: WorkOrderService;
+      atomicPersistence?: AtomicPersistenceService;
     },
   ) {}
 
@@ -608,6 +614,7 @@ class DefaultIntakeDomainServices {
   ): Promise<ServiceResult<{ draft: AiIntakeDraft; decision: IntakeDecision }>> {
     const result = await this.completeReviewDecision({
       ...input,
+      source: "intake_review",
       decision: "escalate",
       escalatedToUserId: input.escalatedToUserId ?? null,
       falsePositiveDuplicateCandidateIds: [],
@@ -674,6 +681,7 @@ class DefaultIntakeDomainServices {
     if (input.action === "create_new") {
       const result = await this.completeReviewDecision({
         ...input,
+        source: "intake_review",
         decision: input.approvedInput ? "approve_with_edits" : "approve",
         reviewerNotes: input.reviewerNotes,
         falsePositiveDuplicateCandidateIds: input.candidateIds,
@@ -688,6 +696,7 @@ class DefaultIntakeDomainServices {
     if (input.action === "merge_into_existing") {
       const result = await this.completeReviewDecision({
         ...input,
+        source: "intake_review",
         decision: "merge_into_existing",
         mergedIntoWorkOrderId: input.mergedIntoWorkOrderId ?? null,
         reviewerNotes: input.reviewerNotes,
@@ -701,6 +710,7 @@ class DefaultIntakeDomainServices {
 
     const result = await this.completeReviewDecision({
       ...input,
+      source: "intake_review",
       decision: "escalate",
       reviewerNotes: input.reviewerNotes,
       falsePositiveDuplicateCandidateIds: [],
@@ -1170,10 +1180,38 @@ class DefaultIntakeDomainServices {
     if (input.decision === "merge_into_existing" && !input.mergedIntoWorkOrderId) {
       return serviceFail(validationError("mergedIntoWorkOrderId is required for merge decisions."));
     }
+    if (
+      (loaded.value.draft.reviewStatus === "converted" ||
+        loaded.value.draft.reviewStatus === "merged_into_existing") &&
+      loaded.value.event.latestDecisionId
+    ) {
+      const existingDecision = await this.repositories.intakeDecisions.getById(
+        loaded.value.event.latestDecisionId,
+      );
+      if (existingDecision) {
+        if (existingDecision.decision !== input.decision) {
+          return serviceFail(conflictError("Intake draft already has a different terminal review decision."));
+        }
+
+        const existingApproval = await this.repositories.intakeApprovals.getById(
+          buildStableEntityId("intake-approval", [loaded.value.draft.id]),
+        );
+        return serviceOk({
+          draft: loaded.value.draft,
+          decision: existingDecision,
+          approval: existingApproval,
+          workOrderId:
+            existingDecision.approvedWorkOrderId ??
+            existingDecision.mergedIntoWorkOrderId ??
+            loaded.value.event.relatedWorkOrderId ??
+            null,
+        });
+      }
+    }
 
     const reviewedAt = input.now ?? nowIso();
     const decision: IntakeDecision = {
-      id: this.repositories.intakeDecisions.newId(),
+      id: buildStableEntityId("intake-decision", [loaded.value.draft.id]),
       ...createAuditFields(input),
       tenantId: input.organizationId,
       intakeEventId: loaded.value.event.id,
@@ -1219,6 +1257,11 @@ class DefaultIntakeDomainServices {
 
       const workOrderResult = await this.dependencies.workOrders.create({
         ...input,
+        source: "intake_review",
+        requestedWorkOrderId: buildStableEntityId("work-order", [
+          input.organizationId,
+          loaded.value.draft.id,
+        ]),
         now: reviewedAt,
         title: approvedInput.value.title,
         description: approvedInput.value.description,
@@ -1241,7 +1284,7 @@ class DefaultIntakeDomainServices {
       approvedWorkOrderId = workOrderResult.value.id;
       decision.approvedWorkOrderId = approvedWorkOrderId;
       approval = {
-        id: this.repositories.intakeApprovals.newId(),
+        id: buildStableEntityId("intake-approval", [loaded.value.draft.id]),
         ...createAuditFields(input),
         tenantId: input.organizationId,
         intakeEventId: loaded.value.event.id,
@@ -1265,7 +1308,7 @@ class DefaultIntakeDomainServices {
       approvedWorkOrderId = input.mergedIntoWorkOrderId ?? null;
       decision.mergedIntoWorkOrderId = approvedWorkOrderId;
       approval = {
-        id: this.repositories.intakeApprovals.newId(),
+        id: buildStableEntityId("intake-approval", [loaded.value.draft.id]),
         ...createAuditFields(input),
         tenantId: input.organizationId,
         intakeEventId: loaded.value.event.id,
@@ -1293,9 +1336,31 @@ class DefaultIntakeDomainServices {
       nextEventStatus = "escalated";
     }
 
-    await this.repositories.intakeDecisions.create(decision);
+    try {
+      await this.repositories.intakeDecisions.create(decision);
+    } catch (error) {
+      if (!isAlreadyExistsError(error)) {
+        throw error;
+      }
+
+      const existingDecision = await this.repositories.intakeDecisions.getById(decision.id);
+      if (!existingDecision) {
+        throw error;
+      }
+      if (existingDecision.decision !== decision.decision) {
+        return serviceFail(conflictError("Intake draft already has a different terminal review decision."));
+      }
+      decision.approvedWorkOrderId = existingDecision.approvedWorkOrderId;
+      decision.mergedIntoWorkOrderId = existingDecision.mergedIntoWorkOrderId;
+    }
     if (approval) {
-      await this.repositories.intakeApprovals.create(approval);
+      try {
+        await this.repositories.intakeApprovals.create(approval);
+      } catch (error) {
+        if (!isAlreadyExistsError(error)) {
+          throw error;
+        }
+      }
     }
 
     const reviewedDraft = touchAuditFields(
@@ -1887,8 +1952,16 @@ class DefaultIntakeDomainServices {
     replaySourceReceiptId: EntityId | null;
   }): Promise<ProviderMessageReceipt> {
     const processedAt = input.receivedAt;
+    const receiptId = buildStableEntityId("provider-message-receipt", [
+      input.organizationId,
+      input.payload.provider.providerKey,
+      input.payload.provider.providerConnectionId,
+      input.payload.provider.externalMessageId,
+      input.payload.provider.externalInternetMessageId ?? input.payload.emailMessage?.internetMessageId ?? null,
+      input.fingerprint,
+    ]);
     const receipt: ProviderMessageReceipt = {
-      id: this.repositories.providerMessageReceipts.newId(),
+      id: receiptId,
       organizationId: input.organizationId,
       tenantId: input.organizationId,
       providerKey: input.payload.provider.providerKey,
@@ -1924,7 +1997,19 @@ class DefaultIntakeDomainServices {
       },
       createdAt: processedAt,
     };
-    await this.repositories.providerMessageReceipts.create(receipt);
+    try {
+      await this.repositories.providerMessageReceipts.create(receipt);
+    } catch (error) {
+      if (!isAlreadyExistsError(error)) {
+        throw error;
+      }
+
+      const existing = await this.repositories.providerMessageReceipts.getById(receiptId);
+      if (!existing) {
+        throw error;
+      }
+      return existing;
+    }
     return receipt;
   }
 

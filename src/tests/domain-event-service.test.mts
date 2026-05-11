@@ -41,6 +41,34 @@ test("recordTransition persists immutable domain, transition, and audit records"
   assert.equal(harness.transitionAudits[0].actor.actorRole, USER_ROLES.Manager);
 });
 
+test("recordTransition is idempotent for duplicate retry context", async () => {
+  const harness = createEventRepoHarness();
+  const service = createDomainEventService(harness.repositories);
+
+  const input = {
+    organizationId: "org-1",
+    actor: { userId: "user-1", role: USER_ROLES.Manager },
+    requestId: "req-transition-1",
+    correlationId: "corr-transition-1",
+    workOrderId: "wo-1",
+    fromLifecycleStatus: "assigned",
+    toLifecycleStatus: "on_hold",
+    visibility: "internal" as const,
+    reason: "Awaiting client access",
+    holdContext: { code: "awaiting_access" },
+  };
+
+  const first = await service.recordTransition(input);
+  const second = await service.recordTransition(input);
+
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.equal(harness.domainEvents.length, 1);
+  assert.equal(harness.transitionEvents.length, 1);
+  assert.equal(harness.transitionAudits.length, 1);
+  assert.equal(first.value.domainEvent.id, second.value.domainEvent.id);
+});
+
 test("timeline listing is ordered and visibility-filtered by actor", async () => {
   const harness = createEventRepoHarness();
   harness.domainEvents.push(
@@ -117,7 +145,7 @@ function createEventRepoHarness() {
         return domainEvents.find((event) => event.id === id) ?? null;
       },
       async create(entity) {
-        domainEvents.push(entity);
+        insertUnique(domainEvents, entity);
         return { id: entity.id, item: entity };
       },
       async save() {
@@ -147,7 +175,7 @@ function createEventRepoHarness() {
         return transitionEvents.find((event) => event.id === id) ?? null;
       },
       async create(entity) {
-        transitionEvents.push(entity);
+        insertUnique(transitionEvents, entity);
         return { id: entity.id, item: entity };
       },
       async save() {
@@ -166,7 +194,7 @@ function createEventRepoHarness() {
         return transitionAudits.find((audit) => audit.id === id) ?? null;
       },
       async create(entity) {
-        transitionAudits.push(entity);
+        insertUnique(transitionAudits, entity);
         return { id: entity.id, item: entity };
       },
       async save() {
@@ -182,6 +210,15 @@ function createEventRepoHarness() {
   };
 
   return { repositories, domainEvents, transitionEvents, transitionAudits };
+}
+
+function insertUnique<T extends { id: string }>(store: T[], entity: T) {
+  if (store.some((item) => item.id === entity.id)) {
+    const error = new Error(`Entity ${entity.id} already exists.`);
+    (error as Error & { code?: string }).code = "already-exists";
+    throw error;
+  }
+  store.push(entity);
 }
 
 function makeDomainEvent(overrides: Partial<DomainEvent>): DomainEvent {

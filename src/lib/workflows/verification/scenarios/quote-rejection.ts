@@ -38,16 +38,10 @@ export const quoteRejectionScenario = makeScenario({
       role: PLATFORM_ROLES.Coordinator,
     }),
     workOrderTransitionStep({
-      stepKey: "wo-awaiting-quote",
-      description: "Coordinator waits on quote.",
-      to: WORK_ORDER_STATUS.AwaitingQuote,
-      role: PLATFORM_ROLES.Coordinator,
-    }),
-    workOrderTransitionStep({
       stepKey: "wo-quote-received",
-      description: "Coordinator marks quote received.",
+      description: "Contractor quote submission advances the work order to quote received.",
       to: WORK_ORDER_STATUS.QuoteReceived,
-      role: PLATFORM_ROLES.Coordinator,
+      role: PLATFORM_ROLES.ContractorUser,
     }),
     workOrderTransitionStep({
       stepKey: "wo-quote-review",

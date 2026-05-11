@@ -433,6 +433,10 @@ export interface ProviderConnectionRepository extends EntityRepository<ProviderC
     organizationId: EntityId,
     options?: RepositoryListOptions,
   ): Promise<RepositoryListResult<ProviderConnection>>;
+  findByWebhookSubscription(input: {
+    providerKey: ProviderConnection["providerKey"];
+    subscriptionId: string;
+  }): Promise<ProviderConnection | null>;
   findByMailboxAddress(input: {
     organizationId: EntityId;
     providerKey: ProviderConnection["providerKey"];
@@ -463,6 +467,21 @@ export interface ProviderSyncRunRepository extends EntityRepository<ProviderSync
     organizationId: EntityId,
     options?: RepositoryListOptions,
   ): Promise<RepositoryListResult<ProviderSyncRun>>;
+  claimRun(input: {
+    organizationId: EntityId;
+    syncRunId: EntityId;
+    claimedBy: string;
+    claimedAt: string;
+    leaseExpiresAt: string;
+  }): Promise<ProviderSyncRun | null>;
+  mutateWithActiveClaim(input: {
+    organizationId: EntityId;
+    syncRunId: EntityId;
+    claimedBy: string;
+    claimToken: string;
+    now: string;
+    mutate: (run: ProviderSyncRun) => ProviderSyncRun;
+  }): Promise<ProviderSyncRun | null>;
 }
 
 export interface ProviderMessageReceiptRepository extends EntityRepository<ProviderMessageReceipt> {
@@ -516,6 +535,22 @@ export interface WorkerJobRepository extends EntityRepository<WorkerJob> {
     leaseDurationMs: number;
     now: string;
     jobTypes?: readonly string[];
+  }): Promise<WorkerJob | null>;
+  claimById(input: {
+    organizationId: EntityId;
+    tenantId?: EntityId | null;
+    jobId: EntityId;
+    workerId: string;
+    leaseDurationMs: number;
+    now: string;
+  }): Promise<WorkerJob | null>;
+  mutateWithActiveLease(input: {
+    organizationId: EntityId;
+    jobId: EntityId;
+    workerId: string;
+    claimToken: string;
+    now: string;
+    mutate: (job: WorkerJob) => WorkerJob;
   }): Promise<WorkerJob | null>;
   listByTimer(input: {
     organizationId: EntityId;
@@ -1586,6 +1621,26 @@ class FirestoreProviderConnectionRepository
       item.mailboxAddress?.trim().toLowerCase() === normalizedMailboxAddress
     ) ?? null;
   }
+
+  async findByWebhookSubscription(input: {
+    providerKey: ProviderConnection["providerKey"];
+    subscriptionId: string;
+  }): Promise<ProviderConnection | null> {
+    const normalizedSubscriptionId = input.subscriptionId.trim();
+    if (!normalizedSubscriptionId) {
+      return null;
+    }
+
+    const result = await this.listFromQuery(
+      this.collection
+        .where("providerKey", "==", input.providerKey)
+        .where("metadata.webhookSubscriptionId", "==", normalizedSubscriptionId)
+        .where("isDeleted", "==", false)
+        .limit(2),
+    );
+
+    return result.items[0] ?? null;
+  }
 }
 
 class FirestoreProviderSyncCheckpointRepository
@@ -1651,6 +1706,101 @@ class FirestoreProviderSyncRunRepository
       .where("isDeleted", "==", false)
       .orderBy("startedAt", "desc");
     return this.listFromQuery(this.withLimit(query, options));
+  }
+
+  async claimRun(input: {
+    organizationId: EntityId;
+    syncRunId: EntityId;
+    claimedBy: string;
+    claimedAt: string;
+    leaseExpiresAt: string;
+  }): Promise<ProviderSyncRun | null> {
+    return this.firestore.runTransaction(async (transaction) => {
+      const document = await transaction.get(this.collection.doc(input.syncRunId));
+      if (!document.exists) {
+        return null;
+      }
+
+      const current = this.fromSnapshot(document as QueryDocumentSnapshot<ProviderSyncRunDocument>);
+      if (current.organizationId !== input.organizationId) {
+        return null;
+      }
+      if (!this.canClaimRun(current, input.claimedAt, input.claimedBy)) {
+        return null;
+      }
+
+      const nextVersion = (current.claim.claimVersion ?? 0) + 1;
+      const reclaimed =
+        current.claim.claimedBy !== null &&
+        current.claim.claimedBy !== input.claimedBy &&
+        current.claim.leaseExpiresAt !== null &&
+        current.claim.leaseExpiresAt <= input.claimedAt;
+      const claimed: ProviderSyncRun = {
+        ...current,
+        claim: {
+          claimedBy: input.claimedBy,
+          claimToken: `${current.id}:claim:${nextVersion}`,
+          claimVersion: nextVersion,
+          claimedAt: input.claimedAt,
+          leaseExpiresAt: input.leaseExpiresAt,
+          heartbeatAt: input.claimedAt,
+          releasedAt: null,
+          reclaimedAt: reclaimed ? input.claimedAt : current.claim.reclaimedAt,
+          reclaimedBy: reclaimed ? input.claimedBy : current.claim.reclaimedBy,
+          reclaimCount: (current.claim.reclaimCount ?? 0) + (reclaimed ? 1 : 0),
+        },
+        updatedAt: input.claimedAt,
+      };
+      transaction.set(document.ref, this.mapper.toDocument(claimed) as DocumentData, { merge: true });
+      return claimed;
+    });
+  }
+
+  async mutateWithActiveClaim(input: {
+    organizationId: EntityId;
+    syncRunId: EntityId;
+    claimedBy: string;
+    claimToken: string;
+    now: string;
+    mutate: (run: ProviderSyncRun) => ProviderSyncRun;
+  }): Promise<ProviderSyncRun | null> {
+    return this.firestore.runTransaction(async (transaction) => {
+      const document = await transaction.get(this.collection.doc(input.syncRunId));
+      if (!document.exists) {
+        return null;
+      }
+
+      const current = this.fromSnapshot(document as QueryDocumentSnapshot<ProviderSyncRunDocument>);
+      if (
+        current.organizationId !== input.organizationId ||
+        current.claim.claimedBy !== input.claimedBy ||
+        current.claim.claimToken !== input.claimToken ||
+        current.claim.leaseExpiresAt === null ||
+        current.claim.leaseExpiresAt <= input.now
+      ) {
+        return null;
+      }
+
+      const updated = input.mutate(current);
+      transaction.set(document.ref, this.mapper.toDocument(updated) as DocumentData, { merge: true });
+      return updated;
+    });
+  }
+
+  private canClaimRun(run: ProviderSyncRun, now: string, claimedBy: string): boolean {
+    if (run.status !== "running" && run.status !== "released") {
+      return false;
+    }
+
+    if (!run.claim.claimedBy || !run.claim.leaseExpiresAt) {
+      return true;
+    }
+
+    if (run.claim.claimedBy === claimedBy && run.claim.claimToken) {
+      return run.claim.leaseExpiresAt <= now;
+    }
+
+    return run.claim.leaseExpiresAt <= now || run.claim.releasedAt !== null;
   }
 }
 
@@ -1823,6 +1973,70 @@ class FirestoreWorkerJobRepository
     return this.tryClaimExpiredLease(input);
   }
 
+  async claimById(input: {
+    organizationId: EntityId;
+    tenantId?: EntityId | null;
+    jobId: EntityId;
+    workerId: string;
+    leaseDurationMs: number;
+    now: string;
+  }): Promise<WorkerJob | null> {
+    return this.firestore.runTransaction(async (transaction) => {
+      const document = await transaction.get(this.collection.doc(input.jobId));
+      if (!document.exists) {
+        return null;
+      }
+
+      const candidate = this.fromSnapshot(document as QueryDocumentSnapshot<WorkerJobDocument>);
+      if (candidate.organizationId !== input.organizationId) {
+        return null;
+      }
+      if (input.tenantId && candidate.tenantId !== input.tenantId) {
+        return null;
+      }
+      if (!this.canClaimCandidate(candidate, input.now)) {
+        return null;
+      }
+
+      const claimed = this.toClaimedJob(candidate, input.workerId, input.now, input.leaseDurationMs);
+      transaction.set(document.ref, this.mapper.toDocument(claimed) as DocumentData, { merge: true });
+      return claimed;
+    });
+  }
+
+  async mutateWithActiveLease(input: {
+    organizationId: EntityId;
+    jobId: EntityId;
+    workerId: string;
+    claimToken: string;
+    now: string;
+    mutate: (job: WorkerJob) => WorkerJob;
+  }): Promise<WorkerJob | null> {
+    return this.firestore.runTransaction(async (transaction) => {
+      const document = await transaction.get(this.collection.doc(input.jobId));
+      if (!document.exists) {
+        return null;
+      }
+
+      const current = this.fromSnapshot(document as QueryDocumentSnapshot<WorkerJobDocument>);
+      if (
+        current.organizationId !== input.organizationId ||
+        current.leasedBy !== input.workerId ||
+        current.lease.workerId !== input.workerId ||
+        current.lease.claimToken !== input.claimToken ||
+        current.leaseExpiresAt === null ||
+        current.leaseExpiresAt <= input.now ||
+        (current.status !== "leased" && current.status !== "running")
+      ) {
+        return null;
+      }
+
+      const updated = input.mutate(current);
+      transaction.set(document.ref, this.mapper.toDocument(updated) as DocumentData, { merge: true });
+      return updated;
+    });
+  }
+
   private async tryClaimQueuedJob(input: {
     organizationId: EntityId;
     workerId: string;
@@ -1891,14 +2105,43 @@ class FirestoreWorkerJobRepository
     now: string,
     leaseDurationMs: number,
   ): WorkerJob {
+    const nextVersion = (job.lease.leaseVersion ?? 0) + 1;
+    const reclaimed =
+      job.lease.workerId !== null &&
+      job.lease.workerId !== workerId &&
+      job.lease.leaseExpiresAt !== null &&
+      job.lease.leaseExpiresAt <= now;
     return {
       ...job,
       status: "leased",
       leasedBy: workerId,
       leaseExpiresAt: new Date(Date.parse(now) + leaseDurationMs).toISOString(),
+      lease: {
+        workerId,
+        claimToken: `${job.id}:lease:${nextVersion}`,
+        leaseVersion: nextVersion,
+        claimedAt: now,
+        leaseExpiresAt: new Date(Date.parse(now) + leaseDurationMs).toISOString(),
+        heartbeatAt: now,
+        reclaimedAt: reclaimed ? now : job.lease.reclaimedAt,
+        reclaimedBy: reclaimed ? workerId : job.lease.reclaimedBy,
+        reclaimCount: (job.lease.reclaimCount ?? 0) + (reclaimed ? 1 : 0),
+      },
       updatedAt: now,
       attemptCount: job.attemptCount + 1,
     };
+  }
+
+  private canClaimCandidate(job: WorkerJob, now: string): boolean {
+    if (job.status === "queued") {
+      return job.runAfter <= now;
+    }
+
+    return (
+      (job.status === "leased" || job.status === "running") &&
+      job.leaseExpiresAt !== null &&
+      job.leaseExpiresAt <= now
+    );
   }
 }
 

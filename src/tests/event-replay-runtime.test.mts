@@ -8,7 +8,7 @@ import { createRuntimeHarness } from "./support/runtime-harness.ts";
 
 test("event replay service safely reprocesses persisted canonical events by id and batch", async () => {
   const harness = createRuntimeHarness();
-  const event = makeLifecycleEvent("event-runtime-replay-1");
+  const event = makeWorkOrderCreatedEvent("event-runtime-replay-1");
   harness.events.push(event);
 
   const replay = createEventReplayService(
@@ -43,13 +43,13 @@ test("event replay service safely reprocesses persisted canonical events by id a
   assert.equal(harness.eventProcessings.length, 1);
 });
 
-function makeLifecycleEvent(eventId: string): DomainEvent<"lifecycle_transitioned"> {
+function makeWorkOrderCreatedEvent(eventId: string): DomainEvent<"work_order_created"> {
   return {
     id: eventId,
     organizationId: "org-1",
     tenantId: "org-1",
     workOrderId: "wo-runtime-replay-1",
-    type: "lifecycle_transitioned",
+    type: "work_order_created",
     actor: {
       actorId: "manager-1",
       actorType: "user",
@@ -58,13 +58,13 @@ function makeLifecycleEvent(eventId: string): DomainEvent<"lifecycle_transitione
     },
     visibility: "internal",
     occurredAt: "2026-05-06T21:59:00.000Z",
-    lifecycleStatus: "assigned",
+    lifecycleStatus: "new",
     entity: {
       entityType: "work_order",
       entityId: "wo-runtime-replay-1",
       label: "WO-RUNTIME-REPLAY-1",
     },
-    summary: "Lifecycle transitioned.",
+    summary: "Work order created.",
     metadata: {
       requestId: "req-runtime-replay-1",
       reason: null,
@@ -72,9 +72,9 @@ function makeLifecycleEvent(eventId: string): DomainEvent<"lifecycle_transitione
       details: {},
     },
     payload: {
-      fromLifecycleStatus: "triage",
-      toLifecycleStatus: "assigned",
-      reason: null,
+      lifecycleStatus: "new",
+      priority: "high",
+      title: "Replay-safe freezer repair",
     },
   };
 }

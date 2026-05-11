@@ -8,6 +8,8 @@ import {
   type SlaTimerEvaluateJobPayload,
 } from "@/modules/sla";
 import type { DomainEvent } from "@/server/events/types";
+import { isAlreadyExistsError } from "@/lib/idempotency/already-exists";
+import { buildStableEntityId } from "@/lib/idempotency/stable-entity-id";
 import { notFoundError } from "@/server/services/errors";
 import { serviceFail, serviceOk, type ServiceResult } from "@/server/services/types";
 import type { EntityId, IsoDateTimeString } from "@/types/entity";
@@ -64,15 +66,6 @@ export function createSlaTimerService(repository: SlaTimerRepository): SlaTimerS
       const idempotencyKey = buildFirstResponseTimerIdempotencyKey(
         input.sourceEvent.workOrderId ?? "no-work-order",
       );
-      const existing = await repository.findByIdempotencyKey({
-        organizationId: input.organizationId,
-        type: SLA_TIMER_TYPES.WorkOrderFirstResponseDue,
-        idempotencyKey,
-      });
-      if (existing) {
-        return serviceOk({ timer: existing, created: false });
-      }
-
       const workOrderId = input.sourceEvent.workOrderId;
       if (!workOrderId) {
         return serviceFail(notFoundError("Work order id is required for SLA timer creation."));
@@ -89,7 +82,11 @@ export function createSlaTimerService(repository: SlaTimerRepository): SlaTimerS
       };
 
       const timer: SlaTimer = {
-        id: repository.newId(),
+        id: buildStableEntityId("sla-timer", [
+          input.organizationId,
+          SLA_TIMER_TYPES.WorkOrderFirstResponseDue,
+          idempotencyKey,
+        ]),
         organizationId: input.organizationId,
         tenantId: input.organizationId,
         type: SLA_TIMER_TYPES.WorkOrderFirstResponseDue,
@@ -113,7 +110,19 @@ export function createSlaTimerService(repository: SlaTimerRepository): SlaTimerS
         createdAt: input.now,
         updatedAt: input.now,
       };
-      await repository.create(timer);
+      try {
+        await repository.create(timer);
+      } catch (error) {
+        if (!isAlreadyExistsError(error)) {
+          throw error;
+        }
+
+        const existing = await repository.getById(timer.id);
+        if (!existing) {
+          throw error;
+        }
+        return serviceOk({ timer: existing, created: false });
+      }
       return serviceOk({ timer, created: true });
     },
 

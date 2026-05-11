@@ -65,13 +65,13 @@ import type {
   WorkOrderRepository,
 } from "../server/repositories/index.ts";
 import { USER_ROLES } from "../types/permissions.ts";
+import type { WorkOrderMutationContext } from "../server/services/work-order-mutation-context.ts";
 
 test("intake event creation persists immutable artifacts, evidence, confidence, and review queue projections", async () => {
   const harness = createHarness();
 
   const intakeEvent = await harness.intake.events.create({
-    organizationId: "org-1",
-    actor: { userId: "user-1", role: USER_ROLES.Coordinator },
+    ...coordinatorMutationContext(),
     source: {
       sourceType: "portal_submission",
       externalSourceId: "portal-1",
@@ -86,8 +86,7 @@ test("intake event creation persists immutable artifacts, evidence, confidence, 
   assert.equal(intakeEvent.ok, true);
 
   const artifact = await harness.intake.events.addArtifact({
-    organizationId: "org-1",
-    actor: { userId: "user-1", role: USER_ROLES.Coordinator },
+    ...coordinatorMutationContext(),
     intakeEventId: intakeEvent.value.id,
     kind: "normalized_content",
     source: intakeEvent.value.source,
@@ -98,8 +97,7 @@ test("intake event creation persists immutable artifacts, evidence, confidence, 
   assert.equal(artifact.value.isImmutable, true);
 
   const draft = await harness.intake.drafts.create({
-    organizationId: "org-1",
-    actor: { userId: "user-1", role: USER_ROLES.Coordinator },
+    ...coordinatorMutationContext(),
     intakeEventId: intakeEvent.value.id,
     artifactIds: [artifact.value.id],
     extractedTitle: "Freezer leak",
@@ -170,8 +168,7 @@ test("approved intake converts through the canonical work order boundary and wri
   const setup = await seedDraftForReview(harness);
 
   const review = await harness.intake.review.review({
-    organizationId: "org-1",
-    actor: { userId: "manager-1", role: USER_ROLES.Manager },
+    ...managerMutationContext(),
     aiIntakeDraftId: setup.draft.id,
     decision: "approve_with_edits",
     reviewerNotes: "Looks good with a clearer title.",
@@ -213,13 +210,36 @@ test("approved intake converts through the canonical work order boundary and wri
   );
 });
 
+test("replayed intake approval reuses the canonical converted work order without duplicating it", async () => {
+  const harness = createHarness();
+  const setup = await seedDraftForReview(harness);
+  const input = {
+    ...managerMutationContext(),
+    aiIntakeDraftId: setup.draft.id,
+    decision: "approve_with_edits" as const,
+    reviewerNotes: "Looks good with a clearer title.",
+    approvedInput: {
+      title: "Walk-in freezer leak",
+      requestedByEmail: "site@example.com",
+      requestedByPhone: "555-0100",
+    },
+  };
+
+  const first = await harness.intake.review.review(input);
+  const second = await harness.intake.review.review(input);
+
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.equal(first.value.workOrderId, second.value.workOrderId);
+  assert.equal(harness.workOrders.size, 1);
+});
+
 test("merge decisions persist duplicate review outcomes without creating a new work order", async () => {
   const harness = createHarness();
   const setup = await seedDraftForReview(harness);
 
   const merge = await harness.intake.review.review({
-    organizationId: "org-1",
-    actor: { userId: "manager-1", role: USER_ROLES.Manager },
+    ...managerMutationContext(),
     aiIntakeDraftId: setup.draft.id,
     decision: "merge_into_existing",
     reviewerNotes: "Confirmed as duplicate of the open freezer ticket.",
@@ -243,15 +263,13 @@ test("review queue filters support assignment, duplicate risk, and lifecycle rec
   const setup = await seedDraftForReview(harness);
 
   const started = await harness.intake.review.start({
-    organizationId: "org-1",
-    actor: { userId: "manager-1", role: USER_ROLES.Manager },
+    ...managerMutationContext(),
     aiIntakeDraftId: setup.draft.id,
   });
   assert.equal(started.ok, true);
 
   const assigned = await harness.intake.review.assign({
-    organizationId: "org-1",
-    actor: { userId: "manager-1", role: USER_ROLES.Manager },
+    ...managerMutationContext(),
     aiIntakeDraftId: setup.draft.id,
     assignedReviewerUserId: "manager-1",
   });
@@ -272,8 +290,7 @@ test("provider-safe ingestion creates canonical intake and communication records
   const harness = createHarness();
 
   const result = await harness.intake.ingestion.ingestProviderPayload({
-    organizationId: "org-1",
-    actor: { userId: "system", role: "system" },
+    ...systemMutationContext(),
     payload: makeProviderPayload(),
   });
 
@@ -294,13 +311,11 @@ test("provider ingestion is idempotent and reuses canonical records for duplicat
   const payload = makeProviderPayload();
 
   const first = await harness.intake.ingestion.ingestProviderPayload({
-    organizationId: "org-1",
-    actor: { userId: "system", role: "system" },
+    ...systemMutationContext(),
     payload,
   });
   const duplicate = await harness.intake.ingestion.ingestProviderPayload({
-    organizationId: "org-1",
-    actor: { userId: "system", role: "system" },
+    ...systemMutationContext(),
     payload,
   });
 
@@ -578,8 +593,7 @@ function makeProviderPayload() {
 
 async function seedDraftForReview(harness: ReturnType<typeof createHarness>) {
   const intakeEventResult = await harness.intake.events.create({
-    organizationId: "org-1",
-    actor: { userId: "user-1", role: USER_ROLES.Coordinator },
+    ...coordinatorMutationContext(),
     source: {
       sourceType: "communication_message",
       externalSourceId: "msg-1",
@@ -594,8 +608,7 @@ async function seedDraftForReview(harness: ReturnType<typeof createHarness>) {
   assert.equal(intakeEventResult.ok, true);
 
   const artifactResult = await harness.intake.events.addArtifact({
-    organizationId: "org-1",
-    actor: { userId: "user-1", role: USER_ROLES.Coordinator },
+    ...coordinatorMutationContext(),
     intakeEventId: intakeEventResult.value.id,
     kind: "normalized_content",
     source: intakeEventResult.value.source,
@@ -604,8 +617,7 @@ async function seedDraftForReview(harness: ReturnType<typeof createHarness>) {
   assert.equal(artifactResult.ok, true);
 
   const draftResult = await harness.intake.drafts.create({
-    organizationId: "org-1",
-    actor: { userId: "user-1", role: USER_ROLES.Coordinator },
+    ...coordinatorMutationContext(),
     intakeEventId: intakeEventResult.value.id,
     artifactIds: [artifactResult.value.id],
     extractedTitle: "Freezer leak",
@@ -1023,6 +1035,12 @@ function createProviderConnectionRepository(
       const items = store.filter((item) => item.organizationId === organizationId);
       return { items, count: items.length };
     },
+    async findByWebhookSubscription(input) {
+      return store.find((item) =>
+        item.providerKey === input.providerKey &&
+        item.metadata.webhookSubscriptionId === input.subscriptionId
+      ) ?? null;
+    },
     async findByMailboxAddress(input) {
       return store.find((item) =>
         item.organizationId === input.organizationId &&
@@ -1332,6 +1350,51 @@ function clientActor() {
       clientOrganizationId: "client-org-1",
       locationAccess: { kind: "all_client_locations" as const },
     },
+  };
+}
+
+function managerMutationContext(
+  source: WorkOrderMutationContext["source"] = "intake_review",
+  userId = "manager-1",
+): WorkOrderMutationContext {
+  return {
+    organizationId: "org-1",
+    actor: {
+      actorType: "internal",
+      userId,
+      role: USER_ROLES.Manager,
+      scope: { kind: "internal", organizationId: "org-1" },
+    },
+    source,
+  };
+}
+
+function coordinatorMutationContext(
+  source: WorkOrderMutationContext["source"] = "intake_review",
+  userId = "user-1",
+): WorkOrderMutationContext {
+  return {
+    organizationId: "org-1",
+    actor: {
+      actorType: "internal",
+      userId,
+      role: USER_ROLES.Coordinator,
+      scope: { kind: "internal", organizationId: "org-1" },
+    },
+    source,
+  };
+}
+
+function systemMutationContext(): WorkOrderMutationContext {
+  return {
+    organizationId: "org-1",
+    actor: {
+      actorType: "system",
+      userId: "system",
+      role: "system",
+      scope: { kind: "system", organizationId: "org-1", trusted: true },
+    },
+    source: "system_runtime",
   };
 }
 

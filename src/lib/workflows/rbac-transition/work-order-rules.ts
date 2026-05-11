@@ -16,6 +16,7 @@ const coordinatorWorkOrderTransitions = [
   [WORK_ORDER_STATUS.New, WORK_ORDER_STATUS.Triage],
   [WORK_ORDER_STATUS.Triage, WORK_ORDER_STATUS.Assigned],
   [WORK_ORDER_STATUS.Triage, WORK_ORDER_STATUS.QuoteRequired],
+  [WORK_ORDER_STATUS.Assigned, WORK_ORDER_STATUS.ContractorScheduled],
   [WORK_ORDER_STATUS.Assigned, WORK_ORDER_STATUS.AwaitingContractorResponse],
   [WORK_ORDER_STATUS.AwaitingContractorResponse, WORK_ORDER_STATUS.ContractorScheduled],
   [WORK_ORDER_STATUS.ClientApproved, WORK_ORDER_STATUS.Assigned],
@@ -42,6 +43,10 @@ const contractorWorkOrderTransitions = [
   [WORK_ORDER_STATUS.QuoteRequired, WORK_ORDER_STATUS.ContractorQuoteReceived],
   [WORK_ORDER_STATUS.ContractorScheduled, WORK_ORDER_STATUS.InProgress],
   [WORK_ORDER_STATUS.InProgress, WORK_ORDER_STATUS.WorkCompleted],
+] as const satisfies readonly WorkOrderPair[];
+
+const clientWorkOrderTransitions = [
+  [WORK_ORDER_STATUS.ClientApprovalRequested, WORK_ORDER_STATUS.ClientApproved],
 ] as const satisfies readonly WorkOrderPair[];
 
 export function isRoleAllowedForWorkOrderTransition(
@@ -74,6 +79,8 @@ export function isRoleAllowedForWorkOrderTransition(
         isManagerCancellation(input))) ||
     (input.role === PLATFORM_ROLES.FinanceAdmin &&
       hasPair(financeAdminWorkOrderTransitions, input)) ||
+    (input.role === PLATFORM_ROLES.ClientUser &&
+      hasPair(clientWorkOrderTransitions, input)) ||
     (input.role === PLATFORM_ROLES.ContractorUser &&
       hasPair(contractorWorkOrderTransitions, input));
 

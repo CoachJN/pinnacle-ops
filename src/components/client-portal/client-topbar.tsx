@@ -40,7 +40,7 @@ export function ClientTopbar({ currentUser }: ClientTopbarProps) {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-emerald-700">
-            Pinnacle Ops Client Portal
+            PinnOps Client Portal
           </p>
           <h1 className="mt-2 text-lg font-semibold text-slate-950">
             {currentUser.displayName ?? currentUser.email ?? "Client user"}

@@ -36,6 +36,7 @@ test("worker runtime retries with deterministic backoff, sanitizes errors, and d
     organizationId: "org-1",
     jobId: firstClaim.value?.id ?? "",
     workerId: "worker-1",
+    claimToken: firstClaim.value?.lease.claimToken ?? "",
     now: "2026-05-06T14:00:05.000Z",
     error: {
       code: "timeout",
@@ -61,7 +62,7 @@ test("worker runtime retries with deterministic backoff, sanitizes errors, and d
   const secondClaim = await harness.runtime.lease.claimNext({
     organizationId: "org-1",
     workerId: "worker-2",
-    leaseDurationMs: 30_000,
+    leaseDurationMs: 300_000,
     now: expectedRetry.nextRunAfter,
   });
   assert.equal(secondClaim.ok, true);
@@ -71,6 +72,7 @@ test("worker runtime retries with deterministic backoff, sanitizes errors, and d
     organizationId: "org-1",
     jobId: secondClaim.value?.id ?? "",
     workerId: "worker-2",
+    claimToken: secondClaim.value?.lease.claimToken ?? "",
     now: "2026-05-06T14:02:00.000Z",
     error: {
       code: "validation",
